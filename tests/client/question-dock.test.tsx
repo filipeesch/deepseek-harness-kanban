@@ -5,7 +5,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import { QuestionDock, createQuestionDockServices, type QuestionDockProps, type QuestionDockServices } from '../../src/client/question-dock.js';
 import type { QuestionRoundView } from '../../src/client/question-round-cache.js';
-import type { QuestionRound } from '../../src/shared/types.js';
+import type { QuestionDraftContent, QuestionRound } from '../../src/shared/types.js';
+import { QuestionDraftState } from '../../src/client/question-draft-state.js';
 
 /** The dock's contracts must never carry a board-update status again. */
 type DockContractStatus =
@@ -38,6 +39,9 @@ function services(view: QuestionRoundView, retry = vi.fn()): QuestionDockService
     dismiss: async () => [],
     drafts: { read: () => undefined, update: () => {}, clear: () => {}, flush: () => {} },
     send: async () => {},
+    files: () => undefined,
+    submitWithFiles: async (_sessionId, text) => { void text; },
+    discardFile: async () => {},
     focusComposer: () => {},
   };
 }
@@ -72,5 +76,35 @@ describe('question dock surfaces', () => {
     const { container } = render(<QuestionDock sessionId="session-1" services={services({ rounds: [], errors: new Map() })} />);
     expectNoBoardStatus(container);
     expect(container.textContent).toBe('');
+  });
+
+  it('keeps attachments and their order through update, read, and hydrate', async () => {
+    const requests: Array<{ draft: QuestionDraftContent }> = [];
+    const state = new QuestionDraftState({
+      // No coalescing, so the write is issued synchronously with the update.
+      delayMs: 0,
+      transport: { save: async request => { requests.push({ draft: request.draft as QuestionDraftContent }); } },
+      report: () => undefined,
+      now: () => '2026-01-01T00:00:00.000Z',
+    });
+    const content: QuestionDraftContent = {
+      answers: {},
+      generalNotes: '',
+      pageAttachments: { 'call-1': [{ id: 'a', name: 'a.txt', bytes: 1 }] },
+      roundAttachments: [{ id: 'b', name: 'b.txt', bytes: 2 }],
+      attachmentOrder: ['a', 'b'],
+      active: null,
+    };
+    state.update('session-1', 'round-1', content);
+    // The write the host receives must name the files, or their bytes can never be found.
+    await state.flush();
+    expect(requests[0]!.draft.pageAttachments).toEqual({ 'call-1': [{ id: 'a', name: 'a.txt', bytes: 1 }] });
+    expect(requests[0]!.draft.attachmentOrder).toEqual(['a', 'b']);
+    const restored = state.read('round-1')!;
+    expect(restored.roundAttachments).toEqual([{ id: 'b', name: 'b.txt', bytes: 2 }]);
+    // Hydration of a stored draft keeps the attachments a reload must restore.
+    const other = new QuestionDraftState({ delayMs: 0, transport: { save: async () => undefined }, report: () => undefined });
+    other.hydrate('session-1', { 'round-1': { ...content, updatedAt: '2026-01-01T00:00:00.000Z' } });
+    expect(other.read('round-1')!.pageAttachments).toEqual({ 'call-1': [{ id: 'a', name: 'a.txt', bytes: 1 }] });
   });
 });

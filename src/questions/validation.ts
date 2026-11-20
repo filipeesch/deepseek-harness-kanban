@@ -72,8 +72,23 @@ export function isAnswerValid(page: QuestionPage, answer: QuestionAnswer | undef
   return !answer.choices.includes(OTHER_CHOICE) || answer.other.trim().length > 0;
 }
 
-/** Format exactly one ordinary user message. No decision records or native interaction replies. */
-export function formatAnswers(round: QuestionRound, answers: QuestionAnswers, generalNotes = ''): string {
+/** One file named in the reply text, so the agent knows where it belongs. */
+export interface AnswerAttachmentReference {
+  readonly name: string;
+}
+
+/**
+ * Format exactly one ordinary user message. No decision records or native
+ * interaction replies. Files are named inside the block of the question they
+ * answer, so the agent never has to guess which question a file belongs to.
+ *
+ * @param round - the round being submitted.
+ * @param answers - the answers, keyed by page callId.
+ * @param generalNotes - the round-wide Additional Notes text.
+ * @param pageFiles - files attached per page callId, named in that page block.
+ * @param roundFiles - files attached to the round, named in the additional block.
+ */
+export function formatAnswers(round: QuestionRound, answers: QuestionAnswers, generalNotes = '', pageFiles: Readonly<Record<string, readonly AnswerAttachmentReference[]>> = {}, roundFiles: readonly AnswerAttachmentReference[] = []): string {
   if (!round.complete || round.answered || !round.pages.length) throw new KanbanError('QUESTION_ROUND_NOT_READY', 'The question round is not ready for submission.');
   const sections = round.pages.map(({ callId, page }, index) => {
     const validated = validateQuestionPage(page);
@@ -87,8 +102,14 @@ export function formatAnswers(round: QuestionRound, answers: QuestionAnswers, ge
       if (answer!.choices.includes(OTHER_CHOICE)) result.push('Other: ' + answer!.other.trim());
     }
     if (answer!.notes.trim()) result.push('Notes: ' + answer!.notes.trim());
+    const files = pageFiles[callId] ?? [];
+    if (files.length > 0) result.push('Attached files: ' + files.map(file => file.name).join(', '));
     return result.join('\n\n');
   });
-  if (generalNotes.trim()) sections.push('## Additional context\n\n' + generalNotes.trim());
+  if (generalNotes.trim() || roundFiles.length > 0) {
+    const parts = generalNotes.trim() === '' ? [] : [generalNotes.trim()];
+    if (roundFiles.length > 0) parts.push('Attached files: ' + roundFiles.map(file => file.name).join(', '));
+    sections.push('## Additional context\n\n' + parts.join('\n\n'));
+  }
   return sections.join('\n\n');
 }

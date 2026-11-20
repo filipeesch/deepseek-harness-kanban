@@ -13,6 +13,7 @@ Start with the [README](../README.md) if you are installing the plugin.
 | [Workflows](user/workflows.md) | Authoring the workflow YAML, editing a stage, or using the workflow diagram. |
 | [Execution](user/execution.md) | Moving a card, running a stage instruction, auto mode, and declared transitions. |
 | [Conversations](user/conversations.md) | Reading the drawer Conversations section, notes, history, relations, question rounds, and an unreadable Session log. |
+| [Task files](user/task-files.md) | Attaching, downloading, and removing a task's files, and attaching files to a question answer. |
 | [Team sharing](user/team-sharing.md) | Publishing a Hub through Git, Google Drive, or a local folder, and working with team files. |
 | [Git and worktrees](user/git-worktrees.md) | Creating, attaching, and removing a task worktree, and understanding the workspace model. |
 | [Schedules](user/schedules.md) | Running a prompt unattended on a cron schedule. |

@@ -38,7 +38,7 @@ Opening a card shows its drawer. A Git-backed project presents **Conversations**
 
 A task starts with no conversation. The Conversations section presents the host's agent-preset cards, and **+** opens the same choice for the first or another conversation. For a Git-backed task without a worktree, the first conversation waits until the worktree notice is resolved: create or attach a worktree and wait until it is ready, or choose to continue in the base project. See [Conversations](conversations.md).
 
-**Info** shows the title and description read-only until you select **Edit**; saving never messages an agent.
+**Info** shows the title and description read-only until you select **Edit**; saving never messages an agent. It also lists the task's files, which you can attach, download, and remove there. [Task files](task-files.md) describes the sources and what removal does.
 
 **Notes** stores Markdown shared by every conversation of the task; [Conversations](conversations.md) describes tags, the preview, the editor, and the filter.
 

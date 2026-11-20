@@ -9,6 +9,7 @@ import type { ConversationProbe } from './conversation-probe.js';
 import type { DestructiveJournal } from './destructive-journal.js';
 import type { WorktreeBinding } from './hub-repository.js';
 import { recoveryPendingError, requireTask, type OperationJournal } from './operation-journal.js';
+import { deleteTask } from '../domain/hub-operations.js';
 import { SessionArchiver, WaitingForIdle } from './session-archiver.js';
 import { TaskBindingIndex } from './task-binding-index.js';
 import { TaskTeardown, type TeardownOutcome } from './task-teardown.js';
@@ -189,8 +190,10 @@ export class DestructiveExecution {
     if (affected.length > 0 && target !== undefined) await this.markAffectedBindings(taskId, target, affected);
     await this.store.transactTask(taskId, state => {
       if (requireTask(state, taskId).operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The deletion operation changed.');
-      state.notes = state.notes.filter(note => note.taskId !== taskId);
-      state.tasks = state.tasks.filter(item => item.id !== taskId);
+      // The domain delete owns the whole cascade: the task, its notes, and every
+      // relation that names it. Removing the task alone would leave a relation whose
+      // endpoint is gone, which the Hub schema rejects on the next read.
+      deleteTask(state, taskId);
     });
     try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
     if (retainedPath !== undefined) {

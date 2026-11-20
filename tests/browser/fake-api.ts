@@ -31,7 +31,9 @@ export interface HarnessOptions { scripted?: import('../../src/shared/scripted.j
   /** What the board's default preset outcome is on every conversation this fake creates. */
   conversationPreset?: ConversationPresetOutcome;
   /** Conversations the plugin could not observe, keyed by Session id. */
-  conversationObservations?: Record<string, SessionObservation>; }
+  conversationObservations?: Record<string, SessionObservation>;
+  /** Seeds attachments on the short task, so the Info file surface can be captured. */
+  taskFiles?: boolean; }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -57,6 +59,16 @@ export function createHarnessApi(options: HarnessOptions = {}): HarnessApi {
     slowCreate(),
     ...(options.prepare === undefined ? [] : [firstExecutionTask(), blockedBindingTask()]),
   ];
+  // The file scenario seeds one task with attachments, which is the only state the
+  // Info section cannot reach from an empty fixture.
+  if (options.taskFiles === true) {
+    const withFiles = tasks.find(value => value.id === 'short')!;
+    withFiles.attachments = [
+      { id: 'att-1', name: 'monthly-reconciliation-output.csv', bytes: 1_482_112, origin: 'path' },
+      { id: 'att-2', name: 'architecture-review.pdf', bytes: 289_402, origin: 'upload' },
+      { id: 'att-3', name: 'run-log.txt', bytes: 4_318, origin: 'clipboard' },
+    ];
+  }
   // One task with a recorded flow, so the History section can render every kind of row.
   if (options.history !== undefined) {
     const short: TaskHistoryEntry[] = [
@@ -468,6 +480,13 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     },
     branches: async () => ['main', 'feature'],
     mcpServers: async () => [...(options.mcpServers ?? [])],
+    // The file scenario serves each attachment's bytes, so download and a restored
+    // answer file behave as they do against the real host.
+    ...(options.taskFiles === true ? {
+      readTaskAttachment: async (request: { taskId: string; attachmentId: string }) => ({ name: request.attachmentId + '.txt', bytes: 3, origin: 'path', data: 'YWJj' }),
+      saveQuestionAttachment: async (request: { name: string; data: string }) => ({ id: 'draft-' + request.name, name: request.name, bytes: 3 }),
+      readQuestionAttachment: async () => ({ name: 'draft.txt', data: 'YWJj' }),
+    } : {}),
     modelCatalog: async () => {
       if (options.modelCatalogFailure) throw { code: 'MODEL_CATALOG_UNAVAILABLE', message: 'The model catalog is unavailable.' };
       return { default: { provider: 'deepseek', model: 'chat' }, providers: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }, { id: 'reason', name: 'Reason' }] }], failures: [] };

@@ -13,6 +13,7 @@ import { historyStyles } from './history.js';
 import { relationStyles } from './relations.js';
 import { scriptedStyles } from './scripted.js';
 import { workspaceStyles } from './workspace.js';
+import { taskFileStyles } from './task-files.js';
 
 /** Every plugin style module in cascade order; the board mounts this one string. */
-export const styles = [tokenStyles, baseStyles, headerStyles, cardStyles, activityStyles, motionStyles, sharingStyles, drawerHeaderStyles, scheduleStyles, stageStyles, historyStyles, relationStyles, scriptedStyles, workspaceStyles, workflowViewStyles].join(String.fromCharCode(10));
+export const styles = [tokenStyles, baseStyles, headerStyles, cardStyles, activityStyles, motionStyles, sharingStyles, drawerHeaderStyles, scheduleStyles, stageStyles, historyStyles, relationStyles, scriptedStyles, workspaceStyles, taskFileStyles, workflowViewStyles].join(String.fromCharCode(10));

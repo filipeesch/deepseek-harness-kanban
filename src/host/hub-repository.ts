@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, ContextOperation, HubRelation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, Workflow } from '../shared/types.js';
+import type { AutoModePause, Board, BoardSettings, ContextOperation, HubRelation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, TaskAttachment, Workflow } from '../shared/types.js';
 import { repositoryLane } from './repository-lane.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
@@ -660,15 +660,62 @@ export class HubStore {
   async setTaskWorktreeWorkspace(taskId: string, workspaceId: string, owned: boolean): Promise<HubTask> {
     return this.transact(draft => operations.setTaskWorktreeWorkspace(draft, taskId, workspaceId, owned, this.deps()));
   }
-  async createTask(input: NewTask): Promise<HubTask> {
+  /**
+   * Create one task. `id` and `attachments` are supplied by a caller that already
+   * stored the bytes under that identity, so the task is created carrying the files
+   * in the same mutation; omitted, the domain allocates the id and records nothing.
+   */
+  async createTask(input: NewTask & { id?: string; attachmentRecords?: readonly TaskAttachment[] }): Promise<HubTask> {
     return this.transact(draft => {
       const boardId = input.boardId ?? draft.boards[0]?.id;
       invariant(boardId, 'BOARD_NOT_FOUND', 'The Hub has no board.');
-      return operations.createTask(draft, { ...input, boardId }, this.deps());
+      // Absolute paths are the host's to resolve; the domain records metadata only.
+      const { attachments: _paths, id, attachmentRecords, ...rest } = input;
+      return operations.createTask(draft, { ...rest, boardId, ...(id === undefined ? {} : { id }), ...(attachmentRecords === undefined ? {} : { attachments: attachmentRecords }) }, this.deps());
     });
   }
   async dismissWorktree(taskId: string): Promise<HubTask> {
     return this.transact(draft => operations.dismissWorktree(draft, taskId, this.deps()));
+  }
+  async addTaskAttachments(taskId: string, attachments: readonly TaskAttachment[]): Promise<HubTask> {
+    return this.transact(draft => {
+      const task = operations.requireTask(draft, taskId);
+      for (const attachment of attachments) operations.addTaskAttachmentRecord(task, attachment);
+      task.updatedAt = this.deps().now();
+      draft.updatedAt = task.updatedAt;
+      return task;
+    });
+  }
+  async removeTaskAttachment(taskId: string, attachmentId: string): Promise<TaskAttachment> {
+    return this.transact(draft => operations.removeTaskAttachmentRecord(draft, taskId, attachmentId, this.deps()));
+  }
+  /**
+   * Apply one task edit as a single mutation: optional text, the attachments to add,
+   * and the attachment identities to drop. Doing it in one transaction means a stale
+   * revision or an unknown identity rejects the whole edit, so the card can never end up
+   * with the additions of an edit whose removals failed.
+   *
+   * @param taskId - the task being edited.
+   * @param patch - title and description changes, if any.
+   * @param additions - attachment records whose bytes are already stored.
+   * @param removals - attachment identities to drop from the record.
+   * @param expectedRevision - the revision the caller reviewed.
+   * @returns the updated task and the records that were removed.
+   */
+  async applyTaskEdit(taskId: string, patch: TaskTextPatch, additions: readonly TaskAttachment[], removals: readonly string[], expectedRevision?: number): Promise<{ task: HubTask; removed: TaskAttachment[] }> {
+    return this.transact(draft => {
+      let removed: TaskAttachment[] = [];
+      if (removals.length > 0) {
+        removed = removals.map(attachmentId => operations.removeTaskAttachmentRecord(draft, taskId, attachmentId, this.deps()));
+      }
+      if (additions.length > 0) {
+        const task = operations.requireTask(draft, taskId);
+        for (const attachment of additions) operations.addTaskAttachmentRecord(task, attachment);
+        task.updatedAt = this.deps().now();
+      }
+      if (patch.title !== undefined || patch.description !== undefined) operations.editTask(draft, taskId, patch, this.deps());
+      return { task: operations.requireTask(draft, taskId), removed };
+    }, expectedRevision);
   }
   async editTask(taskId: string, patch: TaskTextPatch, expectedRevision?: number): Promise<HubTask> {
     return this.transact(draft => operations.editTask(draft, taskId, patch, this.deps()), expectedRevision);

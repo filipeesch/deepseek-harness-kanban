@@ -88,6 +88,10 @@ export class ClientBridge {
       branches: async (taskId: string) => unwrap(await remote.kanban.branches({ taskId })),
       modelCatalog: async (refresh = false) => unwrap(await remote.kanban.modelCatalog(refresh ? { refresh: true } : {})),
       mcpServers: async () => unwrap(await remote.kanban.mcpServers({})),
+      ...(remote.kanban.readTaskAttachment === undefined ? {} : { readTaskAttachment: async (request: { hubId?: string; taskId: string; attachmentId: string }) => unwrap(await remote.kanban.readTaskAttachment(request)) }),
+      ...(remote.kanban.saveQuestionAttachment === undefined ? {} : { saveQuestionAttachment: async (request: { sessionId: string; name: string; data: string }) => unwrap(await remote.kanban.saveQuestionAttachment(request)) }),
+      ...(remote.kanban.readQuestionAttachment === undefined ? {} : { readQuestionAttachment: async (request: { sessionId: string; id: string }) => unwrap(await remote.kanban.readQuestionAttachment(request)) }),
+      ...(remote.kanban.removeQuestionAttachment === undefined ? {} : { removeQuestionAttachment: async (request: { sessionId: string; id: string }) => { unwrap(await remote.kanban.removeQuestionAttachment(request)); } }),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),
       // A host that predates the Session diagnosis exposes neither method, and the seat

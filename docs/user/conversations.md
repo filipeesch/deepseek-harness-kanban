@@ -66,6 +66,8 @@ Question state streams per conversation, independently of the board snapshot, so
 
 The form draft is durable too: selected choices, Other text, per-answer notes, Additional Notes, and the slide the user was viewing are stored per conversation and restored when the round is shown again, including after closing the drawer, switching conversation, closing the conversation, or reloading. Only the collapsed state belongs to the open strip, so a restored round returns expanded like a new one. A stored draft is never submitted or written to the transcript automatically, and it is discarded when the round is submitted, answered by an ordinary reply, or dismissed. Draft records are bounded to the 100 most recently updated conversations, and deleting a task removes the question rounds and drafts of its conversations.
 
+A round also accepts files as part of the answer, and an attached file never answers a question by itself. [Task files](task-files.md) owns how answer files are attached, delivered, and restored.
+
 The footer has a **Dismiss** action on the left. An untouched round dismisses immediately; a populated draft asks for inline confirmation. Dismissing removes every unresolved round in that conversation, discards their stored drafts, sends no chat message, and permanently hides the round from reload and replay while leaving the composer available. Future rounds still appear.
 
 A genuine native ask-user or permission request stays independent. Dismissing a rich form or sending its text does not settle an unrelated native pending interaction.

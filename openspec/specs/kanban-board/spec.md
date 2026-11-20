@@ -160,13 +160,13 @@ Optional root and stage descriptions SHALL retain authored content in YAML and t
 - **AND** a peer unable to preserve it reports incompatibility rather than silently discarding it
 
 ### Requirement: Top-level task creation
-The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, and SHALL record the selected auto-mode value. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
+The active board SHALL provide the New task action in each of its presentations: at the top of its workflow's configured initial column in the column board, and in the header of that stage in the workflow diagram as defined by `workflow-view` Task creation in the initial stage. The two presentations SHALL open one shared creation experience, and neither SHALL build creation inputs, enablement, or receipt handling of its own. It SHALL collect a title, description, and project, an Auto mode option that is off by default, and, only when the initial stage has an entry instruction, a Start execution now option that is on by default. It SHALL also collect optional file attachments, accepted from an absolute host path, a browser file input, and the clipboard, subject to the attachment rules in `task-attachments`. The project input SHALL offer only the projects of the active Hub that the active board allows, as defined by Board project scope configuration; a project that the board does not allow SHALL NOT be offered and SHALL NOT be accepted. The project input SHALL start unselected and SHALL be required; the board SHALL NOT preselect a project, including when a project filter is active. A board that allows no project SHALL present no selectable project and SHALL explain that the board accepts no new task, and saving SHALL be unavailable. Saving a new task SHALL place it in the active board's configured initial stage whichever presentation opened it, SHALL record the selected auto-mode value, and SHALL store the supplied attachments in the same operation. Supplying an attachment that cannot be read SHALL prevent the task from being created. The board SHALL NOT offer any other stage as a creation target. When the initial stage has an entry instruction and the Start execution now option remains enabled, saving SHALL start the automatic first execution defined by Automatic first execution on task creation. Otherwise, saving SHALL NOT create a native DSH conversation, a workspace, or an agent execution. The board header SHALL NOT provide a separate New task action.
 
 Creating a task directly in a scripted initial stage SHALL create a new entry governed by `scripted-steps`, even when Auto mode is disabled. The request to activate that entry SHALL be durably recorded in the same operation that creates the task and entry, before reading the program file, capturing code, resolving credentials, or asking for trust; a crash between creation and those later activities SHALL not lose the activation intent. The Start execution now option and agent first-execution preparation SHALL NOT apply to that entry. The host SHALL admit the scripted entry without creating a conversation, model selection, or worktree solely to execute its script; execution SHALL wait for the required local trust and variables rather than implying authorization from creation.
 
 #### Scenario: Open task creation from the board
 - **WHEN** the user selects the New task action at the top of the active board's configured initial column
-- **THEN** the creation experience provides title, description, project, and Auto mode inputs without asking the user to choose a stage
+- **THEN** the creation experience provides title, description, project, Auto mode, and attachment inputs without asking the user to choose a stage
 - **AND** it presents Start execution now only when the initial stage has an entry instruction
 - **AND** the project input is unselected
 - **AND** the project list contains only projects of the active Hub that the board allows
@@ -183,7 +183,7 @@ Creating a task directly in a scripted initial stage SHALL create a new entry go
 
 #### Scenario: Create into a customized initial stage
 - **WHEN** the user saves a new task, the active board's workflow has a configured initial stage, and the start option does not apply or is disabled
-- **THEN** the task is created in that stage with the supplied title, description, project, and auto-mode value
+- **THEN** the task is created in that stage with the supplied title, description, project, auto-mode value, and attachments
 - **AND** the task belongs to the active board
 - **AND** no native DSH conversation or workspace is created
 - **AND** task creation does not initiate an agent execution
@@ -254,6 +254,16 @@ Creating a task directly in a scripted initial stage SHALL create a new entry go
 - **THEN** startup recovers the activation intent associated with that persisted entry
 - **AND** no manual stage change is required to discover the entry
 - **AND** the script still requires valid capture and local authorization before launch
+
+#### Scenario: Create a task carrying attachments
+- **WHEN** the user supplies one or more attachments in the New task dialog and saves
+- **THEN** the task is created carrying those attachments
+- **AND** the created task's Info section lists them without a further action
+
+#### Scenario: Refuse creation on an unreadable attachment
+- **WHEN** the user supplies an attachment the host cannot read and attempts to save
+- **THEN** no task is created
+- **AND** the failure names the attachment that could not be read
 
 ### Requirement: Automatic first execution on task creation
 
@@ -328,7 +338,7 @@ This preparation SHALL apply only to an agent entry instruction. A scripted init
 - **AND** scripted execution is governed by its own authorization and execution contract
 
 ### Requirement: Edit task text at any stage
-The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. Saving those edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution.
+The user SHALL be able to edit a task's title and description in any workflow stage, including after a worktree has been created. The user SHALL also be able to add and remove the task's attachments in any workflow stage through the task drawer's Info section, subject to the attachment rules in `task-attachments`. Saving text edits SHALL NOT automatically send a message to any task conversation or initiate an agent execution, and changing attachments SHALL likewise send no message and start no execution.
 
 #### Scenario: Edit an in-progress task with a worktree
 - **WHEN** the user saves a new title or description for an In Progress task that has a worktree
@@ -337,6 +347,11 @@ The user SHALL be able to edit a task's title and description in any workflow st
 #### Scenario: Save edits without messaging agents
 - **WHEN** the user saves task title or description changes
 - **THEN** the changes do not automatically append a message to any task chat or initiate a new agent execution
+
+#### Scenario: Change attachments without messaging agents
+- **WHEN** the user adds or removes a task attachment in any workflow stage
+- **THEN** no message is appended to any task chat
+- **AND** no agent execution is started
 
 ### Requirement: Open a task drawer
 Activating a task card SHALL open its task drawer, giving access to that task's conversations and supporting task information. The whole card surface SHALL be activatable except for nested controls, which SHALL perform their own action without opening the drawer. A focused card SHALL be activatable from the keyboard.

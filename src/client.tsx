@@ -183,6 +183,40 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   const questionDockServices = createQuestionDockServices({
     bridge,
     sessions: ctx.sessions as unknown as QuestionDockSessions,
+    // An answer's files go through the host upload service and the native prompt, so
+    // the reply is one message carrying real attachments rather than inline text.
+    fileDelivery: {
+      upload: async (sessionId, file) => {
+        const uploads = ctx.get('fileUpload') as {
+          upload?(id: SessionId, data: Uint8Array, name?: string): Promise<{ ok: boolean; value?: { receiptId?: unknown }; error?: { message?: unknown } }>;
+        } | undefined;
+        if (uploads?.upload === undefined) throw new Error('This host cannot upload a file for an answer.');
+        const binary = atob(file.data);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+        // The id is the session this dock was mounted for, so it is already a real
+        // identity; the brand is a compile-time marker, not a runtime check.
+        const result = await uploads.upload(sessionId as never, bytes, file.name);
+        if (!result.ok || typeof result.value?.receiptId !== 'string') {
+          throw new Error(typeof result.error?.message === 'string' ? result.error.message : 'The file could not be uploaded for this answer.');
+        }
+        return result.value.receiptId;
+      },
+      submit: async (sessionId, text, receipts) => {
+        const session = ctx.sessions.binding(sessionId as never)?.session;
+        if (session === undefined) throw new Error('The native conversation is not available. Reopen this conversation and retry.');
+        const result = await session.prompt(
+          [
+            // The receipt type is branded by the upload service, so the cast is the one
+            // place the wire identity is asserted after a successful upload.
+            ...receipts.map(receiptId => ({ type: 'file' as const, receiptId: receiptId as never })),
+            ...(text === '' ? [] : [{ type: 'text' as const, text }]),
+          ],
+          'queue',
+        );
+        if (!result.ok) throw new Error('The answer could not be submitted: ' + result.error.message);
+      },
+    },
   });
   // An older host exposes neither call, and the seat then presents the diagnosis
   // without actions instead of pretending it can check or repair.
@@ -336,7 +370,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: HANDOFF_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, ScriptedHandoffChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
-  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, props => <QuestionDock sessionId={props.sessionId} services={questionDockServices} />));
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, props => <QuestionDock sessionId={props.sessionId} services={questionDockServices} api={bridge.api} />));
   // One diagnosis for every native conversation: the drawer and ordinary chats share it,
   // and it is the only plugin-owned message about a Session that could not open.
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-session-diagnosis', order: 30 }, props => <SessionDiagnosisSeat sessionId={props.sessionId} useSession={props.useSession} port={sessionDiagnosisPort} />));
