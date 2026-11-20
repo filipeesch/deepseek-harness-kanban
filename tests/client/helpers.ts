@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
-import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, HubState, HubTask, KanbanSnapshot, KanbanState } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, HubState, HubTask, KanbanSnapshot, KanbanState, WorkflowExportResult, WorkflowImportPlan, WorkflowImportResult } from '../../src/shared/types.js';
 import { defaultWorktreeDestination, taskTitleSlug } from '../../src/shared/worktree-name.js';
 import { applyInitialEntry, applyMove, applyRunInstruction, createEnteredAtSource } from '../support/in-memory-board.js';
 import { transitions } from '../support/transition-rules.js';
@@ -87,6 +87,14 @@ export interface FakeApiOptions {
   conversationModel?: ConversationModelOutcome;
   /** What became of the board's agent preset on every conversation this fake creates. */
   conversationPreset?: ConversationPresetOutcome;
+  /** The export an `exportWorkflows` call returns; absent refuses the method. */
+  exportResult?: WorkflowExportResult;
+  /** The plan a `readWorkflowImport` call returns; absent refuses the method. */
+  importPlan?: WorkflowImportPlan;
+  /** The result the import command reports; absent derives one from the decisions. */
+  importResult?: WorkflowImportResult;
+  /** Applies one import to the fake state, so a created board appears in the list. */
+  onImport?: (command: Extract<Command, { type: 'hub.workflows.import' }>, hub: HubState) => void;
 }
 
 export function fakeApi(initial: TestSnapshot = fixture(), options: FakeApiOptions = {}) {
@@ -125,6 +133,7 @@ export function fakeApi(initial: TestSnapshot = fixture(), options: FakeApiOptio
       case 'project.save': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; const project = hub.projects.find(item => item.id === input.project.id); if (project) Object.assign(project, input.project); else { const id = 'p' + next++; hub.projects.push({ ...input.project, id, projectKey: input.project.projectKey ?? id }); receipt = { kind: 'project', id }; } break; }
       case 'project.delete': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; hub.projects = hub.projects.filter(project => project.id !== input.projectId); receipt = { kind: 'project', id: input.projectId }; break; }
       case 'retainedCheckout.dismiss': value.retainedCheckouts = value.retainedCheckouts?.filter(entry => !input.paths.includes(entry.path)); break;
+      case 'hub.workflows.import': { const hub = value.state.hubs.find(item => item.id === input.hubId) ?? value.state.hubs[0]!; options.onImport?.(input, hub); publish(); const snapshot = withLegacyView(cloneSnapshot(value)); return { ...snapshot, workflowImport: options.importResult ?? { hubId: hub.id, outcomes: input.decisions.map(decision => ({ name: decision.name, status: decision.settlement === 'skip' ? 'skipped' as const : 'replaced' as const })) } }; }
       case 'settings.save': value.state.settings = { revision: value.state.settings.revision + 1, ...(input.settings.worktreeBasePath ? { worktreeBasePath: input.settings.worktreeBasePath } : {}) }; break;
     }
     const snapshot = publish();
@@ -136,7 +145,9 @@ export function fakeApi(initial: TestSnapshot = fixture(), options: FakeApiOptio
     const branchName = task ? taskTitleSlug(task.title) : 'task';
     return { kind: 'derived' as const, branchName, path: defaultWorktreeDestination({ gitRootPath: project?.gitRootPath, basePath: value.state.settings?.worktreeBasePath, branchName }) };
   });
-  const api: ClientApi = { snapshot: vi.fn(async () => withLegacyView(cloneSnapshot(value))), command, sharing: vi.fn(async () => withLegacyView(cloneSnapshot(value))), localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: request.path ?? '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }), branches: vi.fn(async () => ['main', 'feature']), modelCatalog: vi.fn(async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] })), worktreeDefault, detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })), subscribe: vi.fn(listener => { const wrapped = (snapshot: KanbanSnapshot) => listener(snapshot); listeners.add(wrapped as (snapshot: TestSnapshot) => void); return () => listeners.delete(wrapped as (snapshot: TestSnapshot) => void); }) };
+  const api: ClientApi = { snapshot: vi.fn(async () => withLegacyView(cloneSnapshot(value))), command, sharing: vi.fn(async () => withLegacyView(cloneSnapshot(value))), localDrive: vi.fn(async (request: { action: string; path?: string }) => request.action === 'roots' ? { action: 'roots' as const, discovery: { state: 'empty' as const, locations: [] } } : { action: 'list' as const, page: { rootId: '/drive', path: request.path ?? '/drive', parent: null, entries: [], hasDocument: false, truncated: false, shown: 0 } }), branches: vi.fn(async () => ['main', 'feature']), modelCatalog: vi.fn(async () => ({ default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] })), worktreeDefault, detectProject: vi.fn(async (pathValue: string) => ({ kind: 'folder' as const, projectPath: pathValue })), subscribe: vi.fn(listener => { const wrapped = (snapshot: KanbanSnapshot) => listener(snapshot); listeners.add(wrapped as (snapshot: TestSnapshot) => void); return () => listeners.delete(wrapped as (snapshot: TestSnapshot) => void); }),
+    ...(options.exportResult === undefined ? {} : { exportWorkflows: vi.fn(async () => options.exportResult!) }),
+    ...(options.importPlan === undefined ? {} : { readWorkflowImport: vi.fn(async () => options.importPlan!) }) };
   return { api, command, publish: (snapshot?: KanbanSnapshot) => publish(snapshot), get: () => withLegacyView(cloneSnapshot(value)), listeners };
 }
 

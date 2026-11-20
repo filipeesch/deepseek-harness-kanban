@@ -16,7 +16,7 @@ Deleting a board keeps the projects, worktrees, conversations, and native worksp
 
 ## Board configuration
 
-**Configuration → Boards** lists every board of the Hub with **Edit** and **Delete**, creates boards through the same dialog the header's **+** uses, and opens one board's configuration as an overlay above the list. The overlay edits the board it was opened for, including a board that is not active, and its sub-sections are **General**, **Projects**, **Defaults**, **Workflow**, and **Danger zone**.
+**Configuration → Boards** lists every board of the Hub with **Edit** and **Delete**, creates boards through the same dialog the header's **+** uses, and opens one board's configuration as an overlay above the list. It also carries **Export workflows** and **Import workflows**, which act on a chosen set of boards rather than on one row; [Workflows](workflows.md) describes both. The overlay edits the board it was opened for, including a board that is not active, and its sub-sections are **General**, **Projects**, **Defaults**, **Workflow**, and **Danger zone**.
 
 Only the topmost dialog answers Escape and pointer dismissal, and the layers below it are inert.
 

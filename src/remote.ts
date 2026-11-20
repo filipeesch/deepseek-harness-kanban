@@ -5,13 +5,15 @@ import type { TypertContribution } from '@deepseek-ai/dsh-typert-registry';
 import { KanbanStateSchema } from './domain/hub-schema.js';
 import { problem } from './domain/schema-parts.js';
 import { newTaskSchema } from './shared/task-creation.js';
-import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SessionInspection, SessionRepairResult, SharingAuthView, SharingChangeSummary, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorktreeDefaults } from './shared/types.js';
+import type { Command, DriveBrowseView, DriveDiscoveryView, HostSnapshot, HubSharingView, LocalDriveRequest, LocalDriveResult, Outcome, ProjectLocation, QuestionDraftContent, QuestionFeedFrame, QuestionRound, ModelCatalog, SessionInspection, SessionRepairResult, SharingAuthView, SharingChangeSummary, SharingCommand, SnapshotRequest, StoredQuestionDraft, WorkflowExportRequest, WorkflowExportResult, WorkflowImportPlan, WorkflowImportReadRequest, WorktreeDefaults } from './shared/types.js';
 import { SHARING_STORAGES } from './shared/types.js';
 import type { ScriptedStageReview, ScriptedSummary, ScriptedVariablesView } from './shared/scripted.js';
 import { SCRIPTED_HOLD_CODES, SCRIPTED_PHASES } from './shared/scripted.js';
 import { PENDING_USER_WORK_KINDS } from './domain/pending-user-work.js';
 import { scriptedDefinitionSchema } from './domain/scripted-definition.js';
 import { DECISION_LIMITS, decisionDefinitionSchema } from './domain/decision-definition.js';
+import { workflowExportRequestSchema, workflowExportResultSchema, workflowImportApplyRequestSchema, workflowImportPlanSchema, workflowImportReadRequestSchema, workflowImportResultSchema } from './shared/workflow-transfer-wire.js';
+import { TRANSFER_MAX_COMPRESSED_BYTES } from './domain/workflow-transfer/document.js';
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
@@ -99,6 +101,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
   z.object({type:z.literal('schedule.delete'),hubId:id,scheduleId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
   z.object({type:z.literal('schedule.setEnabled'),hubId:id,scheduleId:id,enabled:z.boolean(),expectedRevision:revision}).strict(),
   z.object({type:z.literal('schedule.runNow'),hubId:id,scheduleId:id}).strict(),
+ z.object({type:z.literal('hub.workflows.import'),hubId:id,archive:z.string().min(1).max(Math.ceil(TRANSFER_MAX_COMPRESSED_BYTES/3)*4+1024),decisions:z.array(z.object({name:z.string().min(1),settlement:z.enum(['replace','copy','skip']),copyName:z.string().min(1).max(200).optional(),targetBoardId:id.nullable().optional()}).strict()).max(500)}).strict(),
 ]);
 export const QuestionPageSchema=z.object({question:z.string(),type:z.enum(['exclusive','non_exclusive','freetext']),context:z.string().optional(),options:z.array(z.object({title:z.string(),description:z.string()}).strict()).optional(),weight:z.enum(['critical','medium','easy']).optional(),model_lean:z.string().optional(),model_lean_reason:z.string().optional(),answers_affect_followup:z.boolean().optional()}).strict();
 export const QuestionRoundSchema=z.object({id:z.string(),sessionId:z.string(),turnId:z.string(),pages:z.array(z.object({callId:z.string(),sequence:z.number(),page:QuestionPageSchema}).strict()),complete:z.boolean(),answered:z.boolean()}).strict();
@@ -159,7 +162,7 @@ const scriptedHoldSchema=z.object({code:z.enum(SCRIPTED_HOLD_CODES),at:z.string(
 export const ScriptedSummarySchema:z.ZodType<ScriptedSummary>=z.object({entryId:id,executionId:id,phase:z.enum(SCRIPTED_PHASES),startedAt:z.string(),attempt:z.number().int().nonnegative(),restartCount:z.number().int().nonnegative(),deliveryStatus:z.enum(['pending','accepted','failed']).optional(),error:ProblemSchema.optional(),exit:z.string().optional(),message:z.string().optional(),savedVersionChanged:z.boolean().optional(),fingerprint:z.string().optional(),parameters:z.record(z.string().min(1).max(64),z.string().min(1).max(4096)).optional(),hold:scriptedHoldSchema.optional()}).strict();
 export const ScriptedStageReviewSchema:z.ZodType<ScriptedStageReview>=z.object({stage:z.object({boardId:id,stageId:id,stageIdentity:id,name:z.string()}).strict(),version:z.object({fingerprint:z.string(),stageGeneration:z.string(),captured:z.boolean(),directoryDependent:z.boolean(),representative:z.object({projectId:id,projectName:z.string(),directory:z.string()}).strict().optional()}).strict(),code:z.string(),language:z.enum(['bash','typescript']),directory:z.enum(['task','project']),source:z.object({kind:z.enum(['inline','file']),reference:z.string().optional()}).strict(),exits:z.record(z.string(),id),env:z.array(z.string()),params:z.array(z.object({name:z.string(),description:z.string().optional()}).strict()),approval:z.enum(['approved','required']),waitingCards:z.number().int().nonnegative().optional(),captured:z.object({taskId:id,entryId:id,executionDirectory:z.string()}).strict().optional()}).strict();
 export const ScriptedVariablesSchema:z.ZodType<ScriptedVariablesView>=z.object({env:z.array(z.string()),variables:z.array(z.object({name:z.string(),configured:z.boolean()}).strict())}).strict();
-export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note','schedule']),id,model:z.object({requested:modelSelection,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional(),inUse:modelSelection.optional()}).strict().optional(),preset:z.object({requested:id,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional()}).strict().optional()}).strict().optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),conversationObservations:z.record(z.string(),SessionObservationSchema).optional(),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),scheduleRuntime:z.record(z.string(),z.record(z.string(),scheduleRuntimeView)).optional(),scripted:z.record(z.string(),ScriptedSummarySchema).optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string(),reason:z.enum(['folder','unresolved'])}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
+export const SnapshotSchema:z.ZodType<HostSnapshot>=z.object({commandReceipt:z.object({kind:z.enum(['hub','board','project','task','conversation','note','schedule']),id,model:z.object({requested:modelSelection,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional(),inUse:modelSelection.optional()}).strict().optional(),preset:z.object({requested:id,applied:z.boolean(),reason:z.enum(['unavailable','unsupported','failed']).optional()}).strict().optional()}).strict().optional(),workflowImport:workflowImportResultSchema.optional(),state:KanbanStateSchema.optional(),stateRevision:z.number().int().nonnegative(),conversations:z.record(z.string(),ConversationFactsSchema),conversationObservations:z.record(z.string(),SessionObservationSchema).optional(),sharing:z.record(z.string(),HubSharingViewSchema),sharingAuth:SharingAuthViewSchema.optional(),scheduleRuntime:z.record(z.string(),z.record(z.string(),scheduleRuntimeView)).optional(),scripted:z.record(z.string(),ScriptedSummarySchema).optional(),retainedCheckouts:z.array(z.object({path:z.string(),projectId:id,taskTitle:z.string(),reason:z.enum(['folder','unresolved'])}).strict()).optional(),sequence:z.number().int().nonnegative()}).strict();
 export const SharingCommandSchema:z.ZodType<SharingCommand>=z.discriminatedUnion('type',[
  z.object({type:z.literal('sharing.connect'),hubId:id,provider:sharingStorage.optional(),settings:z.record(z.string(),z.string()).optional(),repository:z.string().min(1).max(2048).optional(),intervalMinutes:z.number().int().min(0).max(1440).optional()}).strict(),
  z.object({type:z.literal('sharing.receive'),hubId:id}).strict(),
@@ -202,6 +205,8 @@ const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
  'kanban/scriptedVariables':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('ScriptedVariablesOutcome',()=>outcome(ScriptedVariablesSchema))},
  'kanban/modelCatalog':{...base,parameters:[parameter('request',z.object({refresh:z.boolean().optional()}).strict(),'ModelCatalogLookup')],result:codec('ModelCatalogOutcome',()=>outcome(ModelCatalogSchema))},
  'kanban/mcpServers':{...base,parameters:[parameter('request',z.object({}).strict(),'McpServerLookup')],result:codec('McpServersOutcome',()=>outcome(z.array(z.string())))},
+ 'kanban/exportWorkflows':{...base,parameters:[parameter('request',workflowExportRequestSchema,'WorkflowExportRequest')],result:codec('WorkflowExportOutcome',()=>outcome(workflowExportResultSchema))},
+ 'kanban/readWorkflowImport':{...base,parameters:[parameter('request',workflowImportReadRequestSchema,'WorkflowImportReadRequest')],result:codec('WorkflowImportPlanOutcome',()=>outcome(workflowImportPlanSchema))},
  'kanban/questionsFollow':{...base,mode:'stream',parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],cancellation:{parameter:'signal'},result:codec('QuestionFeedFrame',()=>QuestionFeedFrameSchema)},
  'kanban/follow':{...base,mode:'stream',parameters:[],cancellation:{parameter:'signal'},result:codec('Snapshot',()=>SnapshotSchema)},
 }},z);
@@ -223,6 +228,9 @@ export interface KanbanRemote {
  scriptedVariables(request:{taskId:string}):Promise<RemoteResult<Outcome<ScriptedVariablesView>>>;
  modelCatalog(request:{refresh?:boolean}):Promise<RemoteResult<Outcome<ModelCatalog>>>;
  mcpServers(request:Record<string,never>):Promise<RemoteResult<Outcome<string[]>>>;
+ /** Absent on a host that predates the transfer surface; the client then offers no action. */
+ exportWorkflows?(request:WorkflowExportRequest):Promise<RemoteResult<Outcome<WorkflowExportResult>>>;
+ readWorkflowImport?(request:WorkflowImportReadRequest):Promise<RemoteResult<Outcome<WorkflowImportPlan>>>;
  questionsFollow(request:{sessionId:string},signal?:AbortSignal):RemoteStreamHandle<QuestionFeedFrame,never>;
  follow(signal?:AbortSignal):RemoteStreamHandle<HostSnapshot, never>;
 }
@@ -232,7 +240,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   'kanban/scriptedReview':KanbanRemote['scriptedReview'];
   'kanban/scriptedVariables':KanbanRemote['scriptedVariables'];
   'kanban/snapshot':KanbanRemote['snapshot']; 'kanban/command':KanbanRemote['command']; 'kanban/sharing':KanbanRemote['sharing'];
-  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/sessionInspect':KanbanRemote['sessionInspect']; 'kanban/sessionRepair':KanbanRemote['sessionRepair']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/saveQuestionDraft':KanbanRemote['saveQuestionDraft']; 'kanban/modelCatalog':KanbanRemote['modelCatalog']; 'kanban/mcpServers':KanbanRemote['mcpServers']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
+  'kanban/branches':KanbanRemote['branches']; 'kanban/worktreeDefault':KanbanRemote['worktreeDefault']; 'kanban/detectProject':KanbanRemote['detectProject']; 'kanban/sessionInspect':KanbanRemote['sessionInspect']; 'kanban/sessionRepair':KanbanRemote['sessionRepair']; 'kanban/localDrive':KanbanRemote['localDrive']; 'kanban/dismissQuestions':KanbanRemote['dismissQuestions']; 'kanban/saveQuestionDraft':KanbanRemote['saveQuestionDraft']; 'kanban/modelCatalog':KanbanRemote['modelCatalog']; 'kanban/mcpServers':KanbanRemote['mcpServers']; 'kanban/exportWorkflows':KanbanRemote['exportWorkflows']; 'kanban/readWorkflowImport':KanbanRemote['readWorkflowImport']; 'kanban/questionsFollow':KanbanRemote['questionsFollow']; 'kanban/follow':KanbanRemote['follow'];
  }
 }
 export default TYPERT_REMOTE;

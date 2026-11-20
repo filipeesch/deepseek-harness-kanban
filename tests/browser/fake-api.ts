@@ -1,4 +1,4 @@
-import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SessionObservation, SharingCommand } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Command, ConversationModelOutcome, ConversationPresetOutcome, ModelSelection, DriveBrowseView, DriveDiscoveryView, HubSchedule, HubScheduleRuntime, HubSharingView, HubState, HubTask, KanbanSnapshot, KanbanState, LocalDriveRequest, LocalDriveResult, Note, SessionObservation, SharingCommand, WorkflowExportResult, WorkflowImportPlan } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { requireProjectPath } from '../../src/shared/project.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
@@ -31,7 +31,9 @@ export interface HarnessOptions { scripted?: import('../../src/shared/scripted.j
   /** What the board's default preset outcome is on every conversation this fake creates. */
   conversationPreset?: ConversationPresetOutcome;
   /** Conversations the plugin could not observe, keyed by Session id. */
-  conversationObservations?: Record<string, SessionObservation>; }
+  conversationObservations?: Record<string, SessionObservation>;
+  /** Exposes the transfer reads and answers them with a fixed plan, for the export/import surfaces. */
+  transfer?: { exportResult?: WorkflowExportResult; importPlan?: WorkflowImportPlan }; }
 
 const now = '2026-10-21T00:00:00Z';
 
@@ -498,6 +500,8 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       return drivePage(request);
     },
     subscribe: listener => { const wrapped = (snapshot: TestSnapshot) => listener(snapshot); listeners.add(wrapped); return () => listeners.delete(wrapped); },
+    ...(options.transfer?.exportResult === undefined ? {} : { exportWorkflows: async () => options.transfer!.exportResult! }),
+    ...(options.transfer?.importPlan === undefined ? {} : { readWorkflowImport: async () => options.transfer!.importPlan! }),
   };
   const mutate = (change: (state: TestSnapshot['state']) => void): void => { change(value.state); publish(); };
   return { api, snapshot: () => withLegacy(clone(value)), commands: () => structuredClone(commands), sharingCommands: () => structuredClone(sharingCommands), mutate };
