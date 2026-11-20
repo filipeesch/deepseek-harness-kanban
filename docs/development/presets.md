@@ -32,7 +32,9 @@ Keep a role preset independent of any board: no stage, handoff sequence, approva
 
 ## The read-only guarantee
 
-Keep the read-only guarantee real. The planner mounts file tools without write or edit, and its session is pinned to the sandbox's read-only mode at every agent start, including a resumed conversation and an inherited delegated child. A pin the host records is a person-owned setting: the guarantee is that the agent starts confined and cannot widen it, never that a person cannot.
+Keep the confinement guarantee real. The planner mounts file tools without write or edit, and its session is pinned to the sandbox's read-only mode at every agent start, including a resumed conversation and an inherited delegated child. A pin the host records is a person-owned setting: the guarantee is that the agent starts confined and cannot widen it, never that a person cannot.
+
+The role has exactly one write capability: the plan tools `write_plan` and `patch_plan`, declared only for the planner preset through the gate in [the product tools](<../../src/host/tools/index.ts>) and confined to `plans/<segment>/` in the conversation workspace. Keep that exception narrow. A plan write passes its own per-call sandbox policy rooted at the plan directory, so it never consults the session mode and never widens it; the confinement is enforced by the plugin and again by the host, so neither check is trusted alone. Do not relax the pin, mount a general write or edit tool, or add an escalation argument to make a planner task work: work that touches code belongs to a card.
 
 ## The manager
 
