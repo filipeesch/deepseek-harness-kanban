@@ -189,6 +189,28 @@ describe('shipped agent presets', () => {
     expect(gate.config).toMatchObject({ denyMcp: false });
   });
 
+  it('gives the planner the plan tools as its only write capability', async () => {
+    const { presets } = await composition();
+    const planner = presets[1]!;
+    const entries = allowed(planner);
+    for (const name of ['write_plan', 'patch_plan']) expect(entries, name).toContain(name);
+    // The plan tools are the only write path: no general file write is mounted.
+    expect(plugin(planner, 'tool-fs')!.config).toMatchObject({ write: false, edit: false });
+    // Neither plan tool carries an escalation field in the composition either.
+    const names = planner.plugins.map(entry => entry.name);
+    expect(names).not.toContain('@deepseek-ai/dsh-tool-str-replace-editor');
+  });
+
+  it('withholds the plan tools from every other role', async () => {
+    const { presets } = await composition();
+    for (const preset of [presets[0]!, presets[2]!, presets[3]!]) {
+      const entries = preset.plugins.find(entry => entry.id === 'preset-tools');
+      const list = (entries?.config?.allow ?? []) as string[];
+      expect(list, preset.definition.id).not.toContain('write_plan');
+      expect(list, preset.definition.id).not.toContain('patch_plan');
+    }
+  });
+
   it('lets the planner plan and write cards but never administer a board', async () => {
     const { presets } = await composition();
     const entries = allowed(presets[1]!);

@@ -12,7 +12,7 @@ Acceptance uses a scripted, test-only model adapter. No real-model request is pa
 
 ## Composition scenarios
 
-The manual lane selects one scenario with `--only`: `background-delete`, `board`, `conversation`, `deletion`, `hubs`, `schedules`, `override`, `native-drawer`, `sidebar`, `auto-run`, `auto-mode`, `declared`, `create-start`, `prepare`, `board-model`, `project`, `messages`, `history`, `workflow-architect`, `scripted`, `sharing`, or `transit`. Running without `--only` flattens every group.
+The manual lane selects one scenario with `--only`: `background-delete`, `board`, `conversation`, `deletion`, `hubs`, `schedules`, `override`, `native-drawer`, `sidebar`, `auto-run`, `auto-mode`, `declared`, `create-start`, `prepare`, `board-model`, `project`, `messages`, `history`, `workflow-architect`, `planner`, `scripted`, `sharing`, or `transit`. Running without `--only` flattens every group.
 
 ## Isolated web instance
 

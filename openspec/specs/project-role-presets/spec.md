@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Ship two agent presets for the two project roles: one that investigates and plans a project without
-writing to its repositories, and one that orchestrates a project's cards while writing nothing on
-them.
+Ship two agent presets for the two project roles: one that investigates and plans a project, writing
+its plan as a Markdown file and nothing else in the workspace, and one that orchestrates a project's
+cards while writing nothing on them.
 
 ## Requirements
 
@@ -36,26 +36,43 @@ NOT name one in its persona or its skill.
 - **THEN** they name no board, Hub, project, stage, or route of any authored workflow
 - **AND** the behavior a project needs is left to the stage instructions of the board that selects the preset
 
-### Requirement: The planner works without writing
+### Requirement: The planner writes only plan files
 
-The planner preset SHALL expose file reading and file search and SHALL NOT expose a tool that
-writes, edits, or deletes a file. It SHALL expose a shell tool, and the sandbox mode of the session
-that owns the planner agent SHALL be pinned to `read-only` when that agent starts and again when it
-resumes, so a shell command that attempts a file change is denied by the sandbox instead of relying
-on the agent's obedience. The planner's delegated children SHALL run under the same boundary: a child
-started without an explicit preset SHALL join the parent's preset revision, and that child's session
-SHALL be pinned to `read-only` as well. Pinning SHALL be recorded on the session and SHALL NOT
-change the installation default. The preset SHALL NOT prevent a person from widening that session's
-sandbox mode through the host's own permission control, and the pin SHALL be restored the next time
-the agent starts.
+The planner preset SHALL expose file reading, file search, and a shell tool, and SHALL NOT expose a
+tool that writes, edits, or deletes anything in the conversation workspace except a plan file.
+Hub team files are a separate authorization scope rather than a location inside the conversation
+workspace: the planner keeps its team-file tools, and those writes are governed by the Hub team
+storage the person bound, under that storage provider rules. The guarantee this requirement states
+is about the conversation workspace, where the plan is the only file the planner may write. Its only
+write capability SHALL be the plan tools `write_plan` and `patch_plan`, confined to
+`plans/<segment>/` inside the calling conversation's workspace. The sandbox mode of the session that
+owns the planner agent SHALL remain pinned to `read-only` when that agent starts and again when it
+resumes; the filesystem tools SHALL remain mounted without write and edit, and a shell command that
+attempts a file change SHALL continue to be denied by the sandbox. A plan write SHALL reach its
+confined target through a sandbox policy the tool supplies for that call, and that policy SHALL NOT
+be available to any other tool, caller, or path. The pin SHALL be recorded on the session and SHALL
+NOT change the installation default. The planner's delegated children SHALL run under the same
+boundary: a child started without an explicit preset SHALL join the parent's preset revision and
+SHALL be pinned to `read-only` as well, and a child SHALL therefore hold the plan tools and the same
+confinement without gaining any other write. The preset SHALL NOT prevent a person from widening that
+session's sandbox mode through the host's own permission control, and the pin SHALL be restored the
+next time the agent starts.
 
-#### Scenario: Writing through the file tools is unavailable
+#### Scenario: Writing outside the plan directory is unavailable
 
 - **WHEN** the planner's declared tool set is read
-- **THEN** it contains file read and file search tools
-- **AND** it contains no tool that writes, edits, or deletes a file
+- **THEN** it contains file read and file search tools and a shell tool
+- **AND** the only tools it contains that write the conversation workspace are `write_plan` and `patch_plan`
+- **AND** it contains no tool that writes, edits, or deletes any other file there
+- **AND** its team-file tools are authorized by the bound Hub storage provider, independent of this workspace
 
-#### Scenario: A shell write is denied
+#### Scenario: The planner writes its plan
+
+- **WHEN** the planner writes or patches a plan file inside `plans/<segment>/`
+- **THEN** the file is created or updated at that path in the conversation's workspace
+- **AND** the session's sandbox mode is still read-only afterwards
+
+#### Scenario: A shell write stays denied
 
 - **WHEN** the planner runs a shell command that creates or changes a file in its working directory
 - **THEN** the sandbox denies the file change and reports the denial
@@ -71,7 +88,7 @@ the agent starts.
 - **WHEN** the planner starts a child without selecting a different preset
 - **THEN** the child runs on the planner preset revision
 - **AND** the child's session sandbox mode is read-only
-
+- **AND** the child cannot write outside the plan directory
 ### Requirement: The manager surface stays inside the board
 
 The manager preset SHALL expose no file tool, no shell tool, no web tool, and no delegation tool. Its
@@ -106,11 +123,12 @@ its role receives. Every product tool outside that allowlist SHALL be absent fro
 declared tool set, in the terms stated by Product tools are declared per role in `product-tools`.
 The planner's allowlist SHALL cover board, card, and project reading, card creation, editing, and
 deletion, relations, shared notes, task messages, transitions, pause and resume, team files
-including deletion, and the structured-question tool. The manager's allowlist SHALL cover board,
-card, and project reading, shared notes, task messages, transitions, pause and resume, and the
-structured-question tool. Neither role's allowlist SHALL cover board administration or workflow
-authoring, and neither SHALL include the host's native question tool, so a question to the person
-goes through the structured-question tool.
+including deletion, the plan file tools, and the structured-question tool. The manager's allowlist
+SHALL cover board, card, and project reading, shared notes, task messages, transitions, pause and
+resume, and the structured-question tool. Neither role's allowlist SHALL cover board administration
+or workflow authoring, and neither SHALL include the host's native question tool, so a question to
+the person goes through the structured-question tool. The manager's allowlist SHALL NOT carry the
+plan file tools.
 
 The planner SHALL hold card deletion, because the role that agrees a project card breakdown is
 the role that has to retire a card the person dropped. The manager SHALL NOT hold it, because the
@@ -138,6 +156,11 @@ manager writes nothing on cards.
 - **WHEN** the planner's allowlist is read
 - **THEN** it contains the card creation, card editing, and card deletion tool names
 - **AND** it still contains no board administration or workflow authoring tool
+
+#### Scenario: The manager cannot write a plan
+
+- **WHEN** the manager's allowlist is read
+- **THEN** it does not contain `write_plan` or `patch_plan`
 
 #### Scenario: Questions go through the structured-question tool
 

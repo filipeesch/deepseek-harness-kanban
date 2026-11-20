@@ -35,6 +35,7 @@ export const PRODUCT_TOOL_NAMES: readonly string[] = [
   'list_hubs',
   'list_notes',
   'list_projects',
+  'patch_plan',
   'pause_task',
   'read_team_file',
   'remove_stage',
@@ -53,4 +54,5 @@ export const PRODUCT_TOOL_NAMES: readonly string[] = [
   'update_board',
   'update_note',
   'validate_workflow',
+  'write_plan',
 ];
