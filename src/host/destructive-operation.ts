@@ -14,11 +14,12 @@ import { TaskBindingIndex } from './task-binding-index.js';
 import { TaskTeardown, type TeardownOutcome } from './task-teardown.js';
 import { WorktreeSharingGuard } from './worktree-sharing.js';
 import { recordSettledOperation } from './worktree-history.js';
+import { removeTaskCascade } from '../domain/hub-operations.js';
 
 export interface DestructiveStore {
   locate(taskId: string): { task: Task; project: Project; hub: HubState };
   worktreeBindings(): readonly WorktreeBinding[];
-  transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
+  transactTask<T>(taskId: string, change: (draft: HubState) => T, beforeCommit?: () => void): Promise<T>;
 }
 
 /** Narrow view of the coordinator that destructive execution needs. */
@@ -189,8 +190,9 @@ export class DestructiveExecution {
     if (affected.length > 0 && target !== undefined) await this.markAffectedBindings(taskId, target, affected);
     await this.store.transactTask(taskId, state => {
       if (requireTask(state, taskId).operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The deletion operation changed.');
-      state.notes = state.notes.filter(note => note.taskId !== taskId);
-      state.tasks = state.tasks.filter(item => item.id !== taskId);
+      // The cascade removes the card, its notes, and its relations in this same
+      // mutation; a relation left behind would make the Hub invalid state.
+      removeTaskCascade(state, taskId);
     });
     try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
     if (retainedPath !== undefined) {

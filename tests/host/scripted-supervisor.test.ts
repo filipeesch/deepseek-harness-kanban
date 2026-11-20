@@ -667,3 +667,26 @@ describe('scripted failure settlement by origin', () => {
   });
 });
 
+
+describe('the read-only context assertion', () => {
+  it('refuses a task whose scripted execution is still active', async () => {
+    const h = harness();
+    await h.edit(value => { Object.assign(value.task.scripted!, { phase: 'active', attempt: 1, attemptId: 'live' }); });
+    const s = h.supervisor();
+    await expect(s.assertContextFree('task')).rejects.toMatchObject({ code: 'EXECUTION_CONTEXT_CHANGED' });
+    // Nothing was stopped, reclaimed, written, or rescheduled.
+    expect(h.reclaims).toEqual([]);
+    expect(h.control()).toMatchObject({ phase: 'active', attemptId: 'live' });
+    await h.close();
+  });
+
+  it('passes a task whose execution is stopped and leaves it alone', async () => {
+    const h = harness();
+    await h.edit(value => { Object.assign(value.task.scripted!, { phase: 'stopped' }); });
+    const s = h.supervisor();
+    await expect(s.assertContextFree('task')).resolves.toBeUndefined();
+    expect(h.reclaims).toEqual([]);
+    expect(h.control()).toMatchObject({ phase: 'stopped' });
+    await h.close();
+  });
+});

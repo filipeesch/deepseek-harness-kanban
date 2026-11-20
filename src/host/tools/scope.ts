@@ -76,3 +76,11 @@ export async function assertBoardWriteAllowed(app:KanbanApp,exec:ToolRunContext)
  catch(error){throw new KanbanError('BOARD_ADMIN_REQUIRES_ORDINARY_CHAT','Board changes require an ordinary DSH chat, and this conversation could not be verified as one.',{cause:error instanceof Error?error.message:String(error)});}
  if(ownedSessionIds(roots,lineage).has(sessionId))throw new KanbanError('BOARD_ADMIN_REQUIRES_ORDINARY_CHAT','Board changes are available only in an ordinary DSH chat, not in a task-owned conversation.');
 }
+/** One Hub a scoped tool acts in, already resolved and validated. */
+export interface HubScope { hubId: string; hub: HubState }
+
+/** One explicitly named Hub, required to exist. */
+export function hubScope(app:KanbanApp,hubId:string):HubScope{
+ const hub=app.hubs.requireHub(hubId);
+ return {hubId:hub.id,hub};
+}

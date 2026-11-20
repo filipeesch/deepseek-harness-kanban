@@ -28,11 +28,11 @@ Updating source alone does not update an installation: build and update or recon
 
 It writes the plan as a file and nothing else. `write_plan` creates or replaces a Markdown plan, and `patch_plan` applies literal replacements to one that exists; both write at `plans/<segment>/<file>.md` in the conversation workspace, where the segment is the card title in a task conversation or a project name you supply in an ordinary chat.
 
-It still reads repositories and runs shell commands under a session pinned to the sandbox's read-only mode, holds the card and note tools it needs to plan, and has web access and delegation. Its delegated children join the same preset revision and are pinned the same way. Reading a plan uses the host file tools. It never stages or commits a plan, and it cannot administer a board or edit a workflow.
+It still reads repositories and runs shell commands under a session pinned to the sandbox's read-only mode, holds the card and note tools it needs to plan, including deleting a card at your request, and has web access and delegation. Its delegated children join the same preset revision and are pinned the same way. Reading a plan uses the host file tools. It never stages or commits a plan, and it cannot administer a board or edit a workflow.
 
 ## Kanban Project Manager
 
-**Kanban Project Manager** (`kanban-project-manager`) coordinates a project's cards. It has no file, shell, web, delegation, or MCP tool, and no product tool that creates, edits, or relates a card: it reads the board, writes shared notes, messages other cards, declares its own card's next transition, and pauses or resumes its own automatic advance. A change of scope or requirements goes to the planner, never to a card the manager edits itself.
+**Kanban Project Manager** (`kanban-project-manager`) coordinates a project's cards. It has no file, shell, web, delegation, or MCP tool, and no product tool that creates, edits, deletes, or relates a card: it reads the board, writes shared notes, messages other cards, declares its own card's next transition, and pauses or resumes its own automatic advance. A change of scope or requirements goes to the planner, never to a card the manager edits itself.
 
 ## How a role receives its tools
 

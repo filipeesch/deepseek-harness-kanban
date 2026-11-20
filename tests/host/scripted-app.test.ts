@@ -8,6 +8,7 @@ import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import type { ScriptedCapture } from '../../src/shared/scripted.js';
 import type { CaptureRequest, ScriptedApprovalScope, ScriptedRuntime, ScriptedScope, ExecuteRequest, ExecutionOutcome } from '../../src/host/scripted/ports.js';
 import { normalizeCapture as normalizeStoredCapture } from '../../src/host/scripted/capture.js';
+import { createScriptedLease } from '../../src/host/scripted/index.js';
 import { SnapshotSchema } from '../../src/remote.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { productToolDefinitions } from '../../src/host/tools.js';
@@ -122,7 +123,9 @@ async function attempt(runtime: FakeNativeRuntime, index = 0) { await expect.pol
 function complete(run: NativeAttempt, exit = 'manual', message = 'Synthetic CI passed'): void { run.resolve({ kind: 'completed', completion: { exit, message }, diagnostics: [] }); }
 async function reopen(f: Awaited<ReturnType<typeof setup>>) {
   const hubs = await HubRepository.open(f.storage);
-  const app = new KanbanApp(hubs, f.sessions, f.git, {}, f.workspaces); extraApps.push(app);
+  // The real composition wires the filesystem lease reader beside the runtime, because
+  // attaching execution is what makes a lease possible.
+  const app = new KanbanApp(hubs, f.sessions, f.git, { scriptedLease: createScriptedLease(path.join(f.root, 'kanban-private', 'scripted')) }, f.workspaces); extraApps.push(app);
   app.attachScriptedRuntime(f.runtime); await app.initialize();
   return { hubs, app };
 }

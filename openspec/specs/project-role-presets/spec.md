@@ -121,14 +121,18 @@ every server stays out of its reach unless a future change composes one delibera
 Each project-role preset SHALL declare, in its own composition, the allowlist of product tool names
 its role receives. Every product tool outside that allowlist SHALL be absent from that agent's
 declared tool set, in the terms stated by Product tools are declared per role in `product-tools`.
-The planner's allowlist SHALL cover board, card, and project reading, card creation and editing,
-relations, shared notes, task messages, transitions, pause and resume, team files including deletion,
-the plan file tools, and the structured-question tool. The manager's allowlist SHALL cover board,
-card, and project reading, shared notes, task messages, transitions, pause and resume, and the
-structured-question tool. Neither role's allowlist SHALL cover board administration or workflow
-authoring, and neither SHALL include the host's native question tool, so a question to the person
-goes through the structured-question tool. The manager's allowlist SHALL NOT carry the plan file
-tools.
+The planner's allowlist SHALL cover board, card, and project reading, card creation, editing, and
+deletion, relations, shared notes, task messages, transitions, pause and resume, team files
+including deletion, the plan file tools, and the structured-question tool. The manager's allowlist
+SHALL cover board, card, and project reading, shared notes, task messages, transitions, pause and
+resume, and the structured-question tool. Neither role's allowlist SHALL cover board administration
+or workflow authoring, and neither SHALL include the host's native question tool, so a question to
+the person goes through the structured-question tool. The manager's allowlist SHALL NOT carry the
+plan file tools.
+
+The planner SHALL hold card deletion, because the role that agrees a project card breakdown is
+the role that has to retire a card the person dropped. The manager SHALL NOT hold it, because the
+manager writes nothing on cards.
 
 #### Scenario: A tool outside the allowlist is absent
 
@@ -140,6 +144,18 @@ tools.
 
 - **WHEN** the manager's allowlist is read
 - **THEN** it does not contain the card creation or card editing tool names
+
+#### Scenario: The manager cannot delete a card
+
+- **WHEN** the manager's allowlist is read
+- **THEN** it does not contain the card deletion tool name
+- **AND** a manager conversation that needs a card removed asks the person or the planner instead
+
+#### Scenario: The planner can delete a card
+
+- **WHEN** the planner's allowlist is read
+- **THEN** it contains the card creation, card editing, and card deletion tool names
+- **AND** it still contains no board administration or workflow authoring tool
 
 #### Scenario: The manager cannot write a plan
 

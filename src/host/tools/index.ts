@@ -6,6 +6,7 @@ import { KanbanError } from '../../shared/errors.js';
 import type { TaskActivitySource } from '../../domain/task-activity.js';
 import { discoveryTools } from './discovery.js';
 import { cardTools } from './cards.js';
+import { cardDeletionTools } from './deletion.js';
 import { relationTools } from './relations.js';
 import { noteTools } from './notes.js';
 import { boardTools } from './boards.js';
@@ -45,6 +46,7 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
  return [
   ...discoveryTools(app,boards),
   ...cardTools(app,extras.activity),
+  ...cardDeletionTools(app),
   ...relationTools(app),
   ...noteTools(app),
   ...boardTools(app,boards),

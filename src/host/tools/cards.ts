@@ -6,7 +6,7 @@ import { relationsOf } from '../../domain/card-relation.js';
 import { UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityOptions, type TaskActivitySource } from '../../domain/task-activity.js';
 import { compactCard, detailCard, detailRelations, directChildren, plainCard, type EpicRollup } from '../card-projection.js';
 import { flag, normal, text } from './support.js';
-import { requireTask, resolveBoard, taskContext, type ToolArgs } from './scope.js';
+import { hubScope, requireTask, resolveBoard, taskContext, type ToolArgs } from './scope.js';
 
 /** The largest card read a batch accepts; a larger request is truncated, not refused. */
 const BATCH_CARD_LIMIT = 100;
@@ -20,18 +20,22 @@ interface CardScope { hubId: string; hub: HubState; boardId?: string }
  * neither is rejected instead of guessing from the interface.
  */
 function resolveCardScope(app: KanbanApp, args: ToolArgs, exec: Parameters<typeof taskContext>[1]): CardScope {
+  // A named Hub owns the scope; a board identifier then has to belong to it.
   if (args.hub_id !== undefined) {
-    const hub = app.hubs.requireHub(args.hub_id);
-    if (args.board_id === undefined) return { hubId: hub.id, hub };
-    const board = hub.boards.find(value => value.id === args.board_id);
+    const scope = hubScope(app, args.hub_id);
+    if (args.board_id === undefined) return scope;
+    const board = scope.hub.boards.find(value => value.id === args.board_id);
     invariant(board, 'BOARD_NOT_FOUND', 'Board does not exist in the selected Hub.');
-    return { hubId: hub.id, hub, boardId: board.id };
+    return { ...scope, boardId: board.id };
   }
+  // A board identifier alone is resolved across Hubs, because the board is the scope.
   if (args.board_id !== undefined) {
     const found = app.hubs.findBoard(args.board_id);
     invariant(found, 'BOARD_NOT_FOUND', 'Board does not exist.');
     return { hubId: found.hubId, hub: found.hub, boardId: found.board.id };
   }
+  // Neither identifier: the calling task owns both the Hub and the board, so one
+  // lookup answers both halves of the scope.
   const located = taskContext(app, exec);
   invariant(located, 'BOARD_CONTEXT_REQUIRED', 'Pass board_id or hub_id, or use a conversation belonging to a task.');
   return { hubId: located.hubId, hub: located.hub, boardId: located.board.id };
