@@ -12,6 +12,7 @@ export const PRODUCT_TOOL_NAMES: readonly string[] = [
   'create_team_file',
   'decision_request',
   'delete_board',
+  'delete_card',
   'delete_relation',
   'delete_team_file',
   'diff_board_revisions',

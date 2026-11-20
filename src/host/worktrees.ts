@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { KanbanError, problem } from '../shared/errors.js';
+import { KanbanError, invariant, problem } from '../shared/errors.js';
 import type { GitPort, GitRepository, GitTree, SessionPort } from '../shared/ports.js';
 import type { CheckoutObservation, ContextOperation, CreateWorktreeInput, GitProject, HubState, OperationRequest, Project, RetainedCheckoutReason, Task, WorktreeDefaults } from '../shared/types.js';
 import { canonicalPath } from './git.js';
@@ -14,7 +14,7 @@ import { ConversationProbe } from './conversation-probe.js';
 import { TaskBindingIndex } from './task-binding-index.js';
 import type { OperationPass } from './destructive-operation.js';
 import type { WorktreeBinding } from './hub-repository.js';
-import { replaceableByDeletion } from '../shared/context-operation.js';
+import { assertFreshDestructiveJournal, replaceableByDeletion } from '../shared/context-operation.js';
 import { recordSettledOperation } from './worktree-history.js';
 import { CreateAttempt, unverifiedAttempt } from './worktree-create-attempt.js';
 import { CheckoutStateProbe } from './worktree-checkout-state.js';
@@ -23,7 +23,7 @@ import { CreateFailureClassifier } from './worktree-create-failure.js';
 
 export interface WorktreeStore {
   locate(taskId: string): { hubId: string; hub: HubState; task: Task; project: Project };
-  transactTask<T>(taskId: string, change: (draft: HubState) => T): Promise<T>;
+  transactTask<T>(taskId: string, change: (draft: HubState) => T, beforeCommit?: () => void): Promise<T>;
   /** The lightweight binding projection every destructive decision reads. */
   worktreeBindings(): readonly WorktreeBinding[];
   /** Whether any task holds a context operation; the resume path avoids cloning Hubs when it is false. */
@@ -35,6 +35,30 @@ export interface WorktreeStore {
 export type WorktreeRequest = OperationRequest | ({ kind: 'create' } & CreateWorktreeInput);
 /** Derives the collision-free title defaults creation uses when the request omits them. */
 export interface WorktreeDefaultsPort { derive(taskId: string): Promise<WorktreeDefaults> }
+/**
+ * Host-only policy a request call may carry. It never comes from the wire, so a
+ * client cannot claim to be admitted on behalf of an agent tool.
+ */
+export interface WorktreeRequestOptions {
+  /** Queue the operation and return without waiting for its cleanup. */
+  background?: boolean;
+  /**
+   * Cancellation of the caller that admitted this deletion. It is honored until the
+   * journal is written and never after, so an admitted deletion always finishes or
+   * fails through its own recovery surfaces instead of vanishing.
+   */
+  signal?: AbortSignal;
+  /**
+   * Refuse a journal that already failed, so no surface repeats a force or
+   * discard consent it did not state. Checked inside the per-task lane.
+   */
+  freshDestructive?: boolean;
+  /**
+   * Clear the card's pending transition inside the same transaction that records the
+   * journal, so no refusal or cancellation can leave the card with one and not the other.
+   */
+  clearPending?: boolean;
+}
 export interface WorktreeCoordinatorOptions { signal?: AbortSignal; id?: () => string; now?: () => string; index?: TaskBindingIndex; worktreeDefaults?: WorktreeDefaultsPort; onTaskDeleted?: (task: Task, project: Project) => Promise<void>; onCheckoutRetained?: (task: Task, project: Project, path: string, reason: RetainedCheckoutReason) => void; sharing?: WorktreeSharingGuard; /** Shared with project relocation so both serialize on one per-repository lane. */ queue?: OperationQueue }
 
 function requireProject(state: HubState, id: string): Project {
@@ -160,7 +184,7 @@ export class WorktreeCoordinator {
     return true;
   }
 
-  async request(taskId: string, input: WorktreeRequest, options: { background?: boolean } = {}): Promise<HubState> {
+  async request(taskId: string, input: WorktreeRequest, options: WorktreeRequestOptions = {}): Promise<HubState> {
     if (input.kind === 'return') return this.returnToBase(taskId);
     const current = this.read(taskId);
     if (!isGitProject(current.project) && input.kind !== 'delete') {
@@ -178,22 +202,37 @@ export class WorktreeCoordinator {
       const normalized = structuredClone(request);
       if (normalized.kind === 'create' || normalized.kind === 'attach') normalized.path = await canonicalPath(normalized.path, true);
       const { task } = this.read(taskId);
+      // The lane re-reads the journal, so a failure that landed while the caller
+      // waited is refused here even when the caller checked before asking. The same
+      // wait is where a cancelled call must stop: the journal is written below, and
+      // after that the deletion is never interrupted.
+      if (options.freshDestructive === true && normalized.kind === 'delete') assertFreshDestructiveJournal(task);
+      // This is the last moment before the journal is written. A call cancelled while
+      // it waited for this lane must not record a deletion it can no longer report.
+      if (normalized.kind === 'delete') options.signal?.throwIfAborted();
       this.confirmationMatches(task, normalized);
       if (task.operation && normalized.kind === 'delete' && !this.sameRequest(task.operation.request, normalized) && replaceableByDeletion(task.operation)) {
         // The deletion replaces an abandoned failed journal; it owns the checkout binding
         // and will retain anything it cannot verify.
-        await this.start(taskId, normalized);
+        await this.start(taskId, normalized, options);
       } else if (task.operation) {
         if (!this.sameRequest(task.operation.request, normalized)) throw new KanbanError('OPERATION_PENDING', 'Resolve the existing operation before starting a different operation.', { kind: task.operation.request.kind });
         this.recordedTargetMatches(task.operation, normalized);
-        await this.update(taskId, task.operation.id, (_task, operation) => {
+        // The same write that re-arms this journal also clears the pending transition, so
+        // the two stay consistent for the reconfirmation path as well.
+        await this.update(taskId, task.operation.id, (task, operation) => {
+          if (options.clearPending === true) {
+            invariant(task.pendingTransition?.status !== 'sending', 'EXECUTION_ADMISSION_PENDING', 'Wait until native prompt admission completes.');
+            delete task.pendingTransition;
+          }
+
           if ((operation.request.kind === 'remove' || operation.request.kind === 'delete') && (normalized.kind === 'remove' || normalized.kind === 'delete')) { operation.request.discardChanges ||= normalized.discardChanges; if (normalized.force === true) operation.request.force = true; }
           // Preserve the journal and previous failure stage for safe retry/recovery.
           if (operation.phase === 'failed') operation.phase = 'waiting';
         });
       } else {
         if (task.worktree && (normalized.kind === 'create' || (normalized.kind === 'attach' && task.worktree.path !== normalized.path))) throw new KanbanError('WORKTREE_ALREADY_BOUND', 'Remove or recover the current worktree before choosing another target.');
-        await this.start(taskId, normalized);
+        await this.start(taskId, normalized, options);
       }
       if (options.background === true && isBackgroundOperationKind(normalized.kind)) {
         await this.admitAndQueue(taskId);
@@ -492,7 +531,13 @@ export class WorktreeCoordinator {
     if (request.expectedWorktreePath !== actual) throw new KanbanError('WORKTREE_CHANGED', 'The worktree changed since confirmation; review the current target before continuing.', { expectedWorktreePath: request.expectedWorktreePath, actualWorktreePath: actual });
   }
 
-  private async start(taskId: string, request: OperationRequest): Promise<void> {
+  /**
+   * Record the journal. The cancellation check and the pending-transition cleanup run
+   * inside this transaction, which is the first moment after the repository queue: a
+   * caller cancelled while that queue was busy must not persist a deletion, and a
+   * card must never lose its pending transition without the journal that replaces it.
+   */
+  private async start(taskId: string, request: OperationRequest, options: WorktreeRequestOptions = {}): Promise<void> {
     const prior = this.read(taskId).task;
     const destructive = request.kind === 'remove' || request.kind === 'delete';
     const rawTarget = request.kind === 'create' || request.kind === 'attach' ? request.path : prior.worktree?.path;
@@ -501,15 +546,26 @@ export class WorktreeCoordinator {
     const targetPath = destructive ? rawTarget : rawTarget ? await canonicalPath(rawTarget, true) : undefined;
     if ((request.kind === 'remove' || request.kind === 'delete') && request.expectedWorktreePath !== undefined && request.expectedWorktreePath !== (targetPath ?? null)) throw new KanbanError('WORKTREE_CHANGED', 'The worktree changed before the confirmed operation could be recorded.');
     await this.store.transactTask(taskId, state => {
+      // The transaction starts after the repository queue, so this is the last moment
+      // cancellation can stop the write from inside the change itself.
+      options.signal?.throwIfAborted();
       const task = requireTask(state, taskId);
       if (task.projectId !== prior.projectId || task.worktree?.path !== prior.worktree?.path) throw new KanbanError('OPERATION_TARGET_CHANGED', 'The task context changed before the operation was recorded.');
+      if (options.clearPending === true) {
+        invariant(task.pendingTransition?.status !== 'sending', 'EXECUTION_ADMISSION_PENDING', 'Wait until native prompt admission completes.');
+        // The removal belongs to the same write that records the journal, so a refused
+        // or cancelled admission can never leave a card without its transition.
+        delete task.pendingTransition;
+      }
       task.operation = {
         id: this.id(), request: structuredClone(request), phase: 'waiting',
         targetPath,
         previousDirectories: {}, switchedSessionIds: [], archivedSessionIds: [], gitCompleted: false, createdAt: this.now(),
       };
       task.updatedAt = this.now();
-    });
+      // The handoff to storage is the point of no return: a storage write that has begun
+      // cannot be called back, so the signal is honored exactly up to this line.
+    }, () => options.signal?.throwIfAborted());
   }
 
   /** The pass-scoped idleness gate; records waiting so a busy conversation defers the work. */

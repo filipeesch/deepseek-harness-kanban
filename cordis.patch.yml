@@ -234,6 +234,7 @@
                 - get_card
                 - create_card
                 - edit_card
+                - delete_card
                 - create_relation
                 - delete_relation
                 - list_notes

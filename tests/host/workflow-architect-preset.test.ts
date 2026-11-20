@@ -192,7 +192,7 @@ describe('shipped agent presets', () => {
   it('lets the planner plan and write cards but never administer a board', async () => {
     const { presets } = await composition();
     const entries = allowed(presets[1]!);
-    for (const name of ['create_card', 'edit_card', 'create_relation', 'send_task_message', 'set_next_transition', 'decision_request', 'create_note', 'delete_team_file']) {
+    for (const name of ['create_card', 'edit_card', 'delete_card', 'create_relation', 'send_task_message', 'set_next_transition', 'decision_request', 'create_note', 'delete_team_file']) {
       expect(entries, name).toContain(name);
     }
     for (const name of ['create_board', 'update_board', 'edit_board_yaml', 'add_stage', 'validate_workflow', 'revert_board']) {
@@ -202,6 +202,35 @@ describe('shipped agent presets', () => {
     expect(entries.every(name => PRODUCT_TOOL_NAMES.includes(name))).toBe(true);
   });
 
+  it('declares card deletion for every role that may write a card, and not for the manager', async () => {
+    const { presets } = await composition();
+    // The catalog is what makes the tool reachable at all, and the role masks are what
+    // narrow it; asserting both keeps the test from passing on composition alone.
+    expect(PRODUCT_TOOL_NAMES).toContain('delete_card');
+    // A preset without a role mask receives every registered product tool.
+    const masked = presets.filter(preset => plugin(preset, 'preset-tools') !== undefined).map(preset => preset.definition.id);
+    expect(masked.sort()).toEqual(['kanban-project-manager', 'kanban-project-planner']);
+    const surface = (preset: (typeof presets)[number]): string[] => plugin(preset, 'preset-tools') === undefined
+      ? [...PRODUCT_TOOL_NAMES]
+      : PRODUCT_TOOL_NAMES.filter(name => allowed(preset).includes(name));
+    const byId = new Map(presets.map(preset => [preset.definition.id, preset] as const));
+    for (const id of ['kanban-workflow-operator', 'kanban-workflow-architect', 'kanban-project-planner']) {
+      expect(surface(byId.get(id)!), id).toContain('delete_card');
+    }
+    expect(surface(byId.get('kanban-project-manager')!)).not.toContain('delete_card');
+    // The manager keeps no card write at all, not just the deletion.
+    for (const name of ['create_card', 'edit_card', 'create_relation', 'delete_relation']) {
+      expect(allowed(byId.get('kanban-project-manager')!), name).not.toContain(name);
+    }
+  });
+  it('masks card deletion out of the manager surface through the shipped allowlist', async () => {
+    const { presets } = await composition();
+    const manager = presets.find(preset => preset.definition.id === 'kanban-project-manager')!;
+    // The mask is what the host applies, so denying the name there is the real guarantee.
+    const denied = PRODUCT_TOOL_NAMES.filter(name => !allowed(manager).includes(name));
+    expect(denied).toContain('delete_card');
+    expect(allowed(manager)).not.toContain('delete_card');
+  });
   it('gives the manager no repository, web, delegation, or MCP capability', async () => {
     const { presets } = await composition();
     const manager = presets[2]!;
@@ -221,7 +250,7 @@ describe('shipped agent presets', () => {
     for (const name of ['get_card', 'get_cards', 'list_cards', 'get_workflow_summary', 'create_note', 'update_note', 'send_task_message', 'list_allowed_transitions', 'set_next_transition', 'pause_task', 'resume_task', 'decision_request']) {
       expect(entries, name).toContain(name);
     }
-    for (const name of ['create_card', 'edit_card', 'create_relation', 'delete_relation', 'create_team_file', 'read_team_file', 'create_board', 'update_board']) {
+    for (const name of ['create_card', 'edit_card', 'delete_card', 'create_relation', 'delete_relation', 'create_team_file', 'read_team_file', 'create_board', 'update_board']) {
       expect(entries, name).not.toContain(name);
     }
     expect(entries.every(name => PRODUCT_TOOL_NAMES.includes(name))).toBe(true);

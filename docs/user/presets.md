@@ -24,11 +24,11 @@ Updating source alone does not update an installation: build and update or recon
 
 ## Kanban Project Planner
 
-**Kanban Project Planner** (`kanban-project-planner`) investigates a project and agrees its requirements, architecture, and task breakdown. It reads repositories and runs shell commands under a session pinned to the sandbox's read-only mode, has no tool that writes a file, and holds the card and note tools it needs to plan, plus web access and delegation. Its delegated children join the same preset revision and are pinned the same way. It cannot administer a board or edit a workflow.
+**Kanban Project Planner** (`kanban-project-planner`) investigates a project and agrees its requirements, architecture, and task breakdown. It reads repositories and runs shell commands under a session pinned to the sandbox's read-only mode, has no tool that writes a file, and holds the card and note tools it needs to plan, including deleting a card at your request, plus web access and delegation. Its delegated children join the same preset revision and are pinned the same way. It cannot administer a board or edit a workflow.
 
 ## Kanban Project Manager
 
-**Kanban Project Manager** (`kanban-project-manager`) coordinates a project's cards. It has no file, shell, web, delegation, or MCP tool, and no product tool that creates, edits, or relates a card: it reads the board, writes shared notes, messages other cards, declares its own card's next transition, and pauses or resumes its own automatic advance. A change of scope or requirements goes to the planner, never to a card the manager edits itself.
+**Kanban Project Manager** (`kanban-project-manager`) coordinates a project's cards. It has no file, shell, web, delegation, or MCP tool, and no product tool that creates, edits, deletes, or relates a card: it reads the board, writes shared notes, messages other cards, declares its own card's next transition, and pauses or resumes its own automatic advance. A change of scope or requirements goes to the planner, never to a card the manager edits itself.
 
 ## How a role receives its tools
 

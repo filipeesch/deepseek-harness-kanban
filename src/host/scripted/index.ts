@@ -9,7 +9,7 @@ import { createProcessOwnership } from './process/index.js';
 import { createScriptedVariables } from './variables.js';
 import { TYPESCRIPT_PRELUDE, executeCapturedProgram, verifyExecutors, verifyProgramRuntime } from './executor.js';
 import { createBashRetry, type BashRetryOptions } from './retry.js';
-import type { ScriptedPolicyPort, ScriptedRuntime, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort, SimulatedShellCall, SimulatedShellResponse, TestProgramOutcome, TestProgramRequest } from './ports.js';
+import type { ScriptedPolicyPort, ScriptedRuntime, ScriptedScope, ExecuteRequest, ExecutionOutcome, NativePtcPort, NativeShellPort, SimulatedShellCall, SimulatedShellResponse, TestProgramOutcome, TestProgramRequest } from './ports.js';
 import { PROGRAM_OUTPUT_MAX_BYTES, programOutput, type ProgramOutputContract } from './runtime-result.js';
 import { KanbanError } from '../../shared/errors.js';
 import { ScriptedRuntimeError, failure } from './ports.js';
@@ -34,6 +34,19 @@ export interface ScriptedRuntimeOptions {
   guardPath?: string;
   /** Reports one host-compatibility fact once per runtime; never a task change. */
   report?: (error: unknown) => void;
+}
+/**
+ * The filesystem-only lease reader, deliberately independent of the optional
+ * execution providers.
+ *
+ * A lease is a file written by whichever host last owned a task execution, so it
+ * survives a host restart and outlives any detached runtime. Reading it needs nothing
+ * but the private directory, which is why a destructive surface must use this instead
+ * of asking an execution runtime that may not be mounted.
+ */
+export function createScriptedLease(privateDirectory: string): { assertNoTaskLease(scope: ScriptedScope, taskId: string): Promise<void> } {
+  const ownership = new NativeExecutionOwnership(privateDirectory);
+  return { assertNoTaskLease: (scope, taskId) => ownership.assertNoTaskLease(scope, taskId) };
 }
 /** Missing optional native services fail per script, not at conventional Kanban startup. */
 export function createScriptedRuntime(options: ScriptedRuntimeOptions): ScriptedRuntime {

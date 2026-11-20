@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fixture, taskWithConversation } from './helpers.js';
 import { KanbanApp } from '../../src/host/app.js';
 import { HubRepository } from '../../src/host/hub-repository.js';
+import { HubStateSchema } from '../../src/domain/hub-schema.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 afterEach(async () => { for (const value of active.splice(0)) await value.close(); });
@@ -185,6 +186,30 @@ describe('background destructive commands', () => {
     expect(current.effectiveCwd).toBe(f.project.projectPath);
   });
 
+  it('removes every incident relation of the deleted card and keeps the unrelated ones', async () => {
+    const f = await setup();
+    const epic = await f.app.createTask({ projectId: f.project.id, title: 'Relation epic', description: '' });
+    const child = await f.app.createTask({ projectId: f.project.id, title: 'Relation child', description: '' });
+    const left = await f.app.createTask({ projectId: f.project.id, title: 'Relation left', description: '' });
+    const right = await f.app.createTask({ projectId: f.project.id, title: 'Relation right', description: '' });
+    await f.store.createRelations([
+      // Two relations the deleted card takes part in: a directed one it owns and a
+      // symmetric one where it is only one endpoint. Both must go with the card.
+      { type: 'epic', from: epic.id, to: child.id },
+      { type: 'related', from: epic.id, to: right.id },
+      // One relation between two cards that remain, which must survive untouched.
+      { type: 'related', from: left.id, to: right.id },
+    ]);
+    await f.app.command({ type: 'task.delete', taskId: epic.id, confirmed: true, expectedWorktreePath: null });
+    await f.app.worktrees.settle();
+    const stored = f.hubs.requireHub(f.hub.id);
+    expect(stored.tasks.some(value => value.id === epic.id)).toBe(false);
+    // Both relations that named the deleted card had to go with it; the pair between
+    // cards that remain survives untouched.
+    expect(stored.relations).toHaveLength(1);
+    expect(stored.relations?.[0]).toMatchObject({ type: 'related', from: left.id, to: right.id });
+    expect(HubStateSchema.safeParse(stored).success).toBe(true);
+  });
   it('persists queued operations and worktree errors across a reload', async () => {
     const f = await setup();
     const task = await f.app.createTask({ projectId: f.project.id, title: 'Reload additions', description: '' });
