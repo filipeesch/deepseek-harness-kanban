@@ -145,7 +145,7 @@ function compactCardOf<T extends { history?: unknown; scripted?: unknown; descri
 /** A detail card payload: the compact fields plus the description, context, and relations. */
 function detailCardOf<T extends { history?: unknown; scripted?: unknown; description: string; boardId: string }>(task: T, hubId: string, project: unknown, hubName: string) {
   const { history: _history, scripted: _ledger, ...rest } = task;
-  return { ...rest, hubId, activity: IDLE_ACTIVITY, relations: [], project, board: { id: task.boardId, name: 'Kanban' }, hub: { id: hubId, name: hubName } };
+  return { ...rest, hubId, activity: IDLE_ACTIVITY, relations: [], attachments: [], project, board: { id: task.boardId, name: 'Kanban' }, hub: { id: hubId, name: hubName } };
 }
 
 async function addSharedNote(f: Awaited<ReturnType<typeof setup>>, task: { id: string; a: string; b: string }) {

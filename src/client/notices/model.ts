@@ -1,4 +1,4 @@
-import type { Problem, Project, RetainedCheckout, Task } from '../../shared/types.js';
+import type { AttachmentCleanupWarning, Problem, Project, RetainedCheckout, Task } from '../../shared/types.js';
 import { describeOperation } from '../operation-description.js';
 import { recoveryActionDescriptors } from '../operation-recovery-actions.js';
 
@@ -82,6 +82,27 @@ export function retainedNotices(entries: readonly RetainedCheckout[], dismiss: (
 }
 
 /** The board command failure, which the user may dismiss until the next failure replaces it. */
+
+/**
+ * A deleted task whose files remained on disk. The warning is board-level because the
+ * card is already gone; it is dismissible, but dismissing never deletes the bytes.
+ */
+export function attachmentCleanupNotices(entries: readonly AttachmentCleanupWarning[], dismiss: (taskId: string) => void): BoardNotice[] {
+  return entries.map(entry => ({
+    id: 'attachments:' + entry.taskId,
+    group: 'retained' as const,
+    tone: 'failure' as const,
+    title: entry.taskTitle,
+    segments: [{ text: entry.message }],
+    actions: [],
+    dismiss: {
+      label: 'Dismiss the file cleanup warning for ' + entry.taskTitle,
+      hint: 'Dismiss',
+      run: () => dismiss(entry.taskId),
+    },
+  }));
+}
+
 export function commandFailureNotice(problem: Problem | null, dismiss: () => void): BoardNotice | null {
   if (!problem) return null;
   return {

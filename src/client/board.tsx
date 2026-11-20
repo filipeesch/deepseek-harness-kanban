@@ -281,8 +281,10 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
     dismissFailure: () => setActionError(null),
   }), [run]);
   const retainedCheckouts = useMemo(() => snapshot?.retainedCheckouts ?? [], [snapshot]);
+  const attachmentCleanups = useMemo(() => snapshot?.attachmentCleanupWarnings ?? [], [snapshot]);
   const { notices, dismissAllRetained } = useBoardNotices({
     retained: retainedCheckouts,
+    attachmentCleanups,
     tasks: state?.tasks ?? EMPTY_TASKS,
     projects: state?.projects ?? EMPTY_PROJECTS,
     actionError,

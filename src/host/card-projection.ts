@@ -21,9 +21,13 @@ export interface CompactCardInput {
   activity: TaskActivity;
 }
 
-/** The listing payload: no description, relation references, and activity. */
+/**
+ * The listing payload: no description and no attachments, with relation
+ * references and activity. A listing stays cheap; a caller that needs the files
+ * reads one card in detail.
+ */
 export function compactCard(input: CompactCardInput): Record<string, unknown> {
-  const { description: _description, ...fields } = plainCard(input.task);
+  const { description: _description, attachments: _attachments, ...fields } = plainCard(input.task);
   return {
     ...fields,
     hubId: input.hubId,
@@ -63,6 +67,16 @@ export interface DetailCardInput {
   activity: TaskActivity;
   relationDetails: readonly DetailRelation[];
   epicRollup?: EpicRollup;
+  /** One entry per attachment, each naming the path an agent can read. */
+  attachmentDetails?: readonly DetailAttachment[];
+}
+
+/** One attachment as a detail read reports it, with its readable host path. */
+export interface DetailAttachment {
+  id: string;
+  name: string;
+  bytes: number;
+  path: string;
 }
 
 /** The detail payload: the compact card plus its context, description, and relations. */
@@ -74,6 +88,7 @@ export function detailCard(input: DetailCardInput): Record<string, unknown> {
     board: { id: input.board.id, name: input.board.name },
     hub: { id: input.hubId, name: input.hubName },
     relations: input.relationDetails,
+    attachments: input.attachmentDetails ?? [],
     ...(input.epicRollup === undefined ? {} : { epicRollup: input.epicRollup }),
   };
 }

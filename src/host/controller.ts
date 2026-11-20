@@ -25,6 +25,10 @@ export class KanbanController extends TypertRemoteService {
  @Remote async mcpServers(_request:Record<string,never>):Promise<Outcome<string[]>>{return this.attempt(async()=>[...this.app.mcpServers()]);}
  @Remote async exportWorkflows(request:WorkflowExportRequest):Promise<Outcome<WorkflowExportResult>>{return this.attempt(()=>Promise.resolve(this.app.exportWorkflows(request)));}
  @Remote async readWorkflowImport(request:WorkflowImportReadRequest):Promise<Outcome<WorkflowImportPlan>>{return this.attempt(()=>Promise.resolve(this.app.readWorkflowImport(request)));}
+ @Remote async saveQuestionAttachment(request:{sessionId:string;name:string;data:string}):Promise<Outcome<{id:string;name:string;bytes:number}>>{return this.attempt(()=>this.app.saveQuestionAttachment(request.sessionId,request.name,request.data));}
+ @Remote async readQuestionAttachment(request:{sessionId:string;id:string}):Promise<Outcome<{name:string;data:string}>>{return this.attempt(()=>this.app.readQuestionAttachment(request.sessionId,{id:request.id}));}
+ @Remote async removeQuestionAttachment(request:{sessionId:string;id:string}):Promise<Outcome<void>>{return this.attempt(()=>this.app.removeQuestionAttachment(request.sessionId,{id:request.id}));}
+ @Remote async readTaskAttachment(request:{hubId?:string;taskId:string;attachmentId:string}):Promise<Outcome<{name:string;bytes:number;origin:string;data:string}>>{return this.attempt(async()=>{const read=await this.app.readTaskAttachment(request.hubId,request.taskId,request.attachmentId);return {name:read.name,bytes:read.bytes,origin:read.origin,data:Buffer.from(read.data).toString('base64')};});}
  @Remote({mode:'stream'}) async *follow(signal:AbortSignal):AsyncGenerator<HostSnapshot>{
   this.owner();let dirty=true;let wake:(()=>void)|undefined;let lastRevision=-1;
   const changed=()=>{dirty=true;wake?.();};const off=this.app.subscribe(changed);

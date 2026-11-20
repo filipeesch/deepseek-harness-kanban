@@ -216,10 +216,30 @@ export interface Task {
   recordedTransition?: RecordedTransition;
   /** The ordered record of settled flow facts; absent means nothing has been recorded yet. */
   history?: TaskHistoryEntry[];
+  /** The files this task carries; absent means no attachments. */
+  attachments?: TaskAttachment[];
   /** Diagnostic-only checkouts left on disk; never an execution or cleanup target. */
   unclaimedWorktrees?: Array<{ path: string; branch: string; error: Problem }>;
   worktreeWorkspaceId?: string; worktreeWorkspaceOwned?: boolean;
   createdAt: string; updatedAt: string;
+}
+/**
+ * Where one task attachment came from. The source decides nothing else: every
+ * attachment is stored as a verbatim generic file.
+ */
+export const TASK_ATTACHMENT_ORIGINS = ['path', 'upload', 'clipboard'] as const;
+export type TaskAttachmentOrigin = (typeof TASK_ATTACHMENT_ORIGINS)[number];
+/**
+ * One file kept by a task. The bytes live in the plugin's own directory; this
+ * record is the metadata the board, the tools, and the task context read.
+ */
+export interface TaskAttachment {
+  id: string;
+  /** Display name: one sanitized path segment, never a client path. */
+  name: string;
+  /** Exact stored byte length. */
+  bytes: number;
+  origin: TaskAttachmentOrigin;
 }
 export interface Note { id: string; taskId: string; content: string; createdAt: string; updatedAt: string; tags?: string[] }
 /** The relation types this version records between cards of one Hub. */
@@ -567,11 +587,17 @@ export type RetainedCheckoutReason = 'folder' | 'unresolved';
 /** A checkout left on disk because a deletion kept it. */
 export interface RetainedCheckout { path: string; projectId: string; taskTitle: string; reason: RetainedCheckoutReason }
 /**
+ * A deleted task whose attachment bytes could not be removed. The card is gone, so
+ * the warning is board-level: it names the task so the person knows which folder to
+ * inspect, and the host keeps it transient like the retained-checkout notices.
+ */
+export interface AttachmentCleanupWarning { taskId: string; taskTitle: string; message: string }
+/**
  * Host snapshot: durable state plus per-conversation attention facts and per-Hub publishing.
  * `state` is present on baselines and command responses and omitted from an update frame that
  * did not change the state revision; the client merges it with the state it already holds.
  */
-export interface HostSnapshot { scripted?: Record<string, ScriptedSummary>; /** The outcome of the import this response answered, when it answered one. */ workflowImport?: WorkflowImportResult; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; /** Conversations the plugin could not observe, keyed by Session id; omitted when empty. */ conversationObservations?: Record<string, SessionObservation>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; sequence: number }
+export interface HostSnapshot { scripted?: Record<string, ScriptedSummary>; /** The outcome of the import this response answered, when it answered one. */ workflowImport?: WorkflowImportResult; commandReceipt?: CommandReceipt; state?: KanbanState; stateRevision: number; conversations: Record<string, ConversationFacts>; /** Conversations the plugin could not observe, keyed by Session id; omitted when empty. */ conversationObservations?: Record<string, SessionObservation>; sharing: Record<string, HubSharingView>; sharingAuth?: SharingAuthView; /** Runtime state of every Hub's schedules; omitted when empty. */ scheduleRuntime?: Record<string, HubScheduleRuntime>; /** Transient, in-memory retained checkouts; omitted when empty. */ retainedCheckouts?: RetainedCheckout[]; /** Transient warnings about attachment bytes a deletion could not remove; omitted when empty. */ attachmentCleanupWarnings?: AttachmentCleanupWarning[]; sequence: number }
 /** A snapshot that carries the board state: every unary response, baseline, and command result. */
 export type FullHostSnapshot = HostSnapshot & { state: KanbanState };
 /** A request for one unary snapshot; every field is an optional hint, never a required read. */
@@ -615,8 +641,8 @@ export type Command =
   | { type: 'project.relocationCancel'; hubId?: string; projectId: string }
   | { type: 'project.delete'; hubId?: string; projectId: string; confirmed: boolean; expectedRevision?: number }
   | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
-  | ({ type: 'task.create'; hubId?: string } & NewTask)
-  | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; expectedRevision?: number }
+  | ({ type: 'task.create'; hubId?: string; attachmentUploads?: Array<{ name: string; origin: 'upload' | 'clipboard'; data: string }> } & NewTask)
+  | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; attachmentPaths?: string[]; attachmentUploads?: Array<{ name: string; origin: 'upload' | 'clipboard'; data: string }>; removeAttachmentIds?: string[]; confirmed?: boolean; expectedRevision?: number }
   /** `beforeTaskId` absent places the task at the start of the destination; `null` places it at the end; an id places it before that task. */
   | { type: 'task.move'; hubId?: string; taskId: string; columnId: string; beforeTaskId?: string | null; overrideTransition?: boolean }
   /** Apply a decision stage's chosen option after the person's five-second window closes. */
@@ -669,6 +695,14 @@ export interface ClientApi {
   modelCatalog(refresh?: boolean): Promise<ModelCatalog>;
   /** The MCP servers this host reports, for the board's allowlist control; absent reports none. */
   mcpServers?(): Promise<string[]>;
+  /** One task attachment's exact bytes; absent on a host that cannot read them back. */
+  readTaskAttachment?(request: { hubId?: string; taskId: string; attachmentId: string }): Promise<{ name: string; bytes: number; origin: string; data: string }>;
+  /** Store one draft answer file for a conversation; absent on a host without attachments. */
+  saveQuestionAttachment?(request: { sessionId: string; name: string; data: string }): Promise<{ id: string; name: string; bytes: number }>;
+  /** Read one draft answer file back so a restored draft can deliver it. */
+  readQuestionAttachment?(request: { sessionId: string; id: string }): Promise<{ name: string; data: string }>;
+  /** Delete one stored draft answer file whose attachment the user detached. */
+  removeQuestionAttachment?(request: { sessionId: string; id: string }): Promise<void>;
   worktreeDefault(taskId: string): Promise<WorktreeDefaults>;
   detectProject(path: string): Promise<ProjectLocation>;
   /** Re-observe one conversation and report its diagnosis with its artifact location; absent on older hosts. */
@@ -725,10 +759,31 @@ export interface QuestionRound { id: string; sessionId: string; turnId: string; 
 export interface QuestionAnswer { choices: string[]; text: string; other: string; notes: string }
 /** The slide a draft resumes on: one received question page, or the round's Additional Notes. */
 export type QuestionDraftSlide = { kind: 'page'; callId: string } | { kind: 'notes' };
+/**
+ * One file attached to a question answer. The bytes are a durable attachment of
+ * the reply; this record is only what the draft needs to restore and re-deliver
+ * it, and it never carries a host path.
+ */
+export interface QuestionAttachment {
+  /** Stable identity within the draft, so one file can be removed by reference. */
+  id: string;
+  name: string;
+  bytes: number;
+}
 /** The durable subset of one round's form state; transient UI state is never stored. */
 export interface QuestionDraftContent {
   answers: Record<string, QuestionAnswer>;
   generalNotes: string;
+  /** Files attached to each question page, keyed by the page callId. */
+  pageAttachments?: Record<string, QuestionAttachment[]>;
+  /** Files attached to the round as a whole. */
+  roundAttachments?: QuestionAttachment[];
+  /**
+   * Attachment ids in the order the person attached them. Page ownership decides
+   * where a file is named in the reply, but this order decides how the files travel,
+   * so an answer delivered after a reload keeps the order it was composed in.
+   */
+  attachmentOrder?: string[];
   active: QuestionDraftSlide | null;
 }
 /** One conversation's stored draft for a round, with the host timestamp retention uses. */

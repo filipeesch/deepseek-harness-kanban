@@ -8,7 +8,7 @@ import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
 import { PROJECT_KEY_PATTERN } from './project-key.js';
 import { transitionRule as normalizeTransitionRule } from './transition-rule.js';
 import { isAbsolutePath, isDomainId } from './validation.js';
-import { AUTO_MODE_PAUSE_REASONS, HUB_RELATION_TYPES, WORKTREE_POLICIES } from '../shared/types.js';
+import { AUTO_MODE_PAUSE_REASONS, HUB_RELATION_TYPES, TASK_ATTACHMENT_ORIGINS, WORKTREE_POLICIES } from '../shared/types.js';
 import { ANCHOR_POINTS_PER_SIDE, CONNECTION_OFFSET_LIMIT } from './connection-anchor.js';
 import { taskHistorySchema } from './task-history/entry.js';
 import { mcpAllowlistEntry as parseMcpAllowlistEntry } from './mcp-allowlist.js';
@@ -187,8 +187,17 @@ export const storedProject = z.strictObject({ ...projectFields, projectKey: proj
 export const project = z.strictObject({ ...projectFields, projectKey }).superRefine(projectIssues);
 
 
+/**
+ * One task attachment: its sanitized display name, its exact byte length, and the
+ * source it was added from. The bytes are plugin-owned and never persisted here.
+ */
+export const taskAttachment = z.strictObject({
+  id, name: nonempty, bytes: z.number().int().nonnegative(), origin: z.enum(TASK_ATTACHMENT_ORIGINS),
+});
+
 /** The task fields both aggregates persist; the Hub aggregate adds `boardId`. */
 export const baseTask = z.strictObject({
+  attachments: z.array(taskAttachment).optional(),
   stageEntry: taskStageEntrySchema.optional(), scripted: scriptedControlSchema.optional(), scriptedHandoff: scriptedHandoffSchema.optional(),
   id, projectId: id, title: nonempty, description: z.string(), columnId: id, position: z.number().finite(),
   sessionIds: z.array(id), closedSessionIds: z.array(id), effectiveCwd: absolutePath,

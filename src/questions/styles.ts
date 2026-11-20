@@ -57,5 +57,12 @@ export const questionCss = String.raw`
 .kq-secondary:disabled{opacity:.4;cursor:not-allowed}
 .kq-header:focus-visible,.kq-primary:focus-visible,.kq-secondary:focus-visible,.kq-question:focus-visible,.kq-input:focus-visible,.kq-dismiss-confirm:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .kq-option:focus-within{box-shadow:inset 0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText))}
+.kq-files{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.kq-files-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.kq-file-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.kq-file-list li{display:flex;align-items:center;gap:8px;padding:4px 8px;border:0.5px solid var(--dsw-alias-border-l1);border-radius:6px;font-size:12px}
+.kq-file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kq-file-size{white-space:nowrap;color:var(--dsw-alias-label-tertiary,currentColor)}
+.kq-file-remove{border:0;background:transparent;color:var(--dsw-alias-state-error-primary,crimson);font:inherit;font-size:11px;cursor:pointer;padding:0}
 @media(max-width:760px){.kq-scroll{max-height:60vh;padding:8px}.kq-footer{padding:6px 8px}.kq-confirm-text{font-size:11px}}
 `;

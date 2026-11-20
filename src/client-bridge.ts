@@ -92,6 +92,10 @@ export class ClientBridge {
       // Boards section then offers no transfer action instead of failing.
       ...(remote.kanban.exportWorkflows === undefined ? {} : { exportWorkflows: async (request: WorkflowExportRequest) => unwrap(await remote.kanban.exportWorkflows!(request)) }),
       ...(remote.kanban.readWorkflowImport === undefined ? {} : { readWorkflowImport: async (request: WorkflowImportReadRequest) => unwrap(await remote.kanban.readWorkflowImport!(request)) }),
+      ...(remote.kanban.readTaskAttachment === undefined ? {} : { readTaskAttachment: async (request: { hubId?: string; taskId: string; attachmentId: string }) => unwrap(await remote.kanban.readTaskAttachment(request)) }),
+      ...(remote.kanban.saveQuestionAttachment === undefined ? {} : { saveQuestionAttachment: async (request: { sessionId: string; name: string; data: string }) => unwrap(await remote.kanban.saveQuestionAttachment(request)) }),
+      ...(remote.kanban.readQuestionAttachment === undefined ? {} : { readQuestionAttachment: async (request: { sessionId: string; id: string }) => unwrap(await remote.kanban.readQuestionAttachment(request)) }),
+      ...(remote.kanban.removeQuestionAttachment === undefined ? {} : { removeQuestionAttachment: async (request: { sessionId: string; id: string }) => { unwrap(await remote.kanban.removeQuestionAttachment(request)); } }),
       worktreeDefault: async (taskId: string) => unwrap(await remote.kanban.worktreeDefault({ taskId })),
       detectProject: async (path: string) => unwrap(await remote.kanban.detectProject({ path })),
       // A host that predates the Session diagnosis exposes neither method, and the seat

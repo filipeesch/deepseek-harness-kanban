@@ -9,8 +9,7 @@ Board and note writes require the user's explicit request; they are not an inter
 | Scope | Tools |
 | --- | --- |
 | Discover Hubs, boards, projects, and tasks | `list_hubs`, `list_boards`, `list_projects`, `get_workflow_summary`, `list_cards`, `get_cards`, `get_card` |
-| Explicitly requested card creation and text changes | `create_card`, `edit_card` |
-| Explicitly requested card deletion | `delete_card` |
+| Explicitly requested card creation, text changes, attachments, and deletion | `create_card`, `edit_card`, `delete_card` |
 | Recorded relations between cards | `create_relation`, `delete_relation` |
 | Declaring the transition the turn ends in | `list_allowed_transitions`, `set_next_transition` |
 | Pausing and resuming automatic advance | `pause_task`, `resume_task` |
@@ -29,6 +28,8 @@ The registry is defined by [the product tool names](<../../src/host/tools/names.
 The board is the discovery anchor: use `list_hubs`, then `list_boards`, then pass `board_id` to board-scoped tools. A task conversation can resolve its own board for reads; an ordinary chat without a board receives an actionable error rather than using UI state or a default.
 
 `create_card` accepts `auto_mode`. When the board's initial stage has an entry instruction it prepares the first execution and dispatches the stage instruction in the same call and reports the outcome, because the agent surface has no cancelable countdown.
+
+`create_card` accepts `attachments`, a list of absolute paths on the machine serving the plugin. Every path is resolved before the task exists, so one unreadable path fails the call and creates no task. `get_card` reports each attachment with its name, its size, and a path the agent reads with its own file tools, which is how a file added after the conversation began becomes visible. `edit_card` adds files by path and removes them by identifier; a removal deletes the stored bytes and therefore requires `confirmed`. [Task files](task-files.md) describes the surface the person uses.
 
 ## Reading and changing a workflow
 

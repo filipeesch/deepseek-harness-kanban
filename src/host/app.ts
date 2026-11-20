@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { assertAttachmentRemoval, requireTaskAttachment, taskAttachments } from '../domain/task-attachment.js';
+import { QuestionAttachments, TaskAttachments, type ReadTaskAttachment } from './task-attachments/service.js';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { canTransition, transitionAccess } from '../domain/transitions.js';
@@ -20,7 +22,7 @@ import { openTurnIdentity, type TurnBoundaryPort } from './turn-identity.js';
 import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, SessionInspection, SessionRepairResult, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, StoredQuestionDraft, Task, WorktreeDefaults } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, SessionInspection, SessionRepairResult, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, AttachmentCleanupWarning, StoredQuestionDraft, Task, TaskAttachment, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
@@ -145,7 +147,7 @@ export interface HostCommandPolicy {
 }
 /** One created conversation and, when its board named defaults, how the model and preset fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
-export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
+export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -172,7 +174,15 @@ export class KanbanApp {
  private firstExecutionTails=new Map<string,Promise<void>>();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
  private readonly draftWrites=new Map<string,Promise<void>>();
+ /** Lanes a retention pass skipped because they were busy; retried in the same pass. */
+
  private readonly draftPruneTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ /** The task file surface; absent when the host wired no task store. */
+ private readonly attachmentsService?:TaskAttachments;
+ /** The answer-file surface; absent when the host wired no answer store. */
+ private readonly answerAttachmentsService?:QuestionAttachments;
+ /** Transient warnings about attachment bytes a deletion could not remove. */
+ private readonly attachmentCleanupWarnings:AttachmentCleanupWarning[]=[];
  private retentionPrune:Promise<void>|undefined;
  /** Transient, in-memory retention notices; the checkout itself lives on disk. */
  private readonly retainedCheckouts:RetainedCheckout[]=[];
@@ -235,7 +245,10 @@ export class KanbanApp {
    },
    ...(options.report?{report:options.report}:{}),
   });
-  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);await this.scriptedRuntime?.collectSources();}catch(error){this.options.report?.(error);}await this.removeConversationQuestionState(task.sessionIds);},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
+  // Built once from the configured stores; a host without them has no file surface.
+  if(options.taskAttachments)this.attachmentsService=new TaskAttachments({store:options.taskAttachments,hub:hubId=>this.hubs.requireHub(hubId)});
+  if(options.answerAttachments)this.answerAttachmentsService=new QuestionAttachments(options.answerAttachments);
+  this.worktrees=new WorktreeCoordinator(new RepositoryWorktreeStore(hubs),sessions,git,{signal:options.signal,queue:this.operationQueue,worktreeDefaults:{derive:async taskId=>this.worktreeDefaultsFor(this.locatedTask(taskId).task)},onTaskDeleted:async task=>{try{await this.workspaceCoordinator?.cleanup(task as HubTask);await this.scriptedRuntime?.collectSources();}catch(error){this.options.report?.(error);}await this.removeConversationQuestionState(task.sessionIds);await this.removeTaskAttachmentFiles(task);},onCheckoutRetained:(task,project,retainedPath,reason)=>this.retainCheckout(task,project,retainedPath,reason)});
   this.relocations=new ProjectRelocationCoordinator(new RepositoryProjectRelocationStore(hubs),sessions,git,{queue:this.operationQueue,signal:options.signal,...(this.workspaceCoordinator?{workspaces:{bind:async(hubId,project)=>{await this.workspaceCoordinator!.rebindProject(hubId,project);}}}:{}),...(options.report?{report:options.report}:{})});
   this.pendingWork=new PendingWorkRunner({resumeWorktrees:async()=>{await this.worktrees.resumePending();},resumeRelocations:async()=>{await this.relocations.resumePending();},dispatchPending:async()=>{await this.dispatchPending();},report:error=>this.options.report?.(error)});
   this.attention=new AttentionCoordinator({source:this.factsSource,tasks:()=>this.attentionTasks(),runPendingWork:async()=>{await this.pendingWork.run();},onChange:changedSessionIds=>this.attentionChanged(changedSessionIds),onFacts:()=>this.markChanged(),report:error=>this.options.report?.(error)});
@@ -711,13 +724,14 @@ export class KanbanApp {
   let content:QuestionDraftContent|null;
   try{content=draft===null?null:QuestionDraftContentSchema.parse(draft);}
   catch{throw new KanbanError('INVALID_QUESTION_DRAFT','The question draft is malformed or too large.');}
-  return this.enqueueDraftWrite(sessionId,async()=>{
+  const lane=this.enqueueDraftWrite(sessionId,async()=>{
    if(this.disposed)return null;
    await this.prepareQuestions(sessionId);
    let existing:ReturnType<QuestionDraftStore['load']>;
    try{existing=store.load(sessionId);}
    catch(error){this.options.report?.(error);return null;}
    const drafts=this.unresolvedDrafts(sessionId,existing?.drafts??{});
+   // A reclaimed copy must not come back: the record would name bytes that no longer exist.
    let changed=existing!==undefined&&Object.keys(drafts).length!==Object.keys(existing.drafts).length;
    const keep=content!==null&&this.isUnresolvedRound(sessionId,roundId);
    if(keep){drafts[roundId]={...content!,updatedAt:new Date().toISOString()};changed=true;}
@@ -727,11 +741,17 @@ export class KanbanApp {
     if(Object.keys(drafts).length===0)await store.remove(sessionId);
     else await store.save(sessionId,{version:1,sessionId,drafts,updatedAt:new Date().toISOString()});
    }catch(error){this.options.report?.(error);return null;}
-   // Any nonempty write can push the bound over (a creation, or a refresh that recreates
-   // a record evicted in another session's lane); re-check retention after each one.
+
+
+   // A cleared draft leaves its bytes unreachable, so they are reclaimed in this lane.
+   await this.reclaimDraftBytes(sessionId,existing?.drafts??{},drafts);
+   // Retention runs in this lane, as it always has: the pass re-reads before each removal
+   // and never waits on another lane, so it cannot deadlock against a concurrent save.
    if(Object.keys(drafts).length>0)await this.runDraftRetention();
    return keep?drafts[roundId]??null:null;
   });
+  // The lane has released, so a pass that skips busy sessions can now consider this one.
+  return lane.then(async result=>{await Promise.resolve();await this.runDraftRetention();return result;});
  }
  /** Answer, dismissal, and retention all drop drafts whose round is no longer answerable. */
  private unresolvedDrafts(sessionId:string,drafts:Readonly<Record<string,StoredQuestionDraft>>):Record<string,StoredQuestionDraft>{
@@ -749,7 +769,10 @@ export class KanbanApp {
   const next=previous.then(work,work);
   const settled=next.then(()=>undefined,()=>undefined);
   this.draftWrites.set(sessionId,settled);
-  void settled.then(()=>{if(this.draftWrites.get(sessionId)===settled)this.draftWrites.delete(sessionId);});
+  void settled.then(()=>{if(this.draftWrites.get(sessionId)===settled)this.draftWrites.delete(sessionId);
+   // A pass skipped this lane while it was busy, so re-check retention now that it landed.
+
+  });
   return next;
  }
  private scheduleDraftPrune(sessionId:string):void{
@@ -773,6 +796,8 @@ export class KanbanApp {
    if(Object.keys(drafts).length===Object.keys(existing.drafts).length)return;
    if(Object.keys(drafts).length===0)await store.remove(sessionId);
    else await store.save(sessionId,{version:1,sessionId,drafts,updatedAt:new Date().toISOString()});
+   // The metadata now names only the surviving drafts, so any other object is unreachable.
+   await this.reclaimDraftBytes(sessionId,existing.drafts,drafts);
   }catch(error){this.options.report?.(error);}
  }
  /**
@@ -788,6 +813,24 @@ export class KanbanApp {
   this.retentionPrune=run;
   return run;
  }
+
+ /**
+  * Reclaim a removed draft record's bytes once the removal is observed to hold. A saving
+  * client can revive the record with the same identities, so the bytes are only deleted
+  * when the record is still absent on a later turn; a revival keeps them.
+  *
+  * @param sessionId - the conversation whose record was removed.
+  * @param removed - the record that was removed.
+  */
+ private confirmRetentionReclaim(sessionId:string,removed:Readonly<Record<string,StoredQuestionDraft>>):void{
+  const store=this.options.questionDraftStore;
+  if(store===undefined||this.disposed)return;
+  void this.enqueueDraftWrite(sessionId,async()=>{
+   if(this.disposed)return;
+   const live=store.load(sessionId);
+   await this.reclaimDraftBytes(sessionId,removed,live?.drafts??{});
+  }).catch(error=>this.options.report?.(error));
+ }
  private async pruneDraftsToRetention():Promise<void>{
   const store=this.options.questionDraftStore;if(!store||this.disposed)return;
   try{
@@ -800,12 +843,17 @@ export class KanbanApp {
     let removed=0;
     for(const record of candidates){
      if(removed>=excess)break;
+     // The record is re-read immediately before removal, so a refresh that landed first keeps
+     // its record for a later pass.
      const current=store.load(record.sessionId);
      if(current===undefined||current.updatedAt!==record.updatedAt)continue;
-     if(await store.remove(record.sessionId))removed+=1;
+     if(await store.remove(record.sessionId)){
+      removed+=1;
+      // The bytes are reclaimed only after the removal is observed to hold: a save that
+      // raced it can revive the record naming the same identities.
+      this.confirmRetentionReclaim(record.sessionId,current.drafts);
+     }
     }
-    // A refreshed candidate keeps its record; the next pass picks a replacement from
-    // the newer ordering instead of leaving the bound exceeded without one.
     if(removed===0)return;
    }
   }catch(error){this.options.report?.(error);}
@@ -823,7 +871,13 @@ export class KanbanApp {
    const saveTimer=this.saveTimers.get(sessionId);
    if(saveTimer!==undefined){clearTimeout(saveTimer);this.saveTimers.delete(sessionId);}
    this.questions.forget(sessionId);
-   if(drafts){try{await this.enqueueDraftWrite(sessionId,async()=>{await drafts.remove(sessionId);});}catch(error){this.options.report?.(error);}}
+   if(drafts){try{await this.enqueueDraftWrite(sessionId,async()=>{
+    // The record is read before removal: the draft copies it names are about to be
+    // unreachable, so they are reclaimed in the same step.
+    const discarded=drafts.load(sessionId);
+    await drafts.remove(sessionId);
+    await this.reclaimDraftBytes(sessionId,discarded?.drafts??{},{});
+   });}catch(error){this.options.report?.(error);}}
    if(projections){try{await projections.remove(sessionId);}catch(error){this.options.report?.(error);}}
   }
  }
@@ -941,7 +995,7 @@ export class KanbanApp {
   this.scheduleRetainedPrune();
   this.observations.prune(new Set(tasks.flatMap(task=>task.sessionIds)));
   const conversationObservations=this.observations.all();
-  return {...parts,sequence,scripted,...(Object.keys(conversationObservations).length===0?{}:{conversationObservations}),...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))})};
+  return {...parts,sequence,scripted,...(Object.keys(conversationObservations).length===0?{}:{conversationObservations}),...(Object.keys(scheduleRuntime).length===0?{}:{scheduleRuntime}),...(this.retainedCheckouts.length===0?{}:{retainedCheckouts:this.retainedCheckouts.map(value=>({...value}))}),...(this.attachmentCleanupWarnings.length===0?{}:{attachmentCleanupWarnings:this.attachmentCleanupWarnings.map(value=>({...value}))})};
  }
  /** Publish a new snapshot after publishing or authorization state changed outside a board command. */
  sharingChanged():void{this.assembler.invalidateAuth();this.assembler.invalidateSharing();this.markChanged();}
@@ -1093,6 +1147,170 @@ export class KanbanApp {
    return {requested,applied:false,reason:'failed'};
   }
  }
+
+ /** The task file surface, or a refusal when this host wired none. */
+ private taskAttachmentService():TaskAttachments{
+  if(this.attachmentsService===undefined)throw new KanbanError('ATTACHMENTS_UNAVAILABLE','Task attachments are unavailable in this host.');
+  return this.attachmentsService;
+ }
+ /** The answer-file surface, or a refusal when this host wired none. */
+ private questionAttachmentService():QuestionAttachments{
+  if(this.answerAttachmentsService===undefined)throw new KanbanError('ATTACHMENTS_UNAVAILABLE','Answer files are unavailable in this host.');
+  return this.answerAttachmentsService;
+ }
+ /** Allocate the identity a task about to be created will keep. */
+ private allocateTaskId(store:HubStore):string{
+  const existing=new Set(store.snapshot().tasks.map(task=>task.id));
+  for(let attempt=0;attempt<8;attempt++){
+   const candidate=this.hubs.operationDeps().id();
+   if(!existing.has(candidate))return candidate;
+  }
+  throw new KanbanError('ID_COLLISION','Could not allocate a unique task identifier.');
+ }
+ /**
+  * Store resolved sources and record them on the task, rolling the bytes back when the
+  * record cannot be written. The caller already holds the command lane, so this never
+  * re-enters it: nesting the lane deadlocks the writer waiting for the outer turn.
+  */
+ private async recordTaskAttachments(hubId:string,taskId:string,service:TaskAttachments,sources:readonly {name:string;origin:'path'|'upload'|'clipboard';data:Uint8Array}[]):Promise<HubTask>{
+  const store=this.hubStore(hubId);
+  invariant(store.requireTask(taskId).operation===null,'TASK_BUSY','Resolve the task operation before changing its files.');
+  const written=await service.storeAll(taskId,sources);
+  try{return await store.addTaskAttachments(taskId,written);}
+  catch(error){await service.removeAll(taskId,written).catch(cleanup=>this.options.report?.(cleanup));throw error;}
+ }
+ /** Add files to an existing task from absolute host paths. */
+ async addTaskAttachments(hubId:string,taskId:string,paths:readonly string[]):Promise<HubTask>{
+  invariant(paths.length>0,'INVALID_INPUT','Provide at least one attachment path.');
+  const sources=await TaskAttachments.resolvePaths(paths);
+  return this.recordTaskAttachments(hubId,taskId,this.taskAttachmentService(),sources);
+ }
+ /** Add attachments supplied as bytes from the browser, keeping the caller's order. */
+ async addTaskAttachmentBytes(hubId:string,taskId:string,uploads:readonly {name:string;origin:'upload'|'clipboard';data:string}[]):Promise<HubTask>{
+  invariant(uploads.length>0,'INVALID_INPUT','Provide at least one attachment.');
+  const sources=uploads.map(upload=>({name:upload.name,origin:upload.origin,data:new Uint8Array(Buffer.from(upload.data,'base64'))}));
+  return this.recordTaskAttachments(hubId,taskId,this.taskAttachmentService(),sources);
+ }
+ /** Remove one attachment from a task, deleting its bytes. */
+ async removeTaskAttachment(hubId:string,taskId:string,attachmentId:string,confirmed:boolean):Promise<HubTask>{
+  const service=this.taskAttachmentService();
+  const store=this.hubStore(hubId);
+  const task=store.requireTask(taskId);
+  invariant(task.operation===null,'TASK_BUSY','Resolve the task operation before changing its files.');
+  assertAttachmentRemoval(task,attachmentId,confirmed);
+  // Bytes first, record second: a failed unlink leaves the record naming a file the
+  // person can still retry, while dropping the record first would hide it forever.
+  const removed=requireTaskAttachment(store.snapshot(),taskId,attachmentId);
+  await service.removeBytes(taskId,removed);
+  await store.removeTaskAttachment(taskId,attachmentId);
+  return store.requireTask(taskId);
+ }
+ /**
+  * Read one attachment's exact bytes for the browser.
+  *
+  * @param hubId - the Hub, when the caller knows it.
+  * @param taskId - the owning task.
+  * @param attachmentId - the recorded identity.
+  */
+ async readTaskAttachment(hubId:string|undefined,taskId:string,attachmentId:string):Promise<ReadTaskAttachment>{
+  const resolved=hubId??this.locator.byTask(taskId)?.hubId;
+  invariant(resolved!==undefined,'TASK_NOT_FOUND','The task does not exist.');
+  return this.taskAttachmentService().read(resolved,taskId,attachmentId);
+ }
+ /** Store one draft answer file for a conversation and return the reference the draft keeps. */
+ async saveQuestionAttachment(sessionId:string,name:string,data:string):Promise<{id:string;name:string;bytes:number}>{
+  return this.questionAttachmentService().save(sessionId,{name,data:new Uint8Array(Buffer.from(data,'base64'))},randomUUID());
+ }
+ /**
+  * Read one draft answer file back, so a restored draft can still deliver it. The caller
+  * supplies only the identity it was given; the name and the length come from the object
+  * on disk, so a tampered reference cannot relabel a file.
+  */
+ async readQuestionAttachment(sessionId:string,reference:{id:string}):Promise<{name:string;data:string}>{
+  invariant(typeof reference?.id==='string'&&reference.id.length>0,'INVALID_INPUT','An answer file reference is required.');
+  const read=await this.questionAttachmentService().read(sessionId,reference);
+  return {name:read.name,data:Buffer.from(read.data).toString('base64')};
+ }
+ /** Delete one stored draft answer file whose attachment the user detached. */
+ async removeQuestionAttachment(sessionId:string,reference:{id:string}):Promise<void>{
+  invariant(typeof reference?.id==='string'&&reference.id.length>0,'INVALID_INPUT','An answer file reference is required.');
+  await this.questionAttachmentService().remove(sessionId,reference);
+ }
+ /** The readable host path of every attachment one task holds, for its task context. */
+ taskAttachmentPaths(task:Task):Array<{attachment:TaskAttachment;path:string}>{
+  const service=this.attachmentsService;
+  if(service===undefined)return [];
+  return taskAttachments(task).map(attachment=>({attachment,path:service.pathOf(task.id,attachment)}));
+ }
+ /** The attachment records one task carries. */
+ taskAttachmentsOf(task:Task):readonly TaskAttachment[]{
+  return taskAttachments(task);
+ }
+ /**
+  * Delete every stored object of a task that its committed record no longer names. The
+  * record is the authority, so sweeping both deletes a removed file and repairs an unlink
+  * that failed earlier. A failure is reported and, when it matters, shown on the board.
+  *
+  * @param taskId - the task whose objects are reconciled with its record.
+  * @param announce - whether a failure deserves a person-facing warning.
+  */
+ private async sweepTaskAttachments(taskId:string,announce:boolean):Promise<void>{
+  const store=this.options.taskAttachments;
+  if(store===undefined)return;
+  const task=this.locator.byTask(taskId)?.task;
+  if(task===undefined)return;
+  try{await store.removeUnreferenced(taskId,new Set(taskAttachments(task).map(attachment=>attachment.id)));}
+  catch(error){
+   this.options.report?.(error);
+   if(!announce)return;
+   const message=error instanceof Error?error.message:String(error);
+   this.attachmentCleanupWarnings.push({taskId,taskTitle:task.title,message:'The files of "'+task.title+'" could not be fully reconciled on disk: '+message});
+   if(this.attachmentCleanupWarnings.length>20)this.attachmentCleanupWarnings.shift();
+   this.markChanged();
+  }
+ }
+ /**
+  * Delete a deleted task's attachment bytes. The record is already gone, so a failure
+  * never resurrects it; the warning names the task so the person can inspect the folder.
+  */
+ private async removeTaskAttachmentFiles(task:Task):Promise<void>{
+  const service=this.attachmentsService;
+  if(service===undefined)return;
+  const failure=await service.removeTaskFiles(task.id);
+  if(failure===undefined)return;
+  this.attachmentCleanupWarnings.push({taskId:task.id,taskTitle:task.title,message:'The files of "'+task.title+'" could not be deleted from disk: '+failure.message});
+  if(this.attachmentCleanupWarnings.length>20)this.attachmentCleanupWarnings.shift();
+  this.markChanged();
+  this.options.report?.(failure);
+ }
+ /**
+  * Delete every stored answer-file object the surviving drafts no longer name. A draft
+  * record and its bytes have independent lifetimes, so pruning the record alone would
+  * leave a discarded answer on disk indefinitely.
+  *
+  * @param sessionId - the conversation whose drafts were just written.
+  * @param drafts - the drafts that survived the write.
+  */
+ private async reclaimDraftBytes(sessionId:string,before:Readonly<Record<string,StoredQuestionDraft>>,after:Readonly<Record<string,StoredQuestionDraft>>):Promise<void>{
+  const store=this.options.answerAttachments;
+  if(store===undefined)return;
+  // Only identities named by a DISCARDED record are removed, never everything the
+  // surviving records omit: a file attached a moment ago is stored before its debounced
+  // draft write records it, so a keep-set sweep could delete a live upload.
+  const surviving=new Set<string>();
+  for(const draft of Object.values(after)){
+   for(const attachments of Object.values(draft.pageAttachments??{}))for(const attachment of attachments)surviving.add(attachment.id);
+   for(const attachment of draft.roundAttachments??[])surviving.add(attachment.id);
+  }
+  const discarded: string[]=[];
+  for(const draft of Object.values(before)){
+   for(const attachments of Object.values(draft.pageAttachments??{}))for(const attachment of attachments)if(!surviving.has(attachment.id))discarded.push(attachment.id);
+   for(const attachment of draft.roundAttachments??[])if(!surviving.has(attachment.id))discarded.push(attachment.id);
+  }
+  if(discarded.length===0)return;
+  try{await store.removeIds(sessionId,discarded);}
+  catch(error){this.options.report?.(error);}
+ }
  private serial<T>(run:()=>Promise<T>):Promise<T>{const result=this.commandTail.then(run);this.commandTail=result.then(()=>undefined,()=>undefined);return result;}
  createConversation(taskId:string,options:{ensureFirst?:boolean}={}):Promise<string>{return this.serial(async()=>(await this.createConversationNow(taskId,options)).sessionId);}
  /**
@@ -1156,7 +1374,7 @@ export class KanbanApp {
   catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
  }
  createTask(input:NewTask){return this.serial(()=>this.createTaskNow(input));}
- private async createTaskNow(input:NewTask&{hubId?:string}){
+ private async createTaskNow(input:NewTask&{hubId?:string;attachmentUploads?:readonly {name:string;origin:'upload'|'clipboard';data:string}[]}){
   invariant(!this.disposed,'PLUGIN_DISPOSED','The Kanban plugin is shutting down.');
   let hubId:string;let hub:HubState;let project:Project|undefined;let boardId=input.boardId;
   if(input.hubId){hubId=this.hubs.resolveHubId(input.hubId);hub=this.hubs.requireHub(hubId);project=hub.projects.find(value=>value.id===input.projectId);invariant(project,'PROJECT_NOT_FOUND','Project does not exist in the selected Hub.');}
@@ -1164,7 +1382,23 @@ export class KanbanApp {
   else{const located=this.locator.project(input.projectId);invariant(located,'PROJECT_NOT_FOUND','Project does not exist.');hubId=located.hubId;hub=located.hub;project=located.project;}
   boardId??=hub.boards[0]?.id;invariant(boardId,'BOARD_NOT_FOUND','The Hub has no board.');invariant(hub.boards.some(board=>board.id===boardId),'BOARD_NOT_FOUND','Board does not exist in the selected Hub.');
   const store=this.hubs.hub(hubId);
-  return store.createTask({...input,boardId});
+  const paths=input.attachments??[];
+  const uploads:readonly {name:string;origin:'upload'|'clipboard';data:string}[]=input.attachmentUploads??[];
+  if(paths.length===0&&uploads.length===0)return store.createTask({...input,boardId});
+  // Both sources resolve before the task exists, so a failure in either creates no task.
+  const sources=[...await TaskAttachments.resolvePaths(paths),...uploads.map(upload=>({name:upload.name,origin:upload.origin,data:new Uint8Array(Buffer.from(upload.data,'base64'))}))];
+  const service=this.taskAttachmentService();
+  // The bytes are stored under the identity the task will receive, before the task
+  // exists. A failure therefore stores nothing durable, and only once every byte is on
+  // disk is the task created carrying the matching records in one mutation.
+  const id=this.allocateTaskId(store);
+  const written=await service.storeAll(id,sources);
+  try{
+   return await store.createTask({...input,boardId,id,attachmentRecords:written});
+  }catch(error){
+   await service.removeAll(id,written).catch(cleanup=>this.options.report?.(cleanup));
+   throw error;
+  }
  }
  startFirstExecution(taskId:string,request:{send:boolean;columnId:string;expectedEnteredAt?:number;expectedInstruction?:string}):Promise<{sessionId:string;sent:boolean}>{
   // Each step re-enters the command lane on its own, because the worktree wait must
@@ -1471,7 +1705,41 @@ export class KanbanApp {
    case 'task.scriptedVariable':{const located=this.locatedTask(command.taskId);invariant(located.project.id===command.projectId,'STALE_STAGE','The task project changed before this value could be saved.');await this.ensureScriptedEntry(command.taskId);const current=this.locatedTask(command.taskId).task;invariant(current.stageEntry?.stageIdentity===command.stageIdentity,'STALE_STAGE','The task moved to another stage before this value could be saved.');await this.requireScripted().variable(command.taskId,command.name,command.value??null,command.stageIdentity);break;}
    case 'task.scriptedRetryDelivery':{const task=this.locatedTask(command.taskId).task;invariant(task.scripted?.entryId===command.entryId&&task.scripted.executionId===command.executionId,'STALE_EXECUTION','This saved result no longer owns the stage entry.');await this.requireScripted().retryDelivery({taskId:task.id,entryId:command.entryId,executionId:command.executionId});break;}
    case 'task.scriptedParameters':await this.requireScripted().parameters(command.taskId,command.entryId,command.values);break;
-   case 'task.edit':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).editTask(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},command.expectedRevision);break;}
+
+   case 'task.edit':{
+    const located=this.locator.byTask(command.taskId);invariant(located,'TASK_NOT_FOUND','Task does not exist.');
+    // Everything that can reject is checked before anything is written. A removal ID is
+    // de-duplicated because the same identity twice would drop the first and then fail on
+    // the second, after bytes were already gone.
+    const removalIds=[...new Set(command.removeAttachmentIds??[])];
+    for(const attachmentId of removalIds)assertAttachmentRemoval(located.task,attachmentId,command.confirmed===true);
+    if(command.title!==undefined)invariant(command.title.trim().length>0,'INVALID_INPUT','A task title cannot be empty.');
+    if(command.expectedRevision!==undefined)invariant(this.hubs.hub(located.hubId).snapshot().revision===command.expectedRevision,'STALE_REVISION','The task changed before this edit was saved.');
+    // A text-only edit never asks for the store, so a host without attachments keeps
+    // renaming and re-describing cards exactly as before.
+    const touchesFiles=(command.attachmentPaths?.length??0)>0||(command.attachmentUploads?.length??0)>0||removalIds.length>0;
+    const service=touchesFiles?this.taskAttachmentService():undefined;
+    // An edit is staged so a failure cannot leave half of it applied: the new bytes are
+    // written first under fresh identities, every metadata change commits in ONE
+    // transaction, and only then are the removed bytes deleted.
+    const pathSources=command.attachmentPaths===undefined||command.attachmentPaths.length===0?[]:await TaskAttachments.resolvePaths(command.attachmentPaths);
+    const uploadSources=(command.attachmentUploads??[]).map(upload=>({name:upload.name,origin:upload.origin,data:new Uint8Array(Buffer.from(upload.data,'base64'))}));
+    const sources=[...pathSources,...uploadSources];
+    const store=this.hubStore(located.hubId);
+    const staged=sources.length===0||service===undefined?[]:await service.storeAll(command.taskId,sources);
+    try{
+     await store.applyTaskEdit(command.taskId,{...(command.title!==undefined?{title:command.title}:{}),...(command.description!==undefined?{description:command.description}:{})},staged,removalIds,command.expectedRevision);
+    }catch(error){
+     // Nothing was recorded, so the staged bytes are unreachable and are swept.
+     if(staged.length>0&&service!==undefined)await service.removeAll(command.taskId,staged).catch(cleanup=>this.options.report?.(cleanup));
+     throw error;
+    }
+    // The metadata is committed, so the surviving record is the authority on which objects
+    // may exist. Sweeping by reference deletes the removed bytes and repairs anything an
+    // earlier failed unlink left behind, so a removal never leaves an orphan silently.
+    if(service!==undefined)await this.sweepTaskAttachments(command.taskId,removalIds.length>0);
+    break;
+   }
    case 'conversation.create':{const created=await this.createConversationNow(command.taskId,{ensureFirst:command.ensureFirst===true});commandReceipt={kind:'conversation',id:created.sessionId,...(created.model===undefined?{}:{model:created.model}),...(created.preset===undefined?{}:{preset:created.preset})};break;}
    case 'conversation.close':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).closeSession(command.taskId,command.sessionId);if(located.task.recordedTransition?.exception?.sessionId===command.sessionId)this.exceptionalTurn.forget(command.taskId);break;}
    case 'conversation.reopen':{const located=this.locatedTask(command.taskId);await this.hubs.hub(located.hubId).reopenSession(command.taskId,command.sessionId);break;}

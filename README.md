@@ -95,6 +95,7 @@ Then use the already-running DSH GUI: **Plugins → Add plugin**, add the absolu
 | Decision gates that stop a task for an authored choice | [Workflows](docs/user/workflows.md#decision-gates) |
 | Moving cards, stage instructions, declared transitions, and auto mode | [Execution](docs/user/execution.md) |
 | The task drawer, native conversations, notes, history, relations, and question rounds | [Conversations](docs/user/conversations.md) |
+| Task files and files attached to a question answer | [Task files](docs/user/task-files.md) |
 | Publishing a Hub through Git, Google Drive, or a local folder, and team files | [Team sharing](docs/user/team-sharing.md) |
 | Worktrees, the workspace model, and task deletion | [Git and worktrees](docs/user/git-worktrees.md) |
 | Unattended cron schedules | [Schedules](docs/user/schedules.md) |

@@ -5,7 +5,7 @@ import { choice, free, multi, round } from './fixtures.js';
 describe('question draft state', () => {
   it('starts empty and positioned on the round first slide', () => {
     const draft = emptyDraft('round-1');
-    expect(draft).toEqual({ roundId: 'round-1', answers: {}, generalNotes: '', active: null });
+    expect(draft).toEqual({ roundId: 'round-1', answers: {}, generalNotes: '', pageAttachments: {}, roundAttachments: [], attachmentOrder: [], active: null });
     expect(hasContent(draft)).toBe(false);
     expect(activeSlide(round(), draft)).toEqual({ kind: 'page', callId: 'page-0' });
     expect(activeSlide(round([]), draft)).toEqual({ kind: 'notes' });
@@ -13,7 +13,7 @@ describe('question draft state', () => {
 
   it('round-trips every durable field through the stored projection', () => {
     const draft = {
-      roundId: 'round-1',
+      ...emptyDraft('round-1'),
       answers: {
         'page-0': { choices: [], text: '', other: '', notes: 'Only on the weekend.' },
         'page-1': { choices: ['Read', 'Write'], text: '', other: 'Audit', notes: '' },
@@ -39,10 +39,8 @@ describe('question draft state', () => {
 
   it('copies restored and projected answers instead of aliasing them', () => {
     const projection = toStoredDraft({
-      roundId: 'round-1',
+      ...emptyDraft('round-1'),
       answers: { 'page-0': { choices: ['Local'], text: '', other: '', notes: '' } },
-      generalNotes: '',
-      active: null,
     }, 'now');
     const restored = restoreDraft('round-1', projection);
     restored.answers['page-0']!.choices.push('Remote');

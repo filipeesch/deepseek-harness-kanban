@@ -42,6 +42,11 @@ function fixture() {
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       modelCatalog: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] } } }),
       mcpServers: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['atlassian', 'trino'] } }),
+      readTaskAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { name: 'notes.txt', bytes: 3, origin: 'path', data: 'YWJj' } } }),
+      saveQuestionAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { id: 'att-1', name: 'notes.txt', bytes: 3 } } }),
+      readQuestionAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { name: 'notes.txt', data: 'YWJj' } } }),
+      removeQuestionAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: undefined } }),
+
       worktreeDefault: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { branchName: 'task', path: '' } } }),
       detectProject: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { kind: 'git', projectPath: '/repo', gitRootPath: '/repo', defaultBranch: 'main' } } }),
       sessionInspect: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { observation: null } } }),
