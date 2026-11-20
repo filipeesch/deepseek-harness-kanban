@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Problem, Project, RetainedCheckout, Task } from '../../shared/types.js';
+import type { AttachmentCleanupWarning, Problem, Project, RetainedCheckout, Task } from '../../shared/types.js';
 import {
+  attachmentCleanupNotices,
   boardNotices,
   commandFailureNotice,
   operationNotices,
@@ -20,6 +21,8 @@ export interface NoticeDismissalPort {
 
 export interface BoardNoticesInput {
   retained: readonly RetainedCheckout[];
+  /** Deletions whose attachment bytes could not be removed; dismissible, never deleted. */
+  attachmentCleanups?: readonly AttachmentCleanupWarning[];
   tasks: readonly Task[];
   projects: readonly Project[];
   actionError: Problem | null;
@@ -68,14 +71,19 @@ export function useBoardNotices(input: BoardNoticesInput): BoardNoticeState {
   }, [dismissal, onDismissError]);
 
   const visibleRetained = useMemo(() => retained.filter(entry => !pending.has(entry.path)), [retained, pending]);
+  // A dismissed cleanup warning stays hidden for this page session; the host owns its own
+  // transient list, so a reload starts from what the host still reports.
+  const [hiddenCleanups, setHiddenCleanups] = useState<ReadonlySet<string>>(() => new Set());
+  const cleanups = input.attachmentCleanups ?? [];
+  const visibleCleanups = useMemo(() => cleanups.filter(entry => !hiddenCleanups.has(entry.taskId)), [cleanups, hiddenCleanups]);
   const dismissFailure = useCallback(() => dismissal.dismissFailure(), [dismissal]);
 
   const notices = useMemo(() => boardNotices({
     commandFailure: commandFailureNotice(actionError, dismissFailure),
     operations: operationNotices(tasks, handlers),
     relocations: relocationNotices(projects, handlers),
-    retained: retainedNotices(visibleRetained, path => dismissRetained([path])),
-  }), [actionError, dismissFailure, tasks, handlers, projects, visibleRetained, dismissRetained]);
+    retained: [...retainedNotices(visibleRetained, path => dismissRetained([path])), ...attachmentCleanupNotices(visibleCleanups, taskId => setHiddenCleanups(previous => new Set([...previous, taskId])))],
+  }), [actionError, dismissFailure, tasks, handlers, projects, visibleRetained, dismissRetained, visibleCleanups]);
 
   const dismissAllRetained = visibleRetained.length === 0 ? undefined : () => dismissRetained(visibleRetained.map(entry => entry.path));
   return { notices, ...(dismissAllRetained === undefined ? {} : { dismissAllRetained }) };

@@ -2,6 +2,8 @@ import { Context } from '@deepseek-ai/cordis';
 import os from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { createScriptedLease, createScriptedRuntime } from './host/scripted/index.js';
+import type {} from '@deepseek-ai/dsh-client-connection';
+import { registerTaskAttachmentRoute } from './host/task-attachments/route.js';
 import type {} from '@deepseek-ai/dsh-typert-registry';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-subagent';
@@ -19,6 +21,7 @@ import { HubSharingService } from './host/sharing/service.js';
 import { SharingPollScheduler } from './host/sharing/scheduler.js';
 import { createGitProviderDescriptor } from './host/sharing/git-store.js';
 import { TeamFiles } from './host/team-files/service.js';
+import { TaskAttachmentStore } from './host/task-attachments/store.js';
 import { sharingRoot } from './host/sharing/root.js';
 import type { SharingCommandRunner } from './host/sharing/command-runner.js';
 import { GoogleDriveAuthService } from './host/sharing/google-drive-auth.js';
@@ -233,12 +236,11 @@ export async function apply(ctx:Context):Promise<void>{
  // The board's tool policy needs the app's task lookup, and the app needs the
  // policy port. One deferred hop keeps the dependency one-directional.
  let applyBoardToolPolicy:(sessionId:string)=>Promise<void>=async()=>undefined;
- // A native execution lease outlives the host that wrote it, so the reader is wired
- // from the private directory alone and outside the optional execution-provider fiber
- // below: a destructive admission must still see the lease when no runtime is mounted.
+ // The profile path is read before the app: the attachment directory and the
+ // scripted lease both live under the DSH profile, outside every project checkout.
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  const scriptedLease=profile&&isAbsolute(profile.dir)?createScriptedLease(join(profile.dir,'kanban-private','scripted')):undefined;
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,...(scriptedLease===undefined?{}:{scriptedLease}),models:sessionModels,presets:sessionPresets,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,...(scriptedLease===undefined?{}:{scriptedLease}),...(profile&&isAbsolute(profile.dir)?{taskAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","attachments")),answerAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","answer-files"))}:{}),models:sessionModels,presets:sessionPresets,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  // The repair is composed here so the app keeps no file-system or format dependency:
  // it delegates to a pipeline whose safety rules are its own.
  app.attachSessionRepair(createHostSessionRepair({
@@ -311,9 +313,9 @@ export async function apply(ctx:Context):Promise<void>{
   runtime:()=>scheduleRuns.runtimeByHub(),
   modelCatalog:refresh=>sessionModels.catalog(refresh),
  });
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offDownload:(()=>Promise<void>)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
  ctx.effect(()=>async()=>{
-  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();offGuards?.();offContext?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
+  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();void offDownload?.();offGuards?.();offContext?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
   scheduleCoordinator.dispose();
   try{await scheduleCoordinator.settle();}finally{
    scheduleWatcher.dispose();
@@ -336,6 +338,9 @@ export async function apply(ctx:Context):Promise<void>{
   }
  });
  offWire=ctx.typert.register(TYPERT_HOST);
+ // A download is a browser-native response, not a JSON payload, so it gets an exact
+ // authenticated route instead of a Remote method.
+ try{offDownload=registerTaskAttachmentRoute(ctx,app,report);}catch(error){report(error);}
  exposeRootContext(ctx);
  ctx.plugin(KanbanController,app);
  // The plan authority anchors on the directory the conversation was created in,
@@ -360,7 +365,7 @@ offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkf
  offScheduleStatus=ctx.on('agent/status',({agent})=>scheduleWatcher.observe(String(agent.id)));
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
- offContext=registerTaskContextInjection(ctx,app.locator,{history,report,sharingView:hubId=>app.boards.sharingView(hubId),conversationFacts:id=>app.conversationFacts(id)});
+ offContext=registerTaskContextInjection(ctx,app.locator,{history,report,sharingView:hubId=>app.boards.sharingView(hubId),conversationFacts:id=>app.conversationFacts(id),attachments:task=>app.taskAttachmentPaths(task).map(entry=>({name:entry.attachment.name,bytes:entry.attachment.bytes,path:entry.path}))});
  offHandoff=registerScriptedHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveScriptedHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptScriptedHandoff(taskId,entryId,id),report});
  const adopter=new ForkAdopter({
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},

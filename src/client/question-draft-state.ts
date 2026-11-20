@@ -38,7 +38,20 @@ function copyContent(draft: QuestionDraftContent): QuestionDraftContent {
   for (const [callId, answer] of Object.entries(draft.answers)) {
     answers[callId] = { choices: [...answer.choices], text: answer.text, other: answer.other, notes: answer.notes };
   }
-  return { answers, generalNotes: draft.generalNotes, active: draft.active === null ? null : { ...draft.active } };
+  // Attachments are part of the durable draft: dropping them here would lose the files
+  // on every reload and would never let the host learn which objects to reclaim.
+  const pageAttachments: NonNullable<QuestionDraftContent['pageAttachments']> = {};
+  for (const [callId, attachments] of Object.entries(draft.pageAttachments ?? {})) {
+    if (attachments.length > 0) pageAttachments[callId] = attachments.map(attachment => ({ ...attachment }));
+  }
+  return {
+    answers,
+    generalNotes: draft.generalNotes,
+    ...(Object.keys(pageAttachments).length === 0 ? {} : { pageAttachments }),
+    ...(draft.roundAttachments === undefined || draft.roundAttachments.length === 0 ? {} : { roundAttachments: draft.roundAttachments.map(attachment => ({ ...attachment })) }),
+    ...(draft.attachmentOrder === undefined || draft.attachmentOrder.length === 0 ? {} : { attachmentOrder: [...draft.attachmentOrder] }),
+    active: draft.active === null ? null : { ...draft.active },
+  };
 }
 function copyStored(draft: StoredQuestionDraft): StoredQuestionDraft {
   return { ...copyContent(draft), updatedAt: draft.updatedAt };

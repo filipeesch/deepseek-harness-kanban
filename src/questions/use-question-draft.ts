@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { QuestionDraftContent, QuestionDraftSlide, QuestionPage, QuestionRound, StoredQuestionDraft } from '../shared/types.js';
-import { activeSlide, choose, restoreDraft, setActive, setAnswerText, setGeneralNotes as setNotes, toDraftContent, type QuestionDraft } from './draft.js';
+import type { QuestionAttachment, QuestionDraftContent, QuestionDraftSlide, QuestionPage, QuestionRound, StoredQuestionDraft } from '../shared/types.js';
+import { activeSlide, addPageAttachment, addRoundAttachment, choose, removePageAttachment, removeRoundAttachment, restoreDraft, setActive, setAnswerText, setGeneralNotes as setNotes, toDraftContent, type QuestionDraft } from './draft.js';
 
 export interface UseQuestionDraftOptions {
   round: QuestionRound;
@@ -10,14 +10,20 @@ export interface UseQuestionDraftOptions {
   onChange?: (draft: QuestionDraftContent) => void;
 }
 
-/** The durable half of the question form: answers, Additional Notes, and the active slide. */
+/** The durable half of the question form: answers, notes, files, and the active slide. */
 export interface QuestionDraftHandle {
   draft: QuestionDraft;
+  /** The newest draft, updated synchronously by every change rather than by a render. */
+  current(): QuestionDraft;
   active: QuestionDraftSlide;
   choose(page: QuestionPage, callId: string, value: string, checked: boolean): void;
   setText(callId: string, field: 'text' | 'other' | 'notes', value: string): void;
   setGeneralNotes(value: string): void;
   goTo(slide: QuestionDraftSlide): void;
+  addPageFile(callId: string, attachment: QuestionAttachment): void;
+  removePageFile(callId: string, attachmentId: string): void;
+  addRoundFile(attachment: QuestionAttachment): void;
+  removeRoundFile(attachmentId: string): void;
 }
 
 /**
@@ -49,6 +55,7 @@ export function useQuestionDraft({ round, stored, onChange }: UseQuestionDraftOp
 
   return {
     draft,
+    current: () => draftRef.current,
     active: activeSlide(round, draft),
     // Editing an answer also marks its page as the resume point, so a page inserted
     // before it later never hides the answer the user was just working on.
@@ -56,5 +63,9 @@ export function useQuestionDraft({ round, stored, onChange }: UseQuestionDraftOp
     setText: (callId, field, value) => commit(current => setAnswerText(setActive(current, { kind: 'page', callId }), callId, field, value)),
     setGeneralNotes: value => commit(current => setNotes(current, value)),
     goTo: slide => commit(current => setActive(current, slide)),
+    addPageFile: (callId, attachment) => commit(current => addPageAttachment(setActive(current, { kind: 'page', callId }), callId, attachment)),
+    removePageFile: (callId, attachmentId) => commit(current => removePageAttachment(current, callId, attachmentId)),
+    addRoundFile: attachment => commit(current => addRoundAttachment(current, attachment)),
+    removeRoundFile: attachmentId => commit(current => removeRoundAttachment(current, attachmentId)),
   };
 }

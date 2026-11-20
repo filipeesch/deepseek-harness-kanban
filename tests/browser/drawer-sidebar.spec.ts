@@ -16,6 +16,12 @@ async function expectDrawerWidth(drawer: Locator, expected: number): Promise<voi
   }).toBe(true);
 }
 
+/** The rail width the divider reports, once the persisted value has been applied. */
+async function expectRailWidth(divider: Locator, expected: number): Promise<void> {
+  // Mounting the rail reads the persisted width, so the first paint can still report the
+  // default; polling keeps the assertion about the settled value instead of a race.
+  await expect.poll(async () => divider.getAttribute('aria-valuenow')).toBe(String(expected));
+}
 async function expand(page: Page, sessionId = 's-closed'): Promise<void> {
   await page.evaluate(id => {
     (window as unknown as { __drawerSidebar: { setExpanded(id: string, value: boolean): void } }).__drawerSidebar.setExpanded(id, true);
@@ -43,7 +49,7 @@ test('opens the rail, grows the drawer, resizes it and restores the base width',
   await expect(rail).toBeVisible();
   const divider = drawer.getByRole('separator', { name: 'Resize right Sidebar' });
   await expect(divider).toBeVisible();
-  await expect(divider).toHaveAttribute('aria-valuenow', '320');
+  await expectRailWidth(divider, 320);
   await expect(drawer.locator('.kb-workspace')).toHaveAttribute('data-workspace-mode', 'split');
 
   await expect.poll(async () => drawer.evaluate(element => getComputedStyle(element).opacity)).toBe('1');
@@ -58,7 +64,7 @@ test('opens the rail, grows the drawer, resizes it and restores the base width',
   await divider.focus();
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('ArrowLeft');
-  await expect(divider).toHaveAttribute('aria-valuenow', '352');
+  await expectRailWidth(divider, 352);
   expect(await page.evaluate(() => window.localStorage.getItem('dsh-kanban.rail.width'))).toBe('352');
 
   // Collapsing returns to the persisted base width.
@@ -68,11 +74,11 @@ test('opens the rail, grows the drawer, resizes it and restores the base width',
 
   // Reopening and reloading keep the rail width.
   await expand(page);
-  await expect(divider).toHaveAttribute('aria-valuenow', '352');
+  await expectRailWidth(divider, 352);
   await page.reload();
   await expect(drawer).toBeVisible();
   await expand(page);
-  await expect(drawer.getByRole('separator', { name: 'Resize right Sidebar' })).toHaveAttribute('aria-valuenow', '352');
+  await expectRailWidth(drawer.getByRole('separator', { name: 'Resize right Sidebar' }), 352);
   await expect(drawer.getByRole('region', { name: 'Right Sidebar' })).toBeVisible();
 
   await page.emulateMedia({ colorScheme: 'dark' });
@@ -145,7 +151,7 @@ test('resizes the rail with the pointer and remembers the width', async ({ page 
   await page.mouse.down();
   await page.mouse.move(box!.x + box!.width / 2 - 32, box!.y + box!.height / 2, { steps: 4 });
   await page.mouse.up();
-  await expect(divider).toHaveAttribute('aria-valuenow', '352');
+  await expectRailWidth(divider, 352);
   expect(await page.evaluate(() => window.localStorage.getItem('dsh-kanban.rail.width'))).toBe('352');
   await expectDrawerWidth(drawer, 780);
 });

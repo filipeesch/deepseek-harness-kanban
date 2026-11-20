@@ -6,6 +6,7 @@ import { relationsOf } from '../../domain/card-relation.js';
 import { UNAVAILABLE_TASK_ACTIVITY, type TaskActivity, type TaskActivityOptions, type TaskActivitySource } from '../../domain/task-activity.js';
 import { compactCard, detailCard, detailRelations, directChildren, plainCard, type EpicRollup } from '../card-projection.js';
 import { flag, normal, text } from './support.js';
+import { assertAttachmentRemoval } from '../../domain/task-attachment.js';
 import { hubScope, requireTask, resolveBoard, taskContext, type ToolArgs } from './scope.js';
 
 /** The largest card read a batch accepts; a larger request is truncated, not refused. */
@@ -115,6 +116,14 @@ export function cardTools(app: KanbanApp, activity: TaskActivitySource = { activ
         relations,
         activity: ownActivity,
         relationDetails: detailRelations(hub, relations, task.id),
+        // Each attachment reports the path an agent reads with its own file tools,
+        // so a file added after the conversation began is still discoverable.
+        attachmentDetails: app.taskAttachmentPaths(task).map(entry => ({
+          id: entry.attachment.id,
+          name: entry.attachment.name,
+          bytes: entry.attachment.bytes,
+          path: entry.path,
+        })),
         ...(epicRollup === undefined ? {} : { epicRollup }),
       });
     }, true),
@@ -149,6 +158,7 @@ export function cardTools(app: KanbanApp, activity: TaskActivitySource = { activ
       title: text('Task title.', true),
       description: text('Markdown task description.'),
       auto_mode: flag('Enable automatic stage advance for the created task.'),
+      attachments: { type: 'array' as const, items: { type: 'string' as const }, description: 'Absolute host paths to attach. Every path is resolved before the task is created, so one unreadable path creates no task.' },
     }, async (args, exec) => {
       const { board, hub } = resolveBoard(app, args as ToolArgs, exec);
       const { task: current, firstExecution } = await app.createTaskAndStart({
@@ -157,22 +167,38 @@ export function cardTools(app: KanbanApp, activity: TaskActivitySource = { activ
         title: args.title,
         description: args.description ?? '',
         ...(args.auto_mode === true ? { autoMode: true } : {}),
+        ...(args.attachments === undefined || args.attachments.length === 0 ? {} : { attachments: args.attachments }),
       }, true);
       return { ...plainCard(current), hubId: hub.id, firstExecution };
     }),
-    normal('edit_card', intent + 'Edit title/description at any stage without messaging or starting task conversations.', {
+    normal('edit_card', intent + 'Edit title/description at any stage without messaging or starting task conversations. Adding attachments takes absolute host paths. Removing an attachment deletes its stored bytes, so it requires confirmed.', {
       task_id: text('Task ID. Optional in a task conversation.'),
       title: text('Replacement title.'),
       description: text('Replacement Markdown description.'),
+      attachments: { type: 'array' as const, items: { type: 'string' as const }, description: 'Absolute host paths to add to the task.' },
+      remove_attachments: { type: 'array' as const, items: { type: 'string' as const }, description: 'Attachment IDs to remove. Each removal deletes the stored bytes.' },
+      confirmed: flag('Confirm the attachment removals; without it a removal is refused.'),
     }, async (args, exec) => {
       const located = requireTask(app, args as ToolArgs, exec);
-      invariant(args.title !== undefined || args.description !== undefined, 'INVALID_EDIT', 'Provide title or description.');
+      const paths = args.attachments ?? [];
+      const removals = args.remove_attachments ?? [];
+      invariant(args.title !== undefined || args.description !== undefined || paths.length > 0 || removals.length > 0, 'INVALID_EDIT', 'Provide a title, a description, attachment paths, or attachment IDs to remove.');
+      // Validation belongs to the command that performs the write, not to this layer:
+      // checking here and again there would let a concurrent change pass the first
+      // check and then conflict inside the command, after some files were written.
+      // An unconfirmed or unknown removal is refused before any byte is touched.
+      // One command owns the whole edit: the attachments and the text are written in
+      // the same lane turn, so a concurrent deletion cannot interleave between them.
       await app.command({
         type: 'task.edit', hubId: located.hubId, taskId: located.task.id,
         ...(args.title !== undefined ? { title: args.title } : {}),
         ...(args.description !== undefined ? { description: args.description } : {}),
+        ...(paths.length === 0 ? {} : { attachmentPaths: paths }),
+        ...(removals.length === 0 ? {} : { removeAttachmentIds: removals }),
+        ...(removals.length === 0 ? {} : { confirmed: args.confirmed === true }),
       });
-      return { ...plainCard(app.hubs.requireTask(located.task.id).task), hubId: located.hubId };
+      const current = app.hubs.requireTask(located.task.id).task;
+      return { ...plainCard(current), hubId: located.hubId, attachments: app.taskAttachmentsOf(current) };
     }),
   ];
 }

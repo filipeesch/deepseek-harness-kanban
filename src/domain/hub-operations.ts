@@ -3,7 +3,7 @@ import { captureStageTargets, ensureLocalStageIdentity, reconcileLocalStageIdent
 import { openSessionIds } from '../shared/conversations.js';
 import { declaredParameterNames, validateParameterValues } from './scripted-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, Workflow } from '../shared/types.js';
+import type { AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, TaskAttachment, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -27,6 +27,7 @@ import type { StageEntryOrigin } from '../shared/task-history.js';
 import { placeTaskIn } from './task-placement.js';
 import { HUB_RELATION_TYPES } from '../shared/types.js';
 import { canonicalEndpoints, findExistingRelation, firstRelationProblem, MAX_RELATIONS_PER_WRITE } from './card-relation.js';
+import { addTaskAttachments, removeTaskAttachment, type TaskAttachmentWrite as TaskAttachmentWriteInput } from './task-attachment.js';
 
 export type { NoteInput } from './note.js';
 export interface TaskTextPatch { title?: string; description?: string }
@@ -355,7 +356,7 @@ function assertAvailableSession(hub: HubState, sessionId: string): void {
   invariant(!hub.tasks.some(task => task.sessionIds.includes(sessionId)), 'SESSION_IN_USE', 'Native session is already associated with a task.');
 }
 
-export function createTask(hub: HubState, input: { boardId: string; projectId: string; title: string; description: string; autoMode?: boolean }, deps: OperationDeps): HubTask {
+export function createTask(hub: HubState, input: { boardId: string; projectId: string; title: string; description: string; autoMode?: boolean; /** A caller that already stored bytes under this identity supplies it. */ id?: string; attachments?: readonly TaskAttachmentWriteInput[] }, deps: OperationDeps): HubTask {
   const value = clone(input);
   invariant(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'New task input must be a mapping.');
   requiredText(value.title, 'Task title');
@@ -372,14 +373,20 @@ export function createTask(hub: HubState, input: { boardId: string; projectId: s
   }
   const at = timestamp(deps);
   const initialColumn = board.workflow.columns.find(column => column.id === board.workflow.initialColumnId);
+  // A caller that already stored this task's attachment bytes supplies the identity,
+  // so the files it wrote resolve; otherwise the domain allocates a fresh one.
+  const taskId = value.id === undefined ? nextId(hub.tasks, deps.id) : (invariant(!hub.tasks.some(task => task.id === value.id), 'TASK_EXISTS', 'A task with that identity already exists.'), value.id);
   const task: HubTask = {
-    id: nextId(hub.tasks, deps.id), boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
+    id: taskId, boardId: board.id, projectId: project.id, title: value.title.trim(), description: value.description,
     columnId: board.workflow.initialColumnId, position, sessionIds: [], closedSessionIds: [], effectiveCwd: requireProjectPath(project),
     worktree: null, operation: null,
     ...(value.autoMode === true ? { autoMode: { enabled: true as const } } : {}),
     ...(entryInstruction(initialColumn) !== undefined ? { instructionPending: { columnId: initialColumn!.id, enteredAt: nextEnteredAt(Date.parse(at)) } } : {}),
     createdAt: at, updatedAt: at,
   };
+  // A creation carrying files records them in the same mutation, so a task is
+  // never observable without the evidence it was created with.
+  if (value.attachments !== undefined && value.attachments.length > 0) addTaskAttachments(task, value.attachments);
   if (initialColumn !== undefined) establishStageEntry(task, initialColumn, ensureLocalStageIdentity(board, initialColumn.id, deps.id), at, deps.id, captureStageTargets(board, initialColumn, deps.id));
   recordCreation(task, board.workflow.initialColumnId, at);
   hub.tasks.push(task);
@@ -659,6 +666,36 @@ export function deleteNote(hub: HubState, taskId: string, noteId: string, deps: 
   return note;
 }
 
+/**
+ * Record one attachment on a task. The caller stored the bytes first, so the
+ * record never names an object that does not exist.
+ */
+/** Record one attachment on an already-loaded task, without touching Hub timestamps. */
+export function addTaskAttachmentRecord(task: HubTask, attachment: TaskAttachmentWriteInput): void {
+  addTaskAttachments(task, [attachment]);
+}
+
+export function addTaskAttachment(hub: HubState, taskId: string, attachment: TaskAttachmentWriteInput, deps: OperationDeps): HubTask {
+  const task = requireTask(hub, taskId);
+  addTaskAttachments(task, [attachment]);
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return task;
+}
+
+/**
+ * Forget one attachment on a task and report what was recorded, so the caller can
+ * delete its bytes. The record is the authority: a failure to delete bytes must
+ * not leave the task naming an attachment the user removed.
+ */
+export function removeTaskAttachmentRecord(hub: HubState, taskId: string, attachmentId: string, deps: OperationDeps): TaskAttachment {
+  const task = requireTask(hub, taskId);
+  const removed = removeTaskAttachment(task, attachmentId);
+  task.updatedAt = timestamp(deps);
+  hub.updatedAt = task.updatedAt;
+  return removed;
+}
+
 export function placeTask(hub: HubState, taskId: string, columnId: string, placement: Placement, enteredAt: number, options: { retainAgentPause?: boolean; at: string; /** How the move happened; absent records no origin. */ origin?: StageEntryOrigin; parameters?: Readonly<Record<string, string>>; decision?: { optionId: string; note?: string } }): void {
   const task = requireTask(hub, taskId);
   const board = boardForTask(hub, task);
@@ -681,6 +718,8 @@ export function placeTask(hub: HubState, taskId: string, columnId: string, place
  */
 export function removeTaskCascade(hub: HubState, taskId: string): HubTask {
   const task = requireTask(hub, taskId);
+  // The attachment metadata leaves with the task in this same mutation; the bytes
+  // are the caller's to delete, because the domain owns no filesystem.
   hub.tasks = hub.tasks.filter(value => value.id !== taskId);
   hub.notes = hub.notes.filter(note => note.taskId !== taskId);
   if (hub.relations !== undefined) hub.relations = hub.relations.filter(relation => relation.from !== taskId && relation.to !== taskId);

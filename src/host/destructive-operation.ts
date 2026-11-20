@@ -9,6 +9,7 @@ import type { ConversationProbe } from './conversation-probe.js';
 import type { DestructiveJournal } from './destructive-journal.js';
 import type { WorktreeBinding } from './hub-repository.js';
 import { recoveryPendingError, requireTask, type OperationJournal } from './operation-journal.js';
+import { deleteTask } from '../domain/hub-operations.js';
 import { SessionArchiver, WaitingForIdle } from './session-archiver.js';
 import { TaskBindingIndex } from './task-binding-index.js';
 import { TaskTeardown, type TeardownOutcome } from './task-teardown.js';
@@ -190,8 +191,8 @@ export class DestructiveExecution {
     if (affected.length > 0 && target !== undefined) await this.markAffectedBindings(taskId, target, affected);
     await this.store.transactTask(taskId, state => {
       if (requireTask(state, taskId).operation?.id !== operationId) throw new KanbanError('OPERATION_CHANGED', 'The deletion operation changed.');
-      // The cascade removes the card, its notes, and its relations in this same
-      // mutation; a relation left behind would make the Hub invalid state.
+      // The cascade removes the card, its notes, and every relation that names it in this
+      // same mutation; a relation left behind would make the Hub invalid state.
       removeTaskCascade(state, taskId);
     });
     try { await this.onTaskDeleted?.(deleted.task, deleted.project); } catch { /* cleanup is reported by the callback owner */ }
