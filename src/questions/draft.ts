@@ -199,6 +199,69 @@ export function addRoundAttachment(draft: QuestionDraft, attachment: QuestionAtt
   return { ...draft, attachmentOrder: [...draft.attachmentOrder, attachment.id], roundAttachments: [...draft.roundAttachments, copyAttachment(attachment)] };
 }
 
+/** One slide's files in the order the person picked them. */
+export function orderedPageAttachments(draft: QuestionDraft, callId: string): QuestionAttachment[] {
+  return byAttachmentOrder(draft, draft.pageAttachments[callId] ?? []);
+}
+
+/** The round's files in the order the person picked them. */
+export function orderedRoundAttachments(draft: QuestionDraft): QuestionAttachment[] {
+  return byAttachmentOrder(draft, draft.roundAttachments);
+}
+
+/**
+ * Sort one slide's files by the round's attachment order.
+ *
+ * A file can be stored out of order (a retry, or a slow read), so what a surface shows and
+ * what a reply names both follow the order the person attached them in, not the order the
+ * files landed in.
+ */
+function byAttachmentOrder(draft: QuestionDraft, attachments: readonly QuestionAttachment[]): QuestionAttachment[] {
+  const rank = new Map(draft.attachmentOrder.map((id, index) => [id, index]));
+  return [...attachments].sort((left, right) => (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER));
+}
+
+/** One file a selection placed on one slide. */
+export interface PickedAttachment {
+  readonly attachment: QuestionAttachment;
+  readonly slide: QuestionDraftSlide;
+}
+
+/**
+ * Insert one selection's files where the person picked them.
+ *
+ * A pick can resolve after later picks were already stored, because a slow read or a retry
+ * finishes later than the click that started it. The round's delivery order is therefore
+ * rebuilt by pick rank rather than by completion time: each file goes after every stored
+ * file picked no later than its own selection, which keeps the order the person attached
+ * them in without duplicating a file.
+ *
+ * @param draft - the draft to extend.
+ * @param picked - the files of one selection, in source order.
+ * @param rank - the pick rank of a stored attachment; an attachment with no recorded rank,
+ *   such as one restored from a stored draft, predates every pick of this form.
+ * @param sequence - the pick rank of this selection.
+ */
+export function addPickedAttachments(draft: QuestionDraft, picked: readonly PickedAttachment[], rank: (attachmentId: string) => number, sequence: number): QuestionDraft {
+  let pageAttachments = draft.pageAttachments;
+  let roundAttachments = draft.roundAttachments;
+  let attachmentOrder = draft.attachmentOrder;
+  for (const entry of picked) {
+    // The whole selection keeps its source order: each file lands after every file picked
+    // at or before this selection, including the one inserted just before it.
+    let at = 0;
+    attachmentOrder.forEach((id, index) => { if (rank(id) <= sequence) at = index + 1; });
+    attachmentOrder = [...attachmentOrder.slice(0, at), entry.attachment.id, ...attachmentOrder.slice(at)];
+    if (entry.slide.kind === 'page') {
+      const current = pageAttachments[entry.slide.callId] ?? [];
+      pageAttachments = { ...pageAttachments, [entry.slide.callId]: [...current, copyAttachment(entry.attachment)] };
+    } else {
+      roundAttachments = [...roundAttachments, copyAttachment(entry.attachment)];
+    }
+  }
+  return { ...draft, pageAttachments, roundAttachments, attachmentOrder };
+}
+
 /** Detach one file from the round as a whole. */
 export function removeRoundAttachment(draft: QuestionDraft, attachmentId: string): QuestionDraft {
   return { ...draft, attachmentOrder: draft.attachmentOrder.filter(id => id !== attachmentId), roundAttachments: draft.roundAttachments.filter(attachment => attachment.id !== attachmentId) };

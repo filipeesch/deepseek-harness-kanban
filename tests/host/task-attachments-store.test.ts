@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { sanitizeAttachmentName, TaskAttachmentStore } from '../../src/host/task-attachments/store.js';
+import { attachmentNameProblem, sanitizeAttachmentName, TaskAttachmentStore } from '../../src/host/task-attachments/store.js';
 import { contentDisposition } from '../../src/host/task-attachments/route.js';
 
 let root: string;
@@ -57,6 +57,12 @@ describe('attachment name sanitizing', () => {
   });
 
   it('escapes a Windows device name', () => {
+    // A name that reduces to a leaf is accepted and stored under that leaf.
+    expect(attachmentNameProblem('folder/leaf.txt')).toBeUndefined();
+    expect(attachmentNameProblem('folder\\leaf.txt')).toBeUndefined();
+    // Only a name with nothing usable left is refused.
+    expect(attachmentNameProblem('///')).toMatch(/no usable characters/);
+    expect(attachmentNameProblem('..')).toMatch(/no usable characters/);
     expect(sanitizeAttachmentName('CON.txt')).toBe('CON.txt');
     expect(sanitizeAttachmentName('aux')).toBe('_aux');
   });
