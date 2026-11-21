@@ -26,6 +26,8 @@ import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
 import { ScriptedHandoffNodeView } from '../../src/client/scripted-handoff-node.js';
 import { TaskMessageNodeView, TASK_MESSAGE_NODE_KIND } from '../../src/client/task-message-node.js';
+import { StageNoticeNodeView, STAGE_NOTICE_NODE_KIND } from '../../src/client/stage-notice-node.js';
+import { StageInstructionNodeView, STAGE_CONTEXT_NODE_KIND } from '../../src/client/stage-instruction-node.js';
 import type { NativeLocaleSource, NativeSeat, NativeSlotSource } from '../../src/client/native-slot-host.js';
 import { MODEL_SELECTION_SLOT } from '../../src/client/native-slot-host.js';
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots';
@@ -318,6 +320,57 @@ function TaskMessageScenario() {
   } as unknown as NativeSlotSource;
   return <div className="dsh-kanban" style={{ padding: 24, maxWidth: 760 }}>
     <TaskMessageNodeView node={node} t={((key: string) => key) as never} slots={slots} />
+  </div>;
+}
+
+function StageNoticeScenario() {
+  // The spec renders the real notice text and passes it in, so the screenshot shows what a conversation receives.
+  const noticeText = query.get('text') ?? 'Stage notice: the task is now in the Review stage.';
+  const node = {
+    key: 'stage-notice', kind: STAGE_NOTICE_NODE_KIND, id: 'notice-1', target: 'chat', anchorSeq: 1,
+    location: { kind: 'unresolved' }, visibility: 'visible', groupTree: 'turn',
+    data: {
+      seq: 1, time: 1, content: [{ type: 'text', text: noticeText }],
+      source: { kind: 'stage-notice', form: 'notice', summary: 'Stage: Review', entryId: 'entry-2', columnId: 'review' },
+      producer: { role: 'inject', label: 'stage-notice' }, form: 'notice',
+    },
+  } as never;
+  // A minimal stand-in for the host's native context row, so the screenshot shows
+  // the delegated disclosure chrome rather than only the inline fallback.
+  function NativeRow(props: Record<string, unknown>) {
+    const data = (props.node as { data: { content: readonly { type: string; text?: string }[]; source: { summary?: string } } }).data;
+    const text = data.content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join(String.fromCharCode(10));
+    return <details className="kb-native-context"><summary>{data.source.summary}</summary><pre style={{ margin: 0, padding: '0 10px 10px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{text}</pre></details>;
+  }
+  const fallback = query.get('fallback') === '1';
+  const slots = {
+    entriesOfSlot: () => fallback ? [] : [{ component: NativeRow, options: { key: 'context' } }],
+    subscribe: () => () => {},
+  } as unknown as NativeSlotSource;
+  return <div className="dsh-kanban" style={{ padding: 24, maxWidth: 760 }}>
+    <StageNoticeNodeView node={node} t={((key: string) => key) as never} slots={slots} />
+  </div>;
+}
+
+/** A stage instruction row beside a stage notice row, the way a conversation shows a move that was announced and then run. */
+function StageRowsScenario() {
+  const row = (kind: string, id: string, sourceKind: string, summary: string, text: string) => ({
+    key: id, kind, id, target: 'chat', anchorSeq: 1, location: { kind: 'unresolved' }, visibility: 'visible', groupTree: 'turn',
+    data: { seq: 1, time: 1, content: [{ type: 'text', text }], source: { kind: sourceKind, form: 'notice', summary }, producer: { role: 'inject', label: sourceKind }, form: 'notice' },
+  }) as never;
+  const notice = row(STAGE_NOTICE_NODE_KIND, 'notice-1', 'stage-notice', 'Stage: Review', query.get('notice') ?? 'Stage notice: the task moved to the Review stage.');
+  const instruction = row(STAGE_CONTEXT_NODE_KIND, 'instruction-1', 'stage-instruction', 'Stage: Review - next: Archive', query.get('instruction') ?? 'Stage orientation (facts from the active workflow):\nReview it.');
+  function NativeRow(props: Record<string, unknown>) {
+    const data = (props.node as { data: { content: readonly { type: string; text?: string }[]; source: { summary?: string } } }).data;
+    const text = data.content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join(String.fromCharCode(10));
+    return <details className="kb-native-context"><summary>{data.source.summary}</summary><pre style={{ margin: 0, padding: '0 10px 10px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: 'inherit' }}>{text}</pre></details>;
+  }
+  const fallback = query.get('fallback') === '1';
+  const slots = { entriesOfSlot: () => fallback ? [] : [{ component: NativeRow, options: { key: 'context' } }], subscribe: () => () => {} } as unknown as NativeSlotSource;
+  const t = ((key: string) => key) as never;
+  return <div className="dsh-kanban" style={{ padding: 24, maxWidth: 760 }}>
+    <StageNoticeNodeView node={notice} t={t} slots={slots} />
+    <StageInstructionNodeView node={instruction} t={t} slots={slots} />
   </div>;
 }
 
@@ -642,6 +695,8 @@ function App() {
   if (scenario === 'question') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban"><QuestionScenario /></div></>;
   if (scenario === 'feed-status') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><FeedStatusScenario /></>;
   if (scenario === 'task-message') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><TaskMessageScenario /></div></>;
+  if (scenario === 'stage-rows') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><StageRowsScenario /></div></>;
+  if (scenario === 'stage-notice') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><StageNoticeScenario /></div></>;
   return <BoardView api={harness.api} renderConversation={id => <div data-native={id} />} />;
 }
 

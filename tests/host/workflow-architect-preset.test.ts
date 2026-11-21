@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseDocument } from 'yaml';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { PRODUCT_TOOL_NAMES } from '../../src/host/tools/names.js';
+import { DESCRIPTION_CEILING } from '../../src/domain/workflow-warnings.js';
+import { AGENT_TRANSITION_REASON_LIMIT } from '../../src/domain/transition-reason.js';
 
 const root = path.resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const skillRoot = path.join(root, 'presets/skills');
@@ -143,12 +145,41 @@ describe('shipped agent presets', () => {
 
   it('keeps workflow operation and authoring guidance within their roles', async () => {
     const operator = await readFile(path.join(skillRoot, 'kanban-workflow-operation/SKILL.md'), 'utf8');
-    for (const phrase of ['current stage', 'scripted stage', 'without a script or instruction', 'list_allowed_transitions', 'current stage instruction', 'user directly requests', 'automatic mode', 'explicit direct user request', 'not proof of user intent']) {
+    for (const phrase of [
+      'current stage', 'scripted stage', 'without a script or instruction', 'list_allowed_transitions', 'current stage instruction', 'user directly requests', 'automatic mode', 'explicit direct user request', 'not proof of user intent',
+      'Stage orientation (facts from the active workflow):', 'Stage notice:', 'get_workflow_summary', 'set_next_transition', 'every stage is a valid place', 'forced jump', 'exception flag',
+      'at most ' + AGENT_TRANSITION_REASON_LIMIT + ' characters',
+    ]) {
       expect(operator).toContain(phrase);
     }
     const architect = await readFile(path.join(skillRoot, 'kanban-workflow-design/SKILL.md'), 'utf8');
-    expect(architect).toContain('at most 150 characters');
+    expect(architect).toContain('at most ' + DESCRIPTION_CEILING + ' characters');
+    expect(architect).not.toContain('150 characters');
     expect(architect).toContain('not other authors');
+    expect(architect).toContain('(references/stage-contracts.md)');
+  });
+
+  it('states the operator standing rule in its persona and keeps both operator texts generic', async () => {
+    const { presets } = await composition();
+    const persona = plugin(presets[3]!, 'persona')!.config!.prefix as string;
+    expect(persona).toContain('kanban-workflow-operation');
+    expect(persona).toContain('The current stage is your scope');
+    expect(persona).toContain('Do not perform in the current stage work that another stage owns');
+    expect(persona).toContain('When no stage owns the work, do it in the current stage');
+    expect(persona).toContain("A stage's own instruction takes precedence");
+    expect(persona).toContain('latest stage orientation or stage notice');
+    expect(persona).toContain('get_workflow_summary');
+    const skill = await readFile(path.join(skillRoot, 'kanban-workflow-operation/SKILL.md'), 'utf8');
+    for (const text of [persona, skill]) expect(text).not.toMatch(/\b(deploy|merge|pull request|openspec|migration)s?\b/i);
+  });
+
+  it('ships the stage-contract reference the design skill links', async () => {
+    const reference = await readFile(path.join(skillRoot, 'kanban-workflow-design/references/stage-contracts.md'), 'utf8');
+    expect(reference.length).toBeLessThan(7000);
+    for (const phrase of ['Description (at most ' + DESCRIPTION_CEILING + ' characters)', 'Transition ', 'Entry instruction', 'at most ' + AGENT_TRANSITION_REASON_LIMIT + ' characters', 'operator\'s standing rule', 'exactly one owning stage']) {
+      expect(reference).toContain(phrase);
+    }
+    expect(reference).not.toMatch(/\b(deploy|merge|pull request|openspec|migration)s?\b/i);
   });
 
   it('keeps the architect able to inspect and validate a workflow', async () => {

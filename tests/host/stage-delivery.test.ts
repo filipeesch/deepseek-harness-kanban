@@ -98,6 +98,23 @@ describe('stage instruction delivery', () => {
     expect(deliver).toHaveBeenCalledTimes(2);
   });
 
+  it('composes the content again right after the final authority check', async () => {
+    const order: string[] = [];
+    const deliver = vi.fn(async (_value: ReturnType<typeof target>, entry: typeof delivery) => { order.push('deliver:' + entry.text); });
+    const send = createStageDelivery(deps({ deliver, events: async () => { order.push('events'); return []; } }));
+    await send('s1', { ...delivery, assertCurrent: () => { order.push('assert'); }, refresh: () => { order.push('refresh'); return { ...delivery, text: 'Refreshed.' }; } });
+    expect(order).toEqual(['events', 'assert', 'refresh', 'deliver:Refreshed.']);
+  });
+
+  it('neither composes nor delivers when the final authority check refuses', async () => {
+    const deliver = vi.fn(async () => {});
+    const refresh = vi.fn(() => delivery);
+    const send = createStageDelivery(deps({ deliver }));
+    await expect(send('s1', { ...delivery, assertCurrent: () => { throw new Error('entry replaced'); }, refresh })).rejects.toThrow('entry replaced');
+    expect(refresh).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
   it('keeps conversations independent for the same identity', async () => {
     const deliver = vi.fn(async () => {});
     const send = createStageDelivery(deps({ deliver }));

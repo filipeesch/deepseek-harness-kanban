@@ -88,25 +88,33 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
   // a task that left it must not receive that stage's instruction.
   const live = deps.locate(request.taskId);
   assertCurrent();
-  const briefing = buildTransitionBriefing(live.board.workflow, { columnId: request.columnId, recordedTransition: live.task.recordedTransition });
-  const stage = live.board.workflow.columns.find(value => value.id === request.columnId);
-  // The source stage is resolved at send time, so a stage renamed between the tool
-  // call and the delivery is described with the name the workflow carries now.
-  const transition = request.transition === undefined ? undefined : {
-    fromStageName: live.board.workflow.columns.find(value => value.id === request.transition!.fromColumnId)?.name ?? request.transition.fromColumnId,
-    reason: request.transition.reason,
+  const requestIdentity = randomUUID();
+  // The message is composed from the workflow and the task as they are at the moment it is
+  // composed. The delivery composes it again after its own final authority check, so an edit
+  // that kept this entry but changed the stage's responsibility or routes still reaches it.
+  const compose = (target: StageInstructionTarget): StageInstructionDelivery => {
+    const briefing = buildTransitionBriefing(target.board.workflow, { columnId: request.columnId, recordedTransition: target.task.recordedTransition });
+    const stage = target.board.workflow.columns.find(value => value.id === request.columnId);
+    // The source stage is resolved at send time, so a stage renamed between the tool
+    // call and the delivery is described with the name the workflow carries now.
+    const transition = request.transition === undefined ? undefined : {
+      fromStageName: target.board.workflow.columns.find(value => value.id === request.transition!.fromColumnId)?.name ?? request.transition.fromColumnId,
+      reason: request.transition.reason,
+    };
+    return buildStageInstructionDelivery({
+      instruction,
+      ...(transition === undefined ? {} : { transition }),
+      ...(handoff === undefined ? {} : { handoff }),
+      ...(briefing === undefined ? {} : { briefing }),
+      stageName: stage?.name ?? request.columnId,
+      ...(target.task.stageEntry === undefined ? {} : { entryId: target.task.stageEntry.id }),
+      task: target.task,
+      workflow: target.board.workflow,
+      requestId: request.requestId ?? handoff?.id ?? requestIdentity,
+    });
   };
-  const delivery = buildStageInstructionDelivery({
-    instruction,
-    ...(transition === undefined ? {} : { transition }),
-    ...(handoff === undefined ? {} : { handoff }),
-    ...(briefing === undefined ? {} : { briefing }),
-    stageName: stage?.name ?? request.columnId,
-    task: live.task,
-    workflow: live.board.workflow,
-    requestId: request.requestId ?? handoff?.id ?? randomUUID(),
-  });
-  await deps.deliver(sessionId, { ...delivery, assertCurrent });
+  const delivery = compose(live);
+  await deps.deliver(sessionId, { ...delivery, assertCurrent, refresh: () => compose(deps.locate(request.taskId)) });
   await deps.transact(target.hubId, draft => {
     const current = draft.tasks.find(value => value.id === task.id);
     const marker = current?.instructionPending;

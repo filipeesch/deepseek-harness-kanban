@@ -80,6 +80,16 @@ describe('decision routing', () => {
     expect(sent[0]!.text).toContain('Return to review with the findings addressed.');
   });
 
+  it('delivers a person\'s long observation whole, beyond the agent reason limit', async () => {
+    const { f, taskId, entryId } = await gated();
+    const note = 'n'.repeat(700);
+    await choose(f, taskId, entryId, 'fix', 'review', { note });
+    const sent = f.sessions.sent.filter(message => message.kind === 'stage-instruction');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('Observation: ' + note);
+    expect(f.store.requireTask(taskId).columnId).toBe('review');
+  });
+
   it('refuses a stale entry, keeps the gate, and records nothing', async () => {
     const { f, taskId, entryId } = await gated();
     const history = f.store.requireTask(taskId).history?.length;

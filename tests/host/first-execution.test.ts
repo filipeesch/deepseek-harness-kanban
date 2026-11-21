@@ -6,6 +6,7 @@ import type { ModelSelection } from '../../src/shared/types.js';
 import type { SessionModelPort } from '../../src/host/session-model.js';
 import type { SessionPresetPort } from '../../src/host/session-preset.js';
 import { fixture } from './helpers.js';
+import { oriented } from '../support/stage-delivery.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 afterEach(async () => { for (const value of active.splice(0)) await value.close(); });
@@ -56,7 +57,7 @@ describe('prepareFirstExecution', () => {
     const current = f.store.requireTask(task.id);
     expect(opened.sent).toBe(true);
     expect(f.sessions.sent).toEqual([{
-      id: opened.sessionId, text: instruction, kind: 'stage-instruction', requestId: expect.any(String), summary: 'Stage: Backlog - next: Done',
+      id: opened.sessionId, text: oriented(instruction), kind: 'stage-instruction', requestId: expect.any(String), summary: 'Stage: Backlog - next: Done',
     }]);
     expect(current.instructionPending).toBeUndefined();
   });

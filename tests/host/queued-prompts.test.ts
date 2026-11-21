@@ -58,6 +58,14 @@ describe('queued prompt reader', () => {
     expect(read('s1', undefined)).toBe(1);
   });
 
+  it('does not count a stage notice as user work by its source alone', () => {
+    const read = createQueuedPromptReader({
+      live: () => ({ nextTurn: [notice('stage-notice'), message()], nextStep: [notice('stage-notice')] }),
+    }, new PluginPromptLedger());
+    expect(read('s1', undefined)).toBe(1);
+    expect(read('s2', sequenced({ inbox: { 'next-turn': [notice('stage-notice')], 'next-step': [notice('stage-notice'), message()] } }))).toBe(1);
+  });
+
   it('reads the durable projection for a conversation that is not live', async () => {
     const read = createQueuedPromptReader({ live: () => undefined }, new PluginPromptLedger());
     expect(read('s1', sequenced({ inbox: { 'next-turn': [message(), message('k')], 'next-step': [message()] } }))).toBe(3);

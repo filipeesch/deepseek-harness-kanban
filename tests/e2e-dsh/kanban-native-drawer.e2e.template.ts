@@ -288,9 +288,26 @@ it('renders the seeded task-context message as an inline native Chat row', async
   await expectCount(page.locator('.kb-task-context'), 0);
   await row.getByRole('button').first().click();
   await expectText(row, 'Task: Seeded task');
+  // The stage notice a later turn begins with is its own collapsed row, in the transcript flow, before the person's input.
+  const notice = page.locator('[data-chat-flow-kind="kanban-stage-notice"]');
+  await expectCount(notice, 1);
+  await visible(notice);
+  expect(await notice.evaluate(element => element.closest('[data-chat-flow]') !== null)).toBe(true);
+  await expectText(notice.locator('[data-context-source]'), 'stage-notice');
+  await expectCount(page.locator('.kb-stage-context-fallback'), 0);
+  // The row starts collapsed: its body is not visible until the summary is activated.
+  const body = notice.getByText('Stage orientation (facts from the active workflow):').first();
+  await expect.poll(() => body.isVisible()).toBe(false);
+  await notice.getByRole('button').first().click();
+  await expect.poll(() => body.isVisible()).toBe(true);
+  await expectText(notice, 'Stage notice: the task moved to the Review stage.');
+  const humanInput = page.getByText('Second message after the move.', { exact: true });
+  await visible(humanInput);
+  expect(await notice.evaluate((element, input) => Boolean(element.compareDocumentPosition(input as Node) & Node.DOCUMENT_POSITION_FOLLOWING), await humanInput.elementHandle())).toBe(true);
   await page.reload({ waitUntil: 'load' });
   await page.getByLabel('Sessions', { exact: true }).getByText('Task context fixture', { exact: true }).click();
   await expectCount(page.locator('[data-chat-flow-kind="kanban-task-context"]'), 1);
+  await expectCount(page.locator('[data-chat-flow-kind="kanban-stage-notice"]'), 1);
   await mkdir(join(KANBAN_ROOT, '.verification'), { recursive: true });
   await page.screenshot({ path: join(KANBAN_ROOT, '.verification/native-task-context.png') });
 }, 90_000);

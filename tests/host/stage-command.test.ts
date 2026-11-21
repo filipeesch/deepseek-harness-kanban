@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { fixture } from './helpers.js';
+import { oriented } from '../support/stage-delivery.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { CommandSchema } from '../../src/remote.js';
 
@@ -87,17 +88,17 @@ describe('board.stage.update', () => {
     await f.app.command({ type: 'task.move', taskId: first.id, columnId: stage.id });
     const firstMarker = f.store.requireTask(first.id).instructionPending!;
     await f.app.command({ type: 'task.runInstruction', taskId: first.id, columnId: stage.id, expectedEnteredAt: firstMarker.enteredAt, expectedInstruction: 'Plan it.' });
-    expect(f.sessions.sent.at(-1)).toMatchObject({ text: 'Plan it.' });
+    expect(f.sessions.sent.at(-1)).toMatchObject({ text: oriented('Plan it.') });
 
     // Editing the stage afterwards never rewrites what was already delivered.
     await update({ onEnterPrompt: 'Plan it better.' });
-    expect(f.sessions.sent.at(-1)).toMatchObject({ text: 'Plan it.' });
+    expect(f.sessions.sent.at(-1)).toMatchObject({ text: oriented('Plan it.') });
 
     const second = await f.app.createTask({ projectId: f.project.id, title: 'Second entry', description: '' });
     await f.app.command({ type: 'task.move', taskId: second.id, columnId: stage.id });
     const secondMarker = f.store.requireTask(second.id).instructionPending!;
     await f.app.command({ type: 'task.runInstruction', taskId: second.id, columnId: stage.id, expectedEnteredAt: secondMarker.enteredAt, expectedInstruction: 'Plan it better.' });
-    expect(f.sessions.sent.at(-1)).toMatchObject({ text: 'Plan it better.' });
+    expect(f.sessions.sent.at(-1)).toMatchObject({ text: oriented('Plan it better.') });
 
     // Clearing the instruction leaves a later entry with nothing to deliver.
     await update({ onEnterPrompt: null });

@@ -29,12 +29,13 @@ describe('transition briefing', () => {
     expect(buildTransitionBriefing(workflow, { columnId: 'review' })).toBeUndefined();
   });
 
-  it('lists every target with its condition and the default rule', () => {
+  it('keeps the default rule and leaves the target list to the orientation block', () => {
     const briefing = buildTransitionBriefing(twoTargets(), { columnId: 'review' });
     expect(briefing).toBeDefined();
-    expect(briefing).toContain('Workflow transitions from REVIEW:');
-    expect(briefing).toContain('- REWORK — The review requested changes.');
-    expect(briefing).toContain('- DONE — The review approved the work.');
+    expect(briefing).toContain('Workflow transitions from REVIEW (its exits are listed in the stage orientation):');
+    expect(briefing).not.toContain('The review requested changes.');
+    expect(briefing).not.toContain('The review approved the work.');
+    expect(briefing).not.toContain('- REWORK');
     expect(briefing).toContain('No transition recorded.');
     expect(briefing).toContain('an independently enabled automatic advance uses DONE.');
     expect(briefing).not.toContain('Declare the transition');
@@ -44,6 +45,7 @@ describe('transition briefing', () => {
   it('states the required reason and the end-of-turn timing', () => {
     const briefing = buildTransitionBriefing(twoTargets(), { columnId: 'review' })!;
     expect(briefing).toContain('passing column_id and reason');
+    expect(briefing).toContain('(the reason is at most 200 characters)');
     expect(briefing).toContain('A declared transition requires a reason');
     expect(briefing).toContain('after a completed turn');
   });
@@ -53,11 +55,11 @@ describe('transition briefing', () => {
     expect(buildTransitionBriefing(workflow, { columnId: 'review' })).toBeUndefined();
   });
 
-  it('keeps a target without a condition free of trailing text', () => {
+  it('never lists a target, with or without a condition', () => {
     const workflow = flow(column('review', { allowedTransitions: transitions('done', 'rework') }), column('rework'), column('done'));
-    const briefing = buildTransitionBriefing(workflow, { columnId: 'review' });
-    expect(briefing).toContain('- REWORK\n');
-    expect(briefing).not.toContain('- REWORK —');
+    const briefing = buildTransitionBriefing(workflow, { columnId: 'review' })!;
+    expect(briefing).not.toContain('REWORK');
+    expect(briefing.split('\n').some(line => line.startsWith('- '))).toBe(false);
   });
 
   it('names the recorded transition', () => {

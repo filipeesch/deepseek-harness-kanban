@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TURN_ADVANCE_SETTLE_MS } from '../../src/host/turn-advance.js';
 import { fixture, taskWithConversation } from './helpers.js';
+import { afterOrientation } from '../support/stage-delivery.js';
 
 const BRANCHED = [
   'name: Branched flow',
@@ -49,10 +50,14 @@ describe('transition briefing on every send path', () => {
     // The timed instruction sends through the same command as the card run action.
     await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: entered.instructionPending!.enteredAt, expectedInstruction: 'Plan it.' });
     expect(f.sessions.sent).toHaveLength(1);
-    const briefing = briefingOf(f.sessions.sent[0]!.text);
-    expect(briefing).toContain('- Done — The plan approved the task without further work.');
-    expect(briefing).toContain('- Review — The plan needs a review before implementation.');
-    expect(f.sessions.sent[0]!.text).toContain('Plan it.');
+    const text = f.sessions.sent[0]!.text;
+    const briefing = briefingOf(text);
+    expect(text.startsWith('Stage orientation')).toBe(true);
+    expect(text).toContain('Condition: The plan approved the task without further work.');
+    expect(text).toContain('Condition: The plan needs a review before implementation.');
+    expect(text).toContain('Plan it.');
+    expect(briefing).toContain('set_next_transition');
+    expect(briefing).not.toContain('The plan approved the task');
     expect(briefing).not.toContain('Declare the transition');
   });
 
@@ -79,7 +84,8 @@ describe('transition briefing on every send path', () => {
     });
     await f.app.command({ type: 'operation.retry', taskId: task.id });
     expect(f.sessions.sent).toHaveLength(1);
-    expect(briefingOf(f.sessions.sent[0]!.text)).toContain('- Done — The plan approved the task without further work.');
+    expect(f.sessions.sent[0]!.text).toContain('Condition: The plan approved the task without further work.');
+    expect(briefingOf(f.sessions.sent[0]!.text)).toContain('set_next_transition');
   });
 
   it('includes the briefing in an automatic advance', async () => {
@@ -94,7 +100,8 @@ describe('transition briefing on every send path', () => {
     } finally { vi.useRealTimers(); }
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
     await expect.poll(() => f.sessions.sent.length).toBe(1);
-    expect(briefingOf(f.sessions.sent[0]!.text)).toContain('- Done — The plan approved the task without further work.');
+    expect(f.sessions.sent[0]!.text).toContain('Condition: The plan approved the task without further work.');
+    expect(briefingOf(f.sessions.sent[0]!.text)).toContain('set_next_transition');
   });
 
   it('sends the instruction alone when the destination configures one target', async () => {
@@ -105,6 +112,6 @@ describe('transition briefing on every send path', () => {
     const entered = f.store.requireTask(task.id);
     await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: entered.instructionPending!.enteredAt, expectedInstruction: 'Plan it.' });
     expect(f.sessions.sent).toHaveLength(1);
-    expect(f.sessions.sent[0]!.text).toBe('Plan it.');
+    expect(afterOrientation(f.sessions.sent[0]!.text)).toBe('Plan it.');
   });
 });
