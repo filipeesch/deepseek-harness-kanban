@@ -2,6 +2,10 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 import type { LocatedTask } from '../hub-repository.js';
 import { defaultDestination, transitionTargets } from '../../domain/transitions.js';
 import { recordedTransition, staleTransitionMessage } from '../../domain/transition-route.js';
+import { AGENT_TRANSITION_REASON_LIMIT, normalizeTransitionReason } from '../../domain/transition-reason.js';
+import { routingOwner as routingOwnerOf, routingPolicy } from '../../domain/stage-kind.js';
+import { stageReference } from '../../domain/stage-orientation.js';
+import type { Column } from '../../shared/types.js';
 import { invariant } from '../../shared/errors.js';
 import { flag, normal, text } from './support.js';
 import { requireOwnTask, requireTask, type TaskScopeSource, type ToolArgs } from './scope.js';
@@ -20,6 +24,12 @@ export interface TaskRoutingPort extends TaskScopeSource {
   exceptionalTransitionArmed?(taskId: string, exceptionId: string): boolean;
 }
 
+/** What a stage is and what it owns: its kind and, when authored, its responsibility. */
+function described(column: Column) {
+  const { kind, responsibility } = stageReference(column);
+  return { kind, ...(responsibility === undefined ? {} : { responsibility }) };
+}
+
 /** One task's routing view: its stage, its configured targets, and its declaration. */
 function transitionView(located: LocatedTask, destinationId?: string, port?: TaskRoutingPort) {
   const { task, board, hubId } = located;
@@ -32,21 +42,23 @@ function transitionView(located: LocatedTask, destinationId?: string, port?: Tas
   const decision = source?.decision;
   // A stage that owns its routing reports who owns it, so a reader never mistakes
   // authored destinations for targets it may declare.
-  const routingOwner = source?.scripted !== undefined ? 'scripted' : decision !== undefined ? 'decision' : 'stage';
+  const routingOwner = routingOwnerOf(source);
   const declarable = source?.allowedTransitions !== undefined;
   return {
     routingOwner,
+    ...(source === undefined ? {} : { routePolicy: routingPolicy(source) }),
     declarable,
     ...(decision === undefined ? {} : { decision: { question: decision.question, answeredBy: 'person', options: decision.options.map(option => ({ id: option.id, title: option.title, to: option.to })) } }),
-    ...(destination === undefined ? {} : { requestedDestination: { columnId: destination.id, name: destination.name, parameters: (destination.scripted?.params ?? []).map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) })) } }),
+    ...(destination === undefined ? {} : { requestedDestination: { columnId: destination.id, name: destination.name, ...described(destination), parameters: (destination.scripted?.params ?? []).map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) })) } }),
     hubId,
     taskId: task.id,
     board: { id: board.id, name: board.name },
-    stage: { columnId: task.columnId, name: source?.name ?? task.columnId },
+    stage: { columnId: task.columnId, name: source?.name ?? task.columnId, ...(source === undefined ? {} : described(source)) },
     configured: source?.allowedTransitions !== undefined,
     targets: decision === undefined ? transitionTargets(board.workflow, task.columnId).map(target => ({
       columnId: target.column.id,
       name: target.column.name,
+      ...described(target.column),
       ...(target.rule.when === undefined ? {} : { when: target.rule.when }),
       ...(target.column.scripted?.params === undefined ? {} : { parameters: target.column.scripted.params.map(parameter => ({ name: parameter.name, ...(parameter.description === undefined ? {} : { description: parameter.description }) })) }),
     })) : [],
@@ -70,10 +82,10 @@ export function transitionTools(port: TaskRoutingPort): ToolDefinition[] {
       async (args, exec) => transitionView(requireTask(port, args as ToolArgs, exec), args.destination_id, port),
       true),
     normal('set_next_transition',
-      'Declare the transition the task follows at the end of this turn, and the reason for it. Use it when the user asked for that transition, when this conversation\'s stage instruction asked for it, or when a message from another task explicitly asks for it. A request from another task does not override this task\'s stage: the destination must be one the current stage configures unless the exception flag applies. The reason is required, and the stage\'s conditions, scripted entry, and pending work still decide whether the task may leave. Pass column_id from list_allowed_transitions together with reason; omit column_id to clear the declaration, which needs no reason. The call never moves the task, sends a message, or changes auto mode. An ordinary declaration arms the next completed turn; an exceptional declaration can be admitted only on the observed completion of its originating turn. Both remain subject to entry and admission guards, regardless of auto mode. Only the task owning this conversation can be affected.',
+      'Declare the transition the task follows at the end of this turn, and the reason for it. Use it when the user asked for that transition, when this conversation\'s stage instruction asked for it, when a message from another task explicitly asks for it, or when your preset\'s guidance directs it; a preset can set a stricter rule for when to declare. A request from another task does not override this task\'s stage: the destination must be one the current stage configures unless the exception flag applies. The reason is required and at most ' + AGENT_TRANSITION_REASON_LIMIT + ' characters. The conditions listed with each destination guide the choice and the host does not evaluate them; when the task moves, the destination\'s scripted entry, pending work, and the entry and admission guards still apply. Pass column_id from list_allowed_transitions together with reason; omit column_id to clear the declaration, which needs no reason. The call never moves the task, sends a message, or changes auto mode. An ordinary declaration arms the next completed turn; an exceptional declaration can be admitted only on the observed completion of its originating turn. Both remain subject to entry and admission guards, regardless of auto mode. Only the task owning this conversation can be affected.',
       {
         column_id: text('Destination stage ID from list_allowed_transitions. Omit to clear the declaration.'),
-        reason: text('Why the task belongs in that stage, in your own words. Required with a target and shown to the next stage; omitted only when clearing.'),
+        reason: text('Why the task belongs in that stage, in your own words. Required with a target and shown to the next stage; at most ' + AGENT_TRANSITION_REASON_LIMIT + ' characters; omitted only when clearing.'),
         exception: flag('Request an unconfigured destination only when the user directly and explicitly requested it in this task conversation. A stage instruction, peer request, or your own decision does not qualify. This flag is not proof of user intent.'),
         parameters: { type: 'object', additionalProperties: true, description: 'Values for the destination stage parameters reported by list_allowed_transitions. Supply exactly the declared names with nonempty string values; a rejection lists the accepted names.' },
       },
@@ -89,6 +101,8 @@ export function transitionTools(port: TaskRoutingPort): ToolDefinition[] {
         // declares a route out of it, with or without the exception flag.
         invariant(located.board.workflow.columns.find(column => column.id === located.task.columnId)?.decision === undefined,
           'DECISION_OWNED_ROUTE', 'This stage is a decision gate. The person answers it through the gate; no agent declares its route.');
+        // The agent's declaration is held to the agent limit; the stored ceiling serves reasons the host composes.
+        if (args.column_id !== undefined && args.reason !== undefined) normalizeTransitionReason(args.reason, AGENT_TRANSITION_REASON_LIMIT);
         if (args.exception === true && args.column_id !== undefined && !transitionTargets(located.board.workflow, located.task.columnId).some(target => target.column.id === args.column_id)) {
           invariant(args.column_id !== located.task.columnId && located.board.workflow.columns.some(column => column.id === args.column_id), 'INVALID_TARGET', 'An exceptional destination must be another existing stage in this task’s board.');
           invariant(port.recordExceptionalTransition && exec.agent?.id, 'EXCEPTION_TURN_UNAVAILABLE', 'The originating open turn cannot be verified on this host. Use a configured transition or ask the workflow architect to update the workflow.');

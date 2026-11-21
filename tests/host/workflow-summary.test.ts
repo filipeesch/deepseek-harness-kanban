@@ -31,10 +31,14 @@ describe('workflow summary projection', () => {
     expect(records).toContainEqual({ kind: 'stage', id: 'c', name: 'Free', type: 'no-instruction', routePolicy: 'unrestricted' });
     expect(records).toContainEqual(expect.objectContaining({ kind: 'stage', id: 'd', type: 'scripted', routePolicy: 'scripted' }));
     expect(records).toContainEqual({ kind: 'route', from: 'a', to: 'b', condition: 'Ready' });
+    expect(records.filter(record => record.current === true)).toEqual([expect.objectContaining({ kind: 'stage', id: 'a', current: true })]);
     expect(records).toContainEqual({ kind: 'scriptExit', from: 'd', exit: 'done', to: 'b' });
     expect(JSON.stringify(records)).not.toMatch(/SECRET|workflowYaml|onEnterPrompt|code/);
     expect(projectWorkflowSummary(board, hub, undefined, { ...task, columnId: 'missing', autoMode: undefined })[0]).toMatchObject({ currentStage: { id: 'missing', status: 'unavailable' }, autoMode: { enabled: false, paused: false, held: 'unavailable' } });
     expect(projectWorkflowSummary(board, hub, undefined)).toContainEqual({ kind: 'sharing', status: 'not-published', bound: false });
+    // Without a task of this board no stage is marked, and a task in an unknown stage marks none.
+    expect(projectWorkflowSummary(board, hub, sharing).some(record => record.current !== undefined)).toBe(false);
+    expect(projectWorkflowSummary(board, hub, undefined, { ...task, columnId: 'missing' }).some(record => record.current !== undefined)).toBe(false);
     expect(projectWorkflowSummary(board, hub, 'unavailable')).toContainEqual({ kind: 'sharing', status: 'unavailable', bound: null });
     expect(projectWorkflowSummary(board, hub, undefined, { ...task, autoMode: { enabled: true, hold: { reason: 'waiting', at: '' } } }, false)[0]).toMatchObject({ autoMode: { enabled: true, paused: true, held: false } });
     expect(projectWorkflowSummary(board, hub, undefined, { ...task, autoMode: { enabled: true } }, true)[0]).toMatchObject({ autoMode: { enabled: true, paused: false, held: true } });
@@ -121,10 +125,13 @@ describe('workflow summary scope', () => {
     const ctx = (id: string) => ({ signal: new AbortController().signal, agent: { id }, deferContext: vi.fn(), concludeTurn: vi.fn() }) as unknown as ToolRunContext;
     const own = await tool.execute({}, ctx(task.sessionIds[0]!)) as { records: Array<{ kind: string }> };
     expect(own.records.some(record => record.kind === 'task')).toBe(true);
+    expect(own.records.filter(record => (record as { current?: boolean }).current === true)).toEqual([expect.objectContaining({ kind: 'stage', id: f.store.requireTask(task.id).columnId })]);
     const ordinary = await tool.execute({ board_id: f.board.id }, ctx('ordinary')) as { records: Array<{ kind: string }> };
     expect(ordinary.records.some(record => record.kind === 'task')).toBe(false);
+    expect(ordinary.records.some(record => (record as { current?: boolean }).current !== undefined)).toBe(false);
     const other = await f.store.addBoard('Other');
     const cross = await tool.execute({ board_id: other.id }, ctx(task.sessionIds[0]!)) as { records: Array<{ kind: string }> };
     expect(cross.records.some(record => record.kind === 'task')).toBe(false);
+    expect(cross.records.some(record => (record as { current?: boolean }).current !== undefined)).toBe(false);
   });
 });

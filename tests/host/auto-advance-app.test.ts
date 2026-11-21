@@ -7,6 +7,7 @@ import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { call, human, result } from '../questions/fixtures.js';
 import { pendingUserWork } from '../../src/domain/pending-user-work.js';
 import { fixture, taskWithConversation } from './helpers.js';
+import { afterOrientation, oriented } from '../support/stage-delivery.js';
 
 const FLOW = [
   'name: Auto flow',
@@ -161,7 +162,7 @@ describe('automatic advance', () => {
     expect(current.instructionPending).toBeUndefined();
     expect(current.autoMode).toEqual({ enabled: true });
     expect(f.sessions.sent).toHaveLength(1);
-    expect(f.sessions.sent[0]).toMatchObject({ id: sessionId, text: 'Plan it.' });
+    expect(f.sessions.sent[0]).toMatchObject({ id: sessionId, text: oriented('Plan it.') });
     expect(f.sessions.dirs.size).toBe(1);
   });
 
@@ -244,9 +245,9 @@ describe('automatic advance', () => {
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
     await expect.poll(() => f.sessions.sent.length).toBe(1);
     const text = f.sessions.sent[0]!.text;
-    expect(text.startsWith('Plan it.\n\nWorkflow transitions from Plan:')).toBe(true);
-    expect(text).toContain('- Done — The plan approved the task without further work.');
-    expect(text).toContain('- Review — The plan needs a review before implementation.');
+    expect(afterOrientation(text).startsWith('Plan it.\n\nWorkflow transitions from Plan')).toBe(true);
+    expect(text).toContain('Condition: The plan approved the task without further work.');
+    expect(text).toContain('Condition: The plan needs a review before implementation.');
     expect(text).toContain('set_next_transition');
   });
 
@@ -312,7 +313,7 @@ describe('automatic advance', () => {
     await endTurn(f.app, task.sessionIds[0]!, 1);
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('review');
     await expect.poll(() => f.sessions.sent.length).toBe(1);
-    expect(f.sessions.sent.map(message => message.text)).toEqual(['Review it.']);
+    expect(f.sessions.sent.map(message => afterOrientation(message.text))).toEqual(['Review it.']);
   });
 
   it('moves to the last reachable stage without sending when no stage is instructed', async () => {
@@ -456,7 +457,7 @@ describe('automatic advance pauses', () => {
     f.sessions.failSend = false;
     const marker = current.instructionPending!;
     await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: marker.enteredAt, expectedInstruction: 'Plan it.' });
-    expect(f.sessions.sent.map(message => message.text)).toEqual(['Plan it.']);
+    expect(f.sessions.sent.map(message => afterOrientation(message.text))).toEqual(['Plan it.']);
     expect(f.store.requireTask(task.id).instructionPending).toBeUndefined();
   });
 
@@ -472,7 +473,7 @@ describe('automatic advance pauses', () => {
     const marker = f.store.requireTask(task.id).instructionPending!;
     await f.app.command({ type: 'task.runInstruction', taskId: task.id, columnId: 'plan', expectedEnteredAt: marker.enteredAt, expectedInstruction: 'Plan it.' });
     const current = f.store.requireTask(task.id);
-    expect(f.sessions.sent.map(message => message.text)).toEqual(['Plan it.']);
+    expect(f.sessions.sent.map(message => afterOrientation(message.text))).toEqual(['Plan it.']);
     expect(current.columnId).toBe('plan');
     expect(current.pendingTransition).toBeUndefined();
     expect(current.instructionPending).toBeUndefined();
@@ -560,7 +561,7 @@ describe('automatic advance gates', () => {
     expect(f.sessions.sent).toEqual([]);
     await f.app.command({ type: 'operation.retry', taskId: task.id });
     await expect.poll(() => f.store.requireTask(task.id).pendingTransition).toBeUndefined();
-    expect(f.sessions.sent.map(message => message.text)).toEqual(['Plan it.']);
+    expect(f.sessions.sent.map(message => afterOrientation(message.text))).toEqual(['Plan it.']);
     expect(f.store.requireTask(task.id).columnId).toBe('plan');
     expect(f.store.requireTask(task.id).instructionPending).toBeUndefined();
   });
@@ -866,7 +867,7 @@ describe('declared transition advance', () => {
     const current = f.store.requireTask(task.id);
     expect(current.autoMode).toBeUndefined();
     expect(current.recordedTransition).toBeUndefined();
-    expect(f.sessions.sent[0]!.text).toBe('Plan it.\n\nTransition reason (from Backlog):\nThe bug needs a plan before code.');
+    expect(afterOrientation(f.sessions.sent[0]!.text)).toBe('Plan it.\n\nTransition reason (from Backlog):\nThe bug needs a plan before code.');
   });
 
   it('records no pause and keeps the declaration when the turn does not complete', async () => {
@@ -952,7 +953,7 @@ describe('declared transition advance', () => {
     const sent = f.sessions.sent.at(-1)!;
     // The manual retry delivers the same justification and replays the identity the
     // failed admission owned, so a delivery that did land is never sent twice.
-    expect(sent.text).toBe('Plan it.\n\nTransition reason (from Backlog):\nThe bug needs a plan before code.');
+    expect(afterOrientation(sent.text)).toBe('Plan it.\n\nTransition reason (from Backlog):\nThe bug needs a plan before code.');
     expect(sent.requestId).toBe(failedId);
   });
 
@@ -993,4 +994,3 @@ describe('declared transition advance', () => {
     f.sessions.failSend = false;
   });
 });
-

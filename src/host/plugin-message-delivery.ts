@@ -11,6 +11,11 @@ export interface PluginMessageEntry {
   readonly assertCurrent?: () => void;
 }
 
+/** An entry that can compose its content again from live state once its authority is confirmed. */
+export interface RefreshableEntry<D> extends PluginMessageEntry {
+  readonly refresh?: () => D;
+}
+
 export interface PluginMessageDeliveryDeps<T extends PluginMessageTarget, D extends PluginMessageEntry> {
   /** Durable source kind this delivery writes and deduplicates. */
   readonly sourceKind: string;
@@ -46,17 +51,33 @@ function insertedMessages(event: Record<string, unknown>): readonly unknown[] {
 }
 
 /**
- * Whether the conversation's durable log already records this delivery identity.
- * Steering persists an inbox insertion before any user/message event, and a
- * canceled steering leaves only that insertion; both are durable admissions and
- * must keep the identity at-most-once across a restart.
+ * Every message a conversation's durable log records, in log order: the appended user
+ * messages and the messages a durable inbox mutation inserted. Steering persists an
+ * inbox insertion before any user/message event, and a canceled steering leaves only
+ * that insertion, so both are durable admissions.
  */
+function recordedMessages(events: readonly unknown[]): unknown[] {
+  const messages: unknown[] = [];
+  for (const event of events) {
+    if (!record(event)) continue;
+    if (event.type === 'user/message') messages.push(event.data);
+    else messages.push(...insertedMessages(event));
+  }
+  return messages;
+}
+
+/**
+ * The user messages a conversation's log appended: what the conversation was actually
+ * shown. An inbox insertion is not one of them, because a cancel can undo it before it
+ * is ever appended, so a decision about what a conversation has seen reads these.
+ */
+export function appendedMessages(events: readonly unknown[]): unknown[] {
+  return events.flatMap(event => record(event) && event.type === 'user/message' ? [event.data] : []);
+}
+
+/** Whether the conversation's durable log already records this delivery identity, across a restart. */
 function alreadyRecorded(events: readonly unknown[], sourceKind: string, requestId: string): boolean {
-  return events.some(event => {
-    if (!record(event)) return false;
-    if (event.type === 'user/message') return messageMatches(event.data, sourceKind, requestId);
-    return insertedMessages(event).some(message => messageMatches(message, sourceKind, requestId));
-  });
+  return recordedMessages(events).some(message => messageMatches(message, sourceKind, requestId));
 }
 
 /**
@@ -67,7 +88,7 @@ function alreadyRecorded(events: readonly unknown[], sourceKind: string, request
  * the human-prompt path gets from the host. A failed delivery is not remembered, so
  * a later attempt can retry.
  */
-export function createPluginMessageDelivery<T extends PluginMessageTarget, D extends PluginMessageEntry>(
+export function createPluginMessageDelivery<T extends PluginMessageTarget, D extends RefreshableEntry<D>>(
   deps: PluginMessageDeliveryDeps<T, D>,
 ): (sessionId: string, delivery: D) => Promise<void> {
   const inFlight = new Map<string, Promise<void>>();
@@ -90,7 +111,8 @@ export function createPluginMessageDelivery<T extends PluginMessageTarget, D ext
       // authoritative immediately before the synchronous delivery.
       if (target.pending(delivery.requestId)) return;
       delivery.assertCurrent?.();
-      await deps.deliver(target, delivery);
+      // The content is composed again here, synchronously, so no await separates it from the enqueue.
+      await deps.deliver(target, delivery.refresh?.() ?? delivery);
       delivered.add(key);
       if (delivered.size > 1024) {
         const oldest = delivered.values().next().value;

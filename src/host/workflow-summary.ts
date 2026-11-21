@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { Board, ConversationFacts, HubSharingView, HubState, Task } from '../shared/types.js';
+import type { Board, ConversationFacts, HubSharingView, HubState, Task, Workflow } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { hasPendingUserWork } from '../domain/pending-user-work.js';
+import { routingPolicy, stageKind } from '../domain/stage-kind.js';
 import { readPendingUserWork } from './pending-source.js';
 
 /** A bounded, safe projection. Each record is independent of authored executable content. */
@@ -32,19 +33,47 @@ export async function workflowHeldState(task: Task, facts?: (sessionId: string) 
   catch { return 'unavailable'; }
 }
 
+/** The calling task's own facts: where it is and how its automatic mode stands. */
+export function summaryTaskFacts(workflow: Workflow, task: Task, held: WorkflowHeldState) {
+  const stage = workflow.columns.find(value => value.id === task.columnId);
+  return {
+    id: task.id,
+    currentStage: stage ? { id: stage.id, name: stage.name } : { id: task.columnId, status: 'unavailable' as const },
+    autoMode: { enabled: task.autoMode?.enabled ?? false, paused: Boolean(task.autoMode?.pause || task.autoMode?.hold), held },
+  };
+}
+
+/** The board's sharing state; absence and an unknown state are both stated, never invented. */
+export function summarySharingFacts(board: Board, sharing: WorkflowSharing) {
+  const binding = sharing && sharing !== 'unavailable' ? sharing.boards.find(value => value.boardId === board.id) : undefined;
+  return {
+    status: sharing === 'unavailable' ? 'unavailable' : sharing?.status ?? 'not-published',
+    bound: sharing === 'unavailable' ? null : binding?.bound === true,
+    ...(binding ? { boardState: binding.state } : {}),
+  };
+}
+
+/** Whether the board's project scope is open or restricted, and how many projects restrict it. */
+export function summaryScopeFacts(board: Board) {
+  return { mode: board.allowedProjectKeys === undefined ? 'all' as const : 'restricted' as const, projectCount: board.allowedProjectKeys?.length ?? null };
+}
+
 export function projectWorkflowSummary(board: Board, hub: Pick<HubState, 'id' | 'name'>, sharing: WorkflowSharing, task?: Task, held: WorkflowHeldState = 'unavailable'): WorkflowSummaryRecord[] {
   const workflow = board.workflow;
-  const stage = task && workflow.columns.find(value => value.id === task.columnId);
   const records: WorkflowSummaryRecord[] = [];
-  if (task) records.push({ kind: 'task', id: task.id, currentStage: stage ? { id: stage.id, name: stage.name } : { id: task.columnId, status: 'unavailable' }, autoMode: { enabled: task.autoMode?.enabled ?? false, paused: Boolean(task.autoMode?.pause || task.autoMode?.hold), held } });
+  if (task) records.push({ kind: 'task', ...summaryTaskFacts(workflow, task, held) });
   records.push({ kind: 'workflow', name: workflow.name, board: { id: board.id, name: board.name }, hub: { id: hub.id, name: hub.name }, initialStageId: workflow.initialColumnId, ...(workflow.description?.trim() ? { description: workflow.description } : {}) });
-  const binding = sharing && sharing !== 'unavailable' ? sharing.boards.find(value => value.boardId === board.id) : undefined;
-  records.push({ kind: 'sharing', status: sharing === 'unavailable' ? 'unavailable' : sharing?.status ?? 'not-published', bound: sharing === 'unavailable' ? null : binding?.bound === true, ...(binding ? { boardState: binding.state } : {}) });
-  records.push({ kind: 'projectScope', mode: board.allowedProjectKeys === undefined ? 'all' : 'restricted', projectCount: board.allowedProjectKeys?.length ?? null });
+  records.push({ kind: 'sharing', ...summarySharingFacts(board, sharing) });
+  records.push({ kind: 'projectScope', ...summaryScopeFacts(board) });
   for (const key of board.allowedProjectKeys ?? []) records.push({ kind: 'project', key });
   for (const column of workflow.columns) {
-    const routePolicy = column.decision ? 'decision' : column.scripted ? 'scripted' : column.allowedTransitions === undefined ? 'unrestricted' : column.allowedTransitions.length === 0 ? 'empty' : 'configured';
-    records.push({ kind: 'stage', id: column.id, name: column.name, ...(column.description?.trim() ? { description: column.description } : {}), type: column.decision ? 'decision' : column.scripted ? 'scripted' : column.onEnterPrompt?.trim() ? 'agent-instruction' : 'no-instruction', routePolicy });
+    records.push({
+      kind: 'stage', id: column.id, name: column.name,
+      ...(column.description?.trim() ? { description: column.description } : {}),
+      type: stageKind(column), routePolicy: routingPolicy(column),
+      // Only the calling task's own board passes a task, so only its own stage is marked.
+      ...(task !== undefined && column.id === task.columnId ? { current: true } : {}),
+    });
     if (column.decision) {
       // The gate's destinations are authored options, not candidate routes; the
       // question is documentary context and the projection never answers it.

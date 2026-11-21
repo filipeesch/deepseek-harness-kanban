@@ -4,6 +4,8 @@ import type { Task, Workflow } from '../shared/types.js';
 import type { ScriptedHandoff } from '../shared/scripted.js';
 import { bounded } from '../shared/bounded.js';
 import { defaultDestination } from '../domain/transitions.js';
+import { orientStage } from '../domain/stage-orientation.js';
+import { renderOrientationBlock } from './stage-orientation-text.js';
 import { recordedTransition } from '../domain/transition-route.js';
 
 /** Durable source kind that marks a stage instruction delivered as conversation context. */
@@ -17,6 +19,9 @@ export interface KanbanStageInstructionSource {
   readonly summary: string;
   /** Delivery identity; a repeated identity is never delivered twice. */
   readonly requestId: string;
+  /** The stage entry this instruction follows; absent for a task without one and for a message recorded before entries were tracked. */
+  readonly entryId?: string;
+  readonly columnId?: string;
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -50,6 +55,8 @@ export interface StageInstructionInput {
   readonly workflow: Workflow;
   /** Delivery identity; repeated deliveries of the same identity are skipped. */
   readonly requestId: string;
+  /** The stage entry this delivery follows; recorded on the durable source so a conversation can tell which entry it was told about. */
+  readonly entryId?: string;
 }
 
 /**
@@ -96,7 +103,8 @@ export function scriptedHandoffBlock(handoff: ScriptedHandoff): string {
 }
 
 export function buildStageInstructionDelivery(input: StageInstructionInput): StageInstructionDelivery {
-  const blocks = [input.instruction];
+  const orientation = orientStage(input.workflow, input.task.columnId);
+  const blocks = [...(orientation === undefined ? [] : [renderOrientationBlock(orientation)]), input.instruction];
   if (input.transition !== undefined) blocks.push(transitionNoteBlock(input.transition));
   if (input.handoff !== undefined) blocks.push(scriptedHandoffBlock(input.handoff));
   if (input.briefing !== undefined) blocks.push(input.briefing);
@@ -104,6 +112,7 @@ export function buildStageInstructionDelivery(input: StageInstructionInput): Sta
     requestId: input.requestId,
     text: blocks.join('\n\n'),
     summary: buildStageInstructionSummary(input.stageName, stageInstructionTarget(input.workflow, input.task)),
+    ...(input.entryId === undefined ? {} : { entryId: input.entryId, columnId: input.task.columnId }),
   };
 }
 
@@ -116,6 +125,7 @@ export function createStageInstructionMessage(delivery: StageInstructionDelivery
       form: 'notice',
       summary: delivery.summary,
       requestId: delivery.requestId,
+      ...(delivery.entryId === undefined ? {} : { entryId: delivery.entryId, ...(delivery.columnId === undefined ? {} : { columnId: delivery.columnId }) }),
     },
   });
 }

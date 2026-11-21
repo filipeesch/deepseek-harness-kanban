@@ -47,6 +47,7 @@ import { boardAllowlistFor } from './host/board-policy-source.js';
 import { CONFINED_START_PRESET_IDS, createConfinedStartPin } from './host/preset-readonly.js';
 import { KanbanError } from './shared/errors.js';
 import { registerTaskContextInjection } from './host/task-context.js';
+import { registerStageNotice } from './host/stage-notice.js';
 import { registerScriptedHandoffInjection } from './host/scripted-handoff.js';
 import { createSessionHistory } from './host/session-history.js';
 import { createHostSessionRepair } from './host/session-repair-host.js';
@@ -313,9 +314,9 @@ export async function apply(ctx:Context):Promise<void>{
   runtime:()=>scheduleRuns.runtimeByHub(),
   modelCatalog:refresh=>sessionModels.catalog(refresh),
  });
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offDownload:(()=>Promise<void>)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offDownload:(()=>Promise<void>)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offStageNotice:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
  ctx.effect(()=>async()=>{
-  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();void offDownload?.();offGuards?.();offContext?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
+  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();void offDownload?.();offGuards?.();offContext?.();offStageNotice?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
   scheduleCoordinator.dispose();
   try{await scheduleCoordinator.settle();}finally{
    scheduleWatcher.dispose();
@@ -366,6 +367,8 @@ offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkf
  offSignals=registerAttentionSignals(ctx,app);
  offGuards=registerTaskExecutionGuards(ctx,app.locator,app);
  offContext=registerTaskContextInjection(ctx,app.locator,{history,report,sharingView:hubId=>app.boards.sharingView(hubId),conversationFacts:id=>app.conversationFacts(id),attachments:task=>app.taskAttachmentPaths(task).map(entry=>({name:entry.attachment.name,bytes:entry.attachment.bytes,path:entry.path}))});
+ // Registered after the first-contact injection so the notice sees the context message it just prepended.
+ offStageNotice=registerStageNotice(ctx,app.locator,{history,report});
  offHandoff=registerScriptedHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveScriptedHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptScriptedHandoff(taskId,entryId,id),report});
  const adopter=new ForkAdopter({
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},

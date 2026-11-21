@@ -10,6 +10,7 @@ import type { ModelSelection } from '../../src/shared/types.js';
 import { NO_PENDING_USER_WORK } from '../../src/shared/types.js';
 import { KanbanStateSchema } from '../../src/domain/hub-schema.js';
 import { call, result } from '../questions/fixtures.js';
+import { afterOrientation, oriented } from '../support/stage-delivery.js';
 let active:Array<Awaited<ReturnType<typeof fixture>>>=[];
 afterEach(async()=>{for(const f of active.splice(0))await f.close();});
 async function setup(){const f=await fixture();active.push(f);return f;}
@@ -56,7 +57,7 @@ describe('host command orchestration',()=>{
   expect(after.sessionIds).toHaveLength(t.sessionIds.length+1);
   const created=after.sessionIds.find(id=>!t.sessionIds.includes(id))!;
   expect(f.sessions.sent).toHaveLength(1);
-  expect(f.sessions.sent[0]).toMatchObject({id:created,text:'Plan this task.'});
+  expect(f.sessions.sent[0]).toMatchObject({id:created,text:oriented('Plan this task.')});
  });
  it('forces a fresh conversation-fact projection when the client asks for one',async()=>{const f=await setup();const t=await task(f);let running=false;f.sessions.facts=async()=>({running,background:[],pending:NO_PENDING_USER_WORK,settledTurn:null});const id0=t.sessionIds[0]!;const idle=await f.app.snapshot({refreshSessionIds:[id0]});expect(idle.conversations[id0]?.running).toBe(false);running=true;const cached=await f.app.snapshot();expect(cached.conversations[id0]?.running).toBe(false);const fresh=await f.app.snapshot({refreshSessionIds:[id0]});expect(fresh.conversations[id0]?.running).toBe(true);expect(fresh.sequence).toBeGreaterThan(cached.sequence);expect((await f.app.snapshot()).conversations[id0]?.running).toBe(true);});
  it('edits any stage without sending a hidden instruction',async()=>{const f=await setup();const t=await task(f);await f.store.transact(d=>{d.tasks[0]!.columnId=d.boards[0]!.workflow.columns[2]!.id;});await f.app.command({type:'task.edit',taskId:t.id,title:'Changed',description:'New text'});expect(f.store.requireTask(t.id).title).toBe('Changed');expect(f.sessions.sent).toEqual([]);});
@@ -68,7 +69,7 @@ describe('host command orchestration',()=>{
   await f.app.command({type:'task.move',taskId:t.id,columnId});
   const marker=f.store.requireTask(t.id).instructionPending!;const before=f.store.requireTask(t.id);
   await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});
-  expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]).toMatchObject({id:t.sessionIds[0],text:'Plan this task.'});
+  expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]).toMatchObject({id:t.sessionIds[0],text:oriented('Plan this task.')});
   const after=f.store.requireTask(t.id);expect(after.columnId).toBe(columnId);expect(after.position).toBe(before.position);expect(after.pendingTransition).toBeUndefined();expect(after.instructionPending).toBeUndefined();
  });
  it('targets the first open conversation in conversation order',async()=>{
@@ -85,7 +86,7 @@ describe('host command orchestration',()=>{
   await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:'Plan this task.'});
   const after=f.store.requireTask(t.id);expect(after.sessionIds).toHaveLength(2);
   const created=after.sessionIds.find(id=>!t.sessionIds.includes(id))!;
-  expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]).toMatchObject({id:created,text:'Plan this task.'});expect(after.columnId).toBe(columnId);expect(after.instructionPending).toBeUndefined();
+  expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]).toMatchObject({id:created,text:oriented('Plan this task.')});expect(after.columnId).toBe(columnId);expect(after.instructionPending).toBeUndefined();
  });
  it('rejects a stale or missing entry before resolving a target',async()=>{
   const f=await setup();const columnId=await instructed(f);const t=await task(f);await f.app.command({type:'task.move',taskId:t.id,columnId});
@@ -105,7 +106,7 @@ describe('host command orchestration',()=>{
   await f.app.command({type:'task.move',taskId:t.id,columnId:'backlog'});
   await f.app.command({type:'task.move',taskId:t.id,columnId});const second=f.store.requireTask(t.id).instructionPending!;
   await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:second.enteredAt,expectedInstruction:'Plan this task.'});
-  expect(f.sessions.sent).toHaveLength(2);expect(f.sessions.sent.every(item=>item.text==='Plan this task.')).toBe(true);
+  expect(f.sessions.sent).toHaveLength(2);expect(f.sessions.sent.every(item=>afterOrientation(item.text)==='Plan this task.')).toBe(true);
  });
  it('clears an unresolved entry when the host observes a real user prompt',async()=>{
   const f=await setup();const columnId=await instructed(f);const t=await task(f);await f.app.command({type:'task.move',taskId:t.id,columnId});
@@ -156,7 +157,7 @@ describe('host command orchestration',()=>{
   const marker=f.store.requireTask(t.id).instructionPending!;
   await expect(f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:approved.trim()})).rejects.toMatchObject({code:'INSTRUCTION_CHANGED'});
   await f.app.command({type:'task.runInstruction',taskId:t.id,columnId,expectedEnteredAt:marker.enteredAt,expectedInstruction:approved});
-  expect(f.sessions.sent).toHaveLength(1);expect(f.sessions.sent[0]!.text).toBe(approved);
+  expect(f.sessions.sent).toHaveLength(1);expect(afterOrientation(f.sessions.sent[0]!.text)).toBe(approved);
  });
  it('executes at base after returning while retaining an inactive ready worktree',async()=>{
   const f=await setup();const columnId=await instructed(f);const t=await task(f);const root=path.join(f.root,'retained-inactive-tree');

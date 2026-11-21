@@ -3,6 +3,7 @@ import { admitStageInstruction, type StageInstructionDeps } from '../../src/host
 import { createStageDelivery } from '../../src/host/stage-delivery.js';
 import type { Board, HubState, HubTask } from '../../src/shared/types.js';
 import type { StageInstructionDelivery } from '../../src/shared/ports.js';
+import { afterOrientation } from '../support/stage-delivery.js';
 const at = '2026-11-01T00:00:00.000Z';
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(ready => { resolve = ready; }); return { promise, resolve }; }
 type WaitPoint = 'resolve-session' | 'execution-context' | 'native-resolve' | 'native-events';
@@ -31,7 +32,7 @@ describe('combined scripted instruction final admission guard', () => {
     const f = fixture(); await f.run();
     expect(f.admitted).toHaveLength(1); const message = f.admitted[0]!;
     expect(message.requestId).toBe('delivery');
-    expect(message.text).toBe('Review it.\n\nScripted result (from ci; exit: passed; execution: source-run):\nSynthetic evidence [REDACTED]');
+    expect(afterOrientation(message.text)).toBe('Review it.\n\nScripted result (from ci; exit: passed; execution: source-run):\nSynthetic evidence [REDACTED]');
     expect(message.text).not.toContain('Transition reason'); expect(message.summary).not.toContain('Synthetic evidence');
     expect(f.task.instructionPending).toBeUndefined(); expect(f.task.scriptedHandoff?.acceptedAt).toBeDefined();
     expect(f.task.recordedTransition).toBeUndefined(); expect(f.task.sessionIds).toEqual(['session']);
@@ -40,7 +41,7 @@ describe('combined scripted instruction final admission guard', () => {
     const f = fixture();
     f.task.scriptedHandoff = { ...f.task.scriptedHandoff!, params: { pipeline: 'ci-main', commit: 'abc' } };
     await f.run();
-    expect(f.admitted[0]!.text).toBe('Review it.\n\nScripted result (from ci; exit: passed; execution: source-run):\nSynthetic evidence [REDACTED]\n\nSent parameters:\npipeline: ci-main\ncommit: abc');
+    expect(afterOrientation(f.admitted[0]!.text)).toBe('Review it.\n\nScripted result (from ci; exit: passed; execution: source-run):\nSynthetic evidence [REDACTED]\n\nSent parameters:\npipeline: ci-main\ncommit: abc');
     expect(f.task.history?.find(value => value.kind === 'scripted-handoff')).toMatchObject({ outcome: 'accepted', parameters: { pipeline: 'ci-main', commit: 'abc' } });
   });
 

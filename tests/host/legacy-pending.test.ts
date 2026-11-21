@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { BoardStateSchema } from '../../src/domain/schema.js';
 import { fixture, taskWithConversation } from './helpers.js';
+import { afterOrientation, oriented } from '../support/stage-delivery.js';
 
 let active: Array<Awaited<ReturnType<typeof fixture>>> = [];
 import { afterEach } from 'vitest';
@@ -33,7 +34,7 @@ describe('legacy pending transitions', () => {
     await replaceInstruction(f, 'A later replacement.');
     await f.app.command({ type: 'operation.retry', taskId: t.id });
     expect(f.sessions.sent).toHaveLength(1);
-    expect(f.sessions.sent[0]).toMatchObject({ id: t.sessionIds[0], text, requestId: 'legacy-run' });
+    expect(f.sessions.sent[0]).toMatchObject({ id: t.sessionIds[0], text: oriented(text), requestId: 'legacy-run' });
     expect(f.store.requireTask(t.id).pendingTransition).toBeUndefined();
     expect(f.store.requireTask(t.id).columnId).toBe(columnId);
   });
@@ -46,7 +47,7 @@ describe('legacy pending transitions', () => {
       value.pendingTransition = { id: 'legacy-failed', fromColumnId: 'backlog', columnId, mode: 'run', sessionId: t.sessionIds[0]!, text: 'Frozen instruction.', status: 'failed', error: { code: 'SEND_FAILED', message: 'The instruction was not delivered.' } };
     });
     await f.app.command({ type: 'operation.retry', taskId: t.id });
-    expect(f.sessions.sent).toEqual([{ id: t.sessionIds[0], text: 'Frozen instruction.', requestId: 'legacy-failed', kind: 'stage-instruction', summary: 'Stage: Plan - next: In Progress' }]);
+    expect(f.sessions.sent).toEqual([{ id: t.sessionIds[0], text: oriented('Frozen instruction.'), requestId: 'legacy-failed', kind: 'stage-instruction', summary: 'Stage: Plan - next: In Progress' }]);
     expect(f.store.requireTask(t.id).pendingTransition).toBeUndefined();
   });
 
@@ -89,7 +90,7 @@ describe('legacy pending transitions', () => {
     await f.app.command({ type: 'operation.retry', taskId: t.id });
     expect(f.git.created).toBe(1);
     expect(f.sessions.sent).toHaveLength(1);
-    expect(f.sessions.sent[0]!.text).toBe('Frozen worktree instruction.');
+    expect(afterOrientation(f.sessions.sent[0]!.text)).toBe('Frozen worktree instruction.');
     expect(f.store.requireTask(t.id).pendingTransition).toBeUndefined();
   });
 

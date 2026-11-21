@@ -1,14 +1,20 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm';
-import type { Board, ConversationFacts, HubSharingView, Task, Workflow } from '../shared/types.js';
-import { projectWorkflowSummary, readWorkflowSummaryState, workflowSummaryPage, WORKFLOW_SUMMARY_BUDGET, type WorkflowHeldState, type WorkflowSharing } from './workflow-summary.js';
+import type { Board, ConversationFacts, HubSharingView, HubState, Task } from '../shared/types.js';
+import { readWorkflowSummaryState, type WorkflowHeldState, type WorkflowSharing } from './workflow-summary.js';
+import { renderWorkflowMap } from './workflow-map.js';
+import { buildAttachmentSection, type TaskContextAttachment } from './task-attachment-section.js';
+import { registerPreStepInjection } from './pre-step-injection.js';
 import type { TaskLocator } from './task-locator.js';
 import { createSessionHistory, type SessionEventsReader } from './session-history.js';
 
 /** Producer marker for the model-facing task context injected on a conversation's first turn. */
 export interface KanbanTaskContextSource {
   readonly kind: 'kanban-task';
+  /** The stage entry the context describes; absent for a task without one and for a message recorded before entries were tracked. */
+  readonly entryId?: string;
+  readonly columnId?: string;
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -17,19 +23,8 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
-/**
- * The attachment listing's own byte budget. It is separate from the workflow
- * snapshot's budget on purpose: a task's files are context, not a replacement for
- * the stage and transition facts the agent needs to navigate.
- */
-export const TASK_ATTACHMENT_BUDGET = 8 * 1024;
-
-/** One attachment the task context reports, with the path an agent reads it by. */
-export interface TaskContextAttachment {
-  readonly name: string;
-  readonly bytes: number;
-  readonly path: string;
-}
+/** The label that tells an agent the workflow map is a first-contact snapshot, not a live policy. */
+export const FIRST_CONTACT_LABEL = 'Workflow first-contact snapshot (not live; use get_workflow_summary for current details):\n';
 
 export interface TaskContextOptions {
   history?: SessionEventsReader;
@@ -56,62 +51,32 @@ export function buildTaskContextText(task: Task, stageName: string, hubName: str
   ].join('\n');
 }
 
-/** One attachment line: the name, its size, and the path an agent can read. */
-function attachmentLine(attachment: TaskContextAttachment): string {
-  return '- ' + attachment.name + ' (' + attachment.bytes + ' bytes): ' + attachment.path;
+/** What the first-contact message is built from; state that is not known yet is stated as unavailable. */
+export interface TaskContextInput {
+  readonly task: Task;
+  readonly board: Board;
+  readonly hub: Pick<HubState, 'id' | 'name'>;
+  readonly sharing?: WorkflowSharing;
+  readonly held?: WorkflowHeldState;
+  readonly attachments?: readonly TaskContextAttachment[];
 }
 
 /**
- * Render the attachment section under its own budget. Files are never dropped
- * silently: when the section cannot hold them all, it states how many are left.
+ * The first-contact message: the task envelope, the attachment listing under its own
+ * budget, and the workflow map under its own, so listing files never evicts the stages
+ * and exits the agent needs to navigate.
  */
-export function buildAttachmentSection(attachments: readonly TaskContextAttachment[], budget = TASK_ATTACHMENT_BUDGET): string {
-  if (attachments.length === 0) return '';
-  const header = 'Task attachments (read each with your file tools):';
-  const omittedLine = (count: number): string => '- ' + count + ' more attachments omitted for length; read the task with get_card.';
-  const lines = attachments.map(attachmentLine);
-  const render = (kept: number): string => {
-    const omitted = attachments.length - kept;
-    const body = kept === 0 ? [] : [lines.slice(0, kept).join('\n')];
-    const footer = omitted === 0 ? [] : [omittedLine(omitted)];
-    return [header, ...body, ...footer].join('\n');
-  };
-  // Everything fits: no footer and no reservation, so the common case spends nothing
-  // on a line it does not need.
-  const complete = render(attachments.length);
-  if (Buffer.byteLength(complete) <= budget) return complete;
-  // Otherwise keep the longest prefix whose rendered section, footer included, fits.
-  // A single line that cannot fit is simply not kept: continuing past it lets a later
-  // short name still be listed instead of hiding every file after one long path.
-  // Otherwise keep every line that fits beside the footer, in order. An oversized line
-  // is skipped rather than ending the list, so one long path cannot hide the short
-  // names that follow it.
-  const footerReserve = Buffer.byteLength(omittedLine(attachments.length)) + 1;
-  const keptLines: string[] = [];
-  let used = Buffer.byteLength(header) + 1;
-  for (const line of lines) {
-    const size = Buffer.byteLength(line) + 1;
-    if (used + footerReserve + size > budget) continue;
-    used += size;
-    keptLines.push(line);
-  }
-  const omitted = attachments.length - keptLines.length;
-  const body = keptLines.length === 0 ? [] : [keptLines.join('\n')];
-  return [header, ...body, omittedLine(omitted)].join('\n');
-}
-
-export function createTaskContextMessage(task: Task, workflow: Workflow, hubName: string, board: Board, hubId = '', state: { sharing: WorkflowSharing; held: WorkflowHeldState } = { sharing: 'unavailable', held: 'unavailable' }, attachments: readonly TaskContextAttachment[] = []): UserMessage {
-  const { sharing, held } = state;
-  const column = workflow.columns.find(value => value.id === task.columnId);
-  const label = 'Workflow first-contact snapshot (not live; use get_workflow_summary for current details):\n';
-  const page = workflowSummaryPage(projectWorkflowSummary(board, { id: hubId, name: hubName }, sharing, task, held), undefined, WORKFLOW_SUMMARY_BUDGET - Buffer.byteLength(label));
-  // The attachment section keeps its own budget, so listing files never evicts the
-  // workflow snapshot the agent needs to know its stage and transitions.
-  const attachmentSection = buildAttachmentSection(attachments);
-  const envelope = buildTaskContextText(task, column?.name ?? task.columnId, hubName, board);
+export function createTaskContextMessage(input: TaskContextInput): UserMessage {
+  const { task, board, hub } = input;
+  const column = board.workflow.columns.find(value => value.id === task.columnId);
+  const attachmentSection = buildAttachmentSection(input.attachments ?? []);
+  const envelope = buildTaskContextText(task, column?.name ?? task.columnId, hub.name, board);
+  // An absent sharing view means the board was never published; only a missing input is unknown.
+  const sharing: WorkflowSharing = 'sharing' in input ? input.sharing : 'unavailable';
+  const map = renderWorkflowMap({ board, hub, sharing, task, held: input.held ?? 'unavailable' });
   return createUserMessage({
-    content: [{ type: 'text', text: envelope + (attachmentSection === '' ? '' : '\n\n' + attachmentSection) + '\n\n' + label + JSON.stringify(page, null, 2) }],
-    source: { kind: 'kanban-task' },
+    content: [{ type: 'text', text: envelope + (attachmentSection === '' ? '' : '\n\n' + attachmentSection) + '\n\n' + FIRST_CONTACT_LABEL + map }],
+    source: { kind: 'kanban-task', ...(task.stageEntry === undefined ? {} : { entryId: task.stageEntry.id, columnId: task.columnId }) },
   });
 }
 
@@ -121,7 +86,7 @@ function isUserMessage(event: unknown): boolean {
 
 /**
  * Inject the task context into the first pre-step with user input, once per live Agent.
- * The listener calls next() first so the existing execution guards keep their decision.
+ * The listener lets the existing execution guards decide first.
  */
 export function registerTaskContextInjection(ctx: Context, locator: Pick<TaskLocator, 'bySession'>, options: TaskContextOptions = {}): () => void {
   const checked = new WeakSet<Agent>();
@@ -131,40 +96,34 @@ export function registerTaskContextInjection(ctx: Context, locator: Pick<TaskLoc
     catch { /* logging is best effort */ }
   });
 
-  const offStep = ctx.on('agent/pre-step', async (payload, next) => {
-    const decision = await next();
-    if (decision.kind !== 'enter' || decision.messages.length === 0 || checked.has(payload.agent) || payload.signal.aborted) return decision;
+  return registerPreStepInjection(ctx, {
+    reset: agent => { checked.delete(agent); },
+    async select({ agent, signal }) {
+      if (checked.has(agent)) return undefined;
+      const located = locator.bySession(agent.id);
+      if (!located) return undefined;
+      const task = located.task;
 
-    const located = locator.bySession(payload.agent.id);
-    if (!located) return decision;
-    const task = located.task;
+      let events: readonly unknown[];
+      try {
+        events = (await history.read(agent.id, { signal })).events;
+      } catch (error) {
+        report(error);
+        return undefined;
+      }
+      if (signal.aborted) return undefined;
 
-    let events: readonly unknown[];
-    try {
-      events = (await history.read(payload.agent.id, { signal: payload.signal })).events;
-    } catch (error) {
-      report(error);
-      return decision;
-    }
-    if (payload.signal.aborted) return decision;
-
-    // Only a durable user message proves the context was already delivered. Do not
-    // memo an injection that may be discarded with an aborted decision.
-    if (events.some(isUserMessage)) { checked.add(payload.agent); return decision; }
-    const { sharing, held } = await readWorkflowSummaryState(located.hubId, task, { ...options, report });
-    if (payload.signal.aborted) return decision;
-    // A failing attachment read must not withhold the task envelope: the listing is
-    // context, and its absence is less harmful than no context at all.
-    let attachments: readonly TaskContextAttachment[] = [];
-    try { attachments = options.attachments?.(task) ?? []; }
-    catch (error) { report(error); }
-    return { ...decision, messages: [createTaskContextMessage(task, located.board.workflow, located.hub.name, located.board, located.hubId, { sharing, held }, attachments), ...decision.messages] };
-  }, { prepend: true });
-
-  const offCreated = ctx.on('agent/created', ({ agent, source }) => {
-    if (source === 'clear') checked.delete(agent);
-    return undefined;
+      // Only a durable user message proves the context was already delivered. Do not
+      // memo an injection that may be discarded with an aborted decision.
+      if (events.some(isUserMessage)) { checked.add(agent); return undefined; }
+      const { sharing, held } = await readWorkflowSummaryState(located.hubId, task, { ...options, report });
+      if (signal.aborted) return undefined;
+      // A failing attachment read must not withhold the task envelope: the listing is
+      // context, and its absence is less harmful than no context at all.
+      let attachments: readonly TaskContextAttachment[] = [];
+      try { attachments = options.attachments?.(task) ?? []; }
+      catch (error) { report(error); }
+      return createTaskContextMessage({ task, board: located.board, hub: { id: located.hubId, name: located.hub.name }, sharing, held, attachments });
+    },
   });
-
-  return () => { offStep(); offCreated(); };
 }

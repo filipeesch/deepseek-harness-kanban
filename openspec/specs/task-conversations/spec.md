@@ -466,7 +466,7 @@ The plugin SHALL NOT add dedicated task-card-to-main-chat or main-chat-to-task-c
 
 ### Requirement: First-turn task context
 
-The plugin SHALL inject a durable task-context message into the first model step of a task conversation before the first message of the conversation, whatever that message's source. The context SHALL contain the task title, task identifier, description, workflow stage at first contact, the owning Hub name, and the owning board name. It SHALL also contain the compact workflow summary defined by the board workflow read payload, including task-specific state for this task, as a first-contact snapshot, regardless of the conversation's preset. It SHALL NOT require a startup tool call. The context SHALL distinguish absent descriptions from authored text and SHALL NOT include other stages' full instructions, scripts, or the exact YAML. The message SHALL be a plugin-sourced native message, SHALL NOT be a user-authored chat message or a system prompt, and SHALL NOT start a turn.
+The plugin SHALL inject a durable task-context message into the first model step of a task conversation before the first message of the conversation, whatever that message's source. The context SHALL contain the task title, task identifier, description, workflow stage at first contact, the owning Hub name, and the owning board name. It SHALL also contain the workflow map defined by `stage-orientation`, including task-specific state for this task, as a first-contact snapshot, regardless of the conversation's preset. The durable message SHALL identify the stage entry it describes when the task has one. It SHALL NOT require a startup tool call. The context SHALL distinguish absent descriptions from authored text and SHALL NOT include other stages' full instructions, scripts, or the exact YAML. The message SHALL be a plugin-sourced native message, SHALL NOT be a user-authored chat message or a system prompt, and SHALL NOT start a turn.
 
 The conversation SHALL present the context as an inline visible context row using the host's native context-row presentation. If that presentation is unavailable, an inline fallback row SHALL preserve the context text. The row SHALL be part of the transcript flow, SHALL appear at the injected message's position, and SHALL scroll with the transcript rather than remaining fixed over it. It SHALL be visible wherever the task conversation is rendered, including the drawer and ordinary native DSH chat. The context SHALL be injected at most once per conversation; later turns and stage instructions SHALL NOT repeat it. Each new conversation SHALL receive its own first-turn context. A conversation with existing messages SHALL NOT receive a new first-turn context, and conversations whose first message predates this behavior SHALL NOT be backfilled.
 
@@ -483,7 +483,7 @@ The conversation SHALL present the context as an inline visible context row usin
 
 - **WHEN** a stage instruction is delivered as the first message of a task conversation
 - **THEN** the first model request contains the injected task-context message before the instruction
-- **AND** the stage-instruction context message contains the stage instruction and, when the stage configures two or more transition targets, the transition briefing defined by `kanban-board`
+- **AND** the stage-instruction context message contains the orientation block defined by `stage-orientation`, the stage instruction and, when the stage configures two or more transition targets, the transition briefing defined by `kanban-board`
 - **AND** both the task-context row and the stage-instruction row are visible in the conversation
 
 #### Scenario: Use the task's board context
@@ -524,14 +524,14 @@ The conversation SHALL present the context as an inline visible context row usin
 
 #### Scenario: Preserve access to an oversized snapshot
 
-- **WHEN** the compact workflow projection exceeds the 6 KiB first-contact budget
-- **THEN** the context identifies omitted content without silently truncating an authored description or condition
+- **WHEN** the workflow map exceeds the 16 KiB first-contact budget
+- **THEN** the context names each omitted stage and omits it whole without truncating an authored description or condition
 - **AND** the summary tool provides authorized continuation or paginated record reads
 
 #### Scenario: Inject workflow context for every task preset
 
 - **WHEN** the first model step of a task conversation starts using any preset
-- **THEN** the existing task-context message contains the compact workflow snapshot for the task's board
+- **THEN** the existing task-context message contains the workflow map for the task's board
 - **AND** it identifies the current stage, stage descriptions and route conditions, project scope, sharing state, and automatic-mode state available at first contact
 - **AND** the agent does not need to call a summary tool to obtain that initial context
 
@@ -1119,13 +1119,13 @@ While a task drawer remains mounted, a conversation tab that has been opened SHA
 
 ### Requirement: Stage instruction delivery as context
 
-When a task's current stage has an entry instruction and the host delivers that instruction to a task conversation, the host SHALL deliver exactly one plugin-sourced native message and SHALL NOT send it as a user prompt. The message SHALL start the turn that executes the instruction. Its durable source SHALL identify the stage-instruction producer and the delivery identity. Its model-facing content SHALL be the entry instruction, then the reason the recorded transition carried when the advance consumed one, then an identified scripted handoff block when one is pending for this entry, then the transition briefing defined by `kanban-board` when that briefing applies.
+When a task's current stage has an entry instruction and the host delivers that instruction to a task conversation, the host SHALL deliver exactly one plugin-sourced native message and SHALL NOT send it as a user prompt. The message SHALL start the turn that executes the instruction. Its durable source SHALL identify the stage-instruction producer, the delivery identity, and the stage entry it follows when the task has one. Its model-facing content SHALL be the orientation block defined by `stage-orientation`, then the entry instruction, then the reason the recorded transition carried when the advance consumed one, then an identified scripted handoff block when one is pending for this entry, then the transition briefing defined by `kanban-board` when that briefing applies.
 
 The reason SHALL appear only when the delivery follows a transition the agent declared for the stage the task left, and SHALL be presented as its own block that names the stage the task came from and quotes the reason the agent recorded. A delivery that consumed no recorded reason SHALL contain no reason block.
 
 The message SHALL declare the host's notice context form with a one-line summary. The summary SHALL name the entering stage and, when a transition destination applies, that destination — the task's recorded transition while it resolves, otherwise the first configured transition, otherwise the next stage in workflow order. A stage with no applicable destination SHALL produce a summary that names only the entering stage. The summary SHALL be bounded by the host's notice-summary limit and SHALL NOT include the reason block.
 
-The plugin SHALL claim the message with an exclusive Chat Definition and SHALL present it with the host's native context-injection presentation as part of the transcript flow: one collapsed row that expands to the full instruction text, including the declared-reason block, scripted handoff block, and briefing when they apply. If that presentation is unavailable, an inline fallback row SHALL preserve the full text. The row SHALL be visible wherever the task conversation is rendered, including the task drawer and ordinary native DSH chat.
+The plugin SHALL claim the message with an exclusive Chat Definition and SHALL present it with the host's native context-injection presentation as part of the transcript flow: one collapsed row that expands to the orientation block and the full instruction text, including the declared-reason block, scripted handoff block, and briefing when they apply. If that presentation is unavailable, an inline fallback row SHALL preserve the full text. The row SHALL be visible wherever the task conversation is rendered, including the task drawer and ordinary native DSH chat.
 
 The delivery SHALL NOT be recorded as user input. It SHALL NOT be presented as a user message, SHALL NOT count as pending user work, and SHALL NOT derive a conversation title.
 
@@ -1138,7 +1138,7 @@ A scripted handoff block SHALL identify the source stage and execution, the name
 - **WHEN** the card run action, the timed stage instruction after a move, a confirmed transition, the automatic advance, or the first execution of a task created by an agent delivers a stage instruction
 - **THEN** the conversation receives one plugin-sourced stage-instruction message
 - **AND** that message starts the turn that executes the instruction
-- **AND** its content is the entry instruction, then the declared transition's reason when one applies, then the scripted handoff when one applies, then the transition briefing when the stage configures two or more targets
+- **AND** its content is the orientation block, then the entry instruction, then the declared transition's reason when one applies, then the scripted handoff when one applies, then the transition briefing when the stage configures two or more targets
 
 #### Scenario: Include the declared reason
 
@@ -1152,7 +1152,7 @@ A scripted handoff block SHALL identify the source stage and execution, the name
 
 - **WHEN** a stage instruction is delivered for a move or an advance that consumed no recorded reason
 - **THEN** the delivered message contains no reason block
-- **AND** its content is the instruction followed by any pending scripted handoff and then the briefing when that briefing applies
+- **AND** its content is the orientation block, then the instruction followed by any pending scripted handoff and then the briefing when that briefing applies
 
 #### Scenario: Do not record user input
 
@@ -1165,7 +1165,7 @@ A scripted handoff block SHALL identify the source stage and execution, the name
 
 - **WHEN** a delivered stage instruction is displayed in a task conversation
 - **THEN** it appears as a collapsed context-injection row at its position in the transcript
-- **AND** expanding the row shows the instruction text, the declared-reason block, scripted handoff, and briefing when they apply
+- **AND** expanding the row shows the orientation block, the instruction text, the declared-reason block, scripted handoff, and briefing when they apply
 - **AND** the plugin Definition delegates to the host renderer, with an inline fallback that keeps the text visible
 
 #### Scenario: Name the stage and its target in the summary

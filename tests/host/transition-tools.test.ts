@@ -72,10 +72,10 @@ describe('transition tools', () => {
   it('lists the configured transitions and the default destination', async () => {
     const f = await setup();
     const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
-    expect(value).toMatchObject({ taskId: f.task.id, stage: { columnId: 'backlog' }, configured: true, defaultColumnId: 'done', recorded: null, armed: false });
+    expect(value).toMatchObject({ taskId: f.task.id, stage: { columnId: 'backlog', kind: 'no-instruction' }, configured: true, defaultColumnId: 'done', recorded: null, armed: false });
     expect(value.targets).toEqual([
-      { columnId: 'done', name: 'Done', when: 'The task needs no further work.' },
-      { columnId: 'plan', name: 'Plan', when: 'The task needs a plan.' },
+      { columnId: 'done', name: 'Done', kind: 'no-instruction', when: 'The task needs no further work.' },
+      { columnId: 'plan', name: 'Plan', kind: 'agent-instruction', when: 'The task needs a plan.' },
     ]);
   });
 
@@ -86,6 +86,14 @@ describe('transition tools', () => {
     expect(description).toContain('current stage configures');
     expect(description).toContain('scripted entry');
     expect(description).toContain('never moves the task');
+  });
+
+  it('says the conditions guide the choice, the host does not evaluate them, and a preset can be stricter', async () => {
+    const f = await setup();
+    const description = f.named('set_next_transition').description;
+    expect(description).toContain('guide the choice and the host does not evaluate them');
+    expect(description).toContain('a preset can set a stricter rule');
+    expect(description).not.toContain('conditions, scripted entry, and pending work still decide');
   });
 
   it('declares, replaces, and clears the transition without moving the task', async () => {
@@ -110,7 +118,7 @@ describe('transition tools', () => {
     await set.execute({ column_id: 'plan', reason: 'The work needs a plan.' }, f.exec());
     await expect(set.execute({ column_id: 'done' }, f.exec())).rejects.toThrowError(/requires a reason/);
     await expect(set.execute({ column_id: 'done', reason: '   ' }, f.exec())).rejects.toThrowError(/nonempty/);
-    await expect(set.execute({ column_id: 'done', reason: 'a'.repeat(1001) }, f.exec())).rejects.toThrowError(/1000 characters or fewer/);
+    await expect(set.execute({ column_id: 'done', reason: 'a'.repeat(201) }, f.exec())).rejects.toThrowError(/200 characters or fewer/);
     expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'plan', reason: 'The work needs a plan.' });
     expect(f.app.hubs.requireTask(f.task.id).task.columnId).toBe('backlog');
     expect(f.sessions.sent).toEqual([]);
@@ -196,19 +204,110 @@ describe('transition tools', () => {
   });
 });
 
+const DESCRIBED_WORKFLOW = [
+  'name: Described',
+  'initial_column: backlog',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '    description: Owns intake.',
+  '    allowed_transitions:',
+  '      - to: plan',
+  '        when: Intake is complete.',
+  '  - id: plan',
+  '    label: Plan',
+  '    description: Owns the plan.',
+  '    on_enter_prompt: SECRET INSTRUCTION',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join(String.fromCharCode(10));
+
+describe('transition discovery describes each stage', () => {
+  it('reports the kind and responsibility of the stage and of every target', async () => {
+    const f = await setup(DESCRIBED_WORKFLOW);
+    const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
+    expect(value.stage).toEqual({ columnId: 'backlog', name: 'Backlog', kind: 'no-instruction', responsibility: 'Owns intake.' });
+    expect(value.targets).toEqual([{ columnId: 'plan', name: 'Plan', kind: 'agent-instruction', responsibility: 'Owns the plan.', when: 'Intake is complete.' }]);
+  });
+
+  it('describes an explicitly requested destination without claiming it is configured', async () => {
+    const f = await setup(DESCRIBED_WORKFLOW);
+    const list = f.named('list_allowed_transitions');
+    const described = await list.execute({ destination_id: 'plan' }, f.exec()) as Record<string, unknown>;
+    expect(described.requestedDestination).toMatchObject({ columnId: 'plan', kind: 'agent-instruction', responsibility: 'Owns the plan.' });
+    const bare = await list.execute({ destination_id: 'done' }, f.exec()) as { requestedDestination: Record<string, unknown>; targets: Array<{ columnId: string }> };
+    expect(bare.requestedDestination).toMatchObject({ columnId: 'done', kind: 'no-instruction' });
+    expect(bare.requestedDestination).not.toHaveProperty('responsibility');
+    expect(bare.targets.map(target => target.columnId)).toEqual(['plan']);
+  });
+
+  it('never reports an entry instruction', async () => {
+    const f = await setup(DESCRIBED_WORKFLOW);
+    const value = await f.named('list_allowed_transitions').execute({ destination_id: 'plan' }, f.exec());
+    expect(JSON.stringify(value)).not.toContain('SECRET INSTRUCTION');
+  });
+});
+
+describe('agent-declared transition reason limit', () => {
+  it('accepts a reason of exactly 200 characters', async () => {
+    const f = await setup();
+    const reason = 'r'.repeat(200);
+    const declared = await f.named('set_next_transition').execute({ column_id: 'plan', reason }, f.exec()) as Record<string, unknown>;
+    expect(declared.recorded).toMatchObject({ columnId: 'plan', reason });
+  });
+
+  it('rejects 201 characters with an error that states the limit and keeps the recording', async () => {
+    const f = await setup();
+    const set = f.named('set_next_transition');
+    await set.execute({ column_id: 'plan', reason: 'The work needs a plan.' }, f.exec());
+    await expect(set.execute({ column_id: 'done', reason: 'r'.repeat(201) }, f.exec())).rejects.toMatchObject({
+      code: 'TRANSITION_REASON_TOO_LONG', message: 'A transition reason must be 200 characters or fewer.',
+    });
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'plan', reason: 'The work needs a plan.' });
+  });
+
+  it('applies the limit to an exceptional declaration before anything else about the exception', async () => {
+    const f = await setup(BRANCHED_WORKFLOW + '  - id: extra\n    label: Extra\n');
+    await expect(f.named('set_next_transition').execute({ column_id: 'extra', reason: 'r'.repeat(201), exception: true }, f.exec()))
+      .rejects.toMatchObject({ code: 'TRANSITION_REASON_TOO_LONG' });
+  });
+
+  it('does not hold a clear to the limit', async () => {
+    const f = await setup();
+    const set = f.named('set_next_transition');
+    await set.execute({ column_id: 'plan', reason: 'The work needs a plan.' }, f.exec());
+    const cleared = await set.execute({ reason: 'r'.repeat(201) }, f.exec()) as Record<string, unknown>;
+    expect(cleared.recorded).toBeNull();
+  });
+
+  it('states the limit in the tool description and in the reason parameter', async () => {
+    const f = await setup();
+    const definition = f.named('set_next_transition');
+    expect(definition.description).toContain('at most 200 characters');
+    expect(JSON.stringify(definition.parameters)).toContain('at most 200 characters; omitted only when clearing');
+  });
+
+  it('leaves the stored ceiling to reasons the host composes', async () => {
+    const f = await setup();
+    await f.app.command({ type: 'task.recordTransition', taskId: f.task.id, columnId: 'plan', reason: 'r'.repeat(500) });
+    expect(f.app.hubs.requireTask(f.task.id).task.recordedTransition).toMatchObject({ columnId: 'plan', reason: 'r'.repeat(500) });
+  });
+});
+
 describe('parameterized transition targets', () => {
   it('reports the declared parameters of every target that declares them', async () => {
     const f = await setup(PARAMETERIZED_WORKFLOW);
     const value = await f.named('list_allowed_transitions').execute({}, f.exec()) as Record<string, unknown>;
-    expect(value.targets).toEqual([{ columnId: 'wait', name: 'Wait', parameters: [{ name: 'pipeline', description: 'CI workflow' }] }]);
+    expect(value.targets).toEqual([{ columnId: 'wait', name: 'Wait', kind: 'scripted', parameters: [{ name: 'pipeline', description: 'CI workflow' }] }]);
   });
 
   it('inspects an explicitly requested destination without adding it to configured targets', async () => {
     const f = await setup(PARAMETERIZED_WORKFLOW.replace('      - to: wait', '      - to: done'));
     const list = f.named('list_allowed_transitions');
     const value = await list.execute({ destination_id: 'wait' }, f.exec()) as Record<string, unknown>;
-    expect(value.targets).toEqual([{ columnId: 'done', name: 'Done' }]);
-    expect(value.requestedDestination).toEqual({ columnId: 'wait', name: 'Wait', parameters: [{ name: 'pipeline', description: 'CI workflow' }] });
+    expect(value.targets).toEqual([{ columnId: 'done', name: 'Done', kind: 'no-instruction' }]);
+    expect(value.requestedDestination).toEqual({ columnId: 'wait', name: 'Wait', kind: 'scripted', parameters: [{ name: 'pipeline', description: 'CI workflow' }] });
     expect(JSON.stringify(value)).not.toContain('echo ok');
     await expect(list.execute({ destination_id: 'missing' }, f.exec())).rejects.toMatchObject({ code: 'INVALID_TARGET' });
   });

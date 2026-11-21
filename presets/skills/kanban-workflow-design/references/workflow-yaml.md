@@ -5,7 +5,7 @@ Load for authoring one board; verify against the installed parser.
 ## Accepted structure
 
 - Root: nonempty `columns`; optional `id`, `name`, `description`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; the first column is initial by default.
-- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `scripted`, `decision`, `position`, `size`. Both display aliases must agree if present. `description` is optional context, not an instruction.
+- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `scripted`, `decision`, `position`, `size`. Both display aliases must agree if present. `description` is optional: the stage's responsibility for the agent that reads it (see [stage contracts](stage-contracts.md)), not an instruction.
 - Group: `label` (alias `name`), nonempty `columns` IDs, optional `id` (otherwise `group-1`, etc.). Groups are presentation, not destinations. Each column belongs to at most one group; group IDs are unique and cannot equal column IDs.
 - `model`: nonempty `provider`, `model`, optional nonempty `reasoning_effort`. It sets the board default for **new conversations**, not a stage model, installation default, or existing conversations. Omission means DSH default. Check host routes: the parser validates shape, not availability; an unavailable route can fall back with a notice.
 - `agent_preset`: nonempty roster identity for **new conversations**. An authored preset wins; for absent YAML inspect the effective choice and origin. New-board metadata may select the operator; legacy absence keeps the host default. Shape only; a missing preset can fall back with a notice.
@@ -17,7 +17,7 @@ Unknown fields are rejected: no WIP limits, stage `auto_mode`, per-stage agents 
 
 ## Routes and conditions
 
-`allowed_transitions` mixes bare column IDs and `{to, when}` mappings. `to` is required; `when` is optional text (null/blank means no condition). Targets must exist in this document and cannot repeat. Conditions guide models; the runtime does not evaluate their truth.
+`allowed_transitions` mixes bare column IDs and `{to, when}` mappings. `to` is required; `when` is the optional exit condition (null/blank means none). Targets must exist in this document and cannot repeat. Conditions guide models; the runtime does not evaluate their truth.
 
 - **Omitted:** any other stage is movable and default progression uses workflow order; the diagram draws one dashed next-stage arrow.
 - **Nonempty:** authored destinations in order; the first is default without a declaration. Self-targets are reorders, not routing targets.
@@ -59,7 +59,6 @@ One review, terminal result; this example authorizes no creation or message.
 ```yaml
 name: Evidence Review
 initial_column: intake
-default_view: board
 columns:
   - id: intake
     label: Intake
@@ -72,13 +71,12 @@ columns:
       - to: done
         when: Every acceptance criterion has supporting evidence.
     on_enter_prompt: |
-      Review the deliverable against the task's acceptance criteria and evidence.
-      Report pass, fail, or unknown per criterion. Missing input: ask the human.
-      Otherwise summarize, read list_allowed_transitions, and declare intake for
-      changes or done when all criteria pass, with a reason.
+      Review the deliverable against the acceptance criteria and evidence.
+      Report pass, fail, or unknown per criterion; ask the human for missing input.
+      Then read list_allowed_transitions and declare intake or done, with a reason.
   - id: done
     label: Done
     allowed_transitions: []
 ```
 
-YAML writes do not migrate tasks: removing or renaming occupied IDs or admitted-transition references is rejected. A declared but unadmitted route can become stale and block progression; inspect it. Preserve IDs unless an approved migration is verified.
+YAML writes do not migrate tasks: removing or renaming occupied IDs or admitted-transition references is rejected. A declared but unadmitted route can become stale and block progression; inspect it. Preserve IDs unless a migration is verified.

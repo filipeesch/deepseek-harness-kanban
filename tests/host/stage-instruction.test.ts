@@ -3,6 +3,7 @@ import type { Board, Column, HubState, HubTask, Workflow } from '../../src/share
 import type { StageInstructionDelivery } from '../../src/shared/ports.js';
 import { admitStageInstruction, type StageInstructionDeps } from '../../src/host/stage-instruction.js';
 import { transitions } from '../support/transition-rules.js';
+import { afterOrientation } from '../support/stage-delivery.js';
 
 const now = '2026-01-01T00:00:00.000Z';
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
@@ -45,7 +46,7 @@ describe('stage instruction composition', () => {
     const f = fixture(task(), twoTargets());
     await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
     expect(f.delivered).toHaveLength(1);
-    expect(f.delivered[0]!.delivery.text.startsWith('Review it.\n\nWorkflow transitions from REVIEW:')).toBe(true);
+    expect(afterOrientation(f.delivered[0]!.delivery.text).startsWith('Review it.\n\nWorkflow transitions from REVIEW')).toBe(true);
     expect(f.delivered[0]!.delivery.text).toContain('set_next_transition');
   });
 
@@ -60,13 +61,13 @@ describe('stage instruction composition', () => {
     const workflow = flow(column('review', { onEnterPrompt: 'Review it.', allowedTransitions: transitions('done') }), column('done'));
     const f = fixture(task(), workflow);
     await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
-    expect(f.delivered[0]!.delivery.text).toBe('Review it.');
+    expect(afterOrientation(f.delivered[0]!.delivery.text)).toBe('Review it.');
   });
 
   it('delivers the instruction alone when the stage configures no transitions', async () => {
     const f = fixture(task(), flow(column('review', { onEnterPrompt: 'Review it.' }), column('done')));
     await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
-    expect(f.delivered[0]!.delivery.text).toBe('Review it.');
+    expect(afterOrientation(f.delivered[0]!.delivery.text)).toBe('Review it.');
   });
 
   it('derives the briefing from the workflow as it is at delivery time', async () => {
@@ -84,8 +85,8 @@ describe('stage instruction composition', () => {
       workflow.columns[0]!.allowedTransitions = [{ to: 'done', when: 'Approved without comments.' }, { to: 'rework', when: 'Changes requested.' }];
     };
     await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
-    expect(f.delivered[0]!.delivery.text).toContain('- DONE — Approved without comments.');
-    expect(f.delivered[0]!.delivery.text).not.toContain('- DONE — Approved.');
+    expect(f.delivered[0]!.delivery.text).toContain('Condition: Approved without comments.');
+    expect(f.delivered[0]!.delivery.text).not.toContain('Condition: Approved.');
   });
 
   it('names the recorded transition in the briefing', async () => {
@@ -106,16 +107,16 @@ describe('stage instruction composition', () => {
       transition: { fromColumnId: 'review', reason: 'Changes are needed.' },
     });
     const text = f.delivered[0]!.delivery.text;
-    expect(text.startsWith('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.')).toBe(true);
-    expect(text).toContain('Workflow transitions from REWORK:');
-    expect(text.indexOf('Transition reason')).toBeLessThan(text.indexOf('Workflow transitions from REWORK:'));
+    expect(afterOrientation(text).startsWith('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.')).toBe(true);
+    expect(text).toContain('Workflow transitions from REWORK');
+    expect(text.indexOf('Transition reason')).toBeLessThan(text.indexOf('Workflow transitions from REWORK'));
   });
 
   it('delivers no reason block without a declared transition', async () => {
     const value = task({ columnId: 'rework', instructionPending: { columnId: 'rework', enteredAt: 1 } });
     const f = fixture(value, flow(column('review'), column('rework', { onEnterPrompt: 'Rework it.' })));
     await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'rework', instruction: 'Rework it.', reviewedInstruction: 'Rework it.' });
-    expect(f.delivered[0]!.delivery.text).toBe('Rework it.');
+    expect(afterOrientation(f.delivered[0]!.delivery.text)).toBe('Rework it.');
   });
 
   it('names the source stage as the workflow carries it at delivery time', async () => {
@@ -164,5 +165,39 @@ describe('stage instruction composition', () => {
     const f = fixture(task(), flow(column('review', { onEnterPrompt: 'Review it.' })));
     await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.' });
     expect(f.delivered[0]!.delivery.summary).toBe('Stage: REVIEW');
+  });
+
+  it('records the stage entry it follows on the delivery', async () => {
+    const value = task({ stageEntry: { id: 'entry-9', columnId: 'review', stageIdentity: 'review', enteredAt: now } });
+    const f = fixture(value, flow(column('review', { onEnterPrompt: 'Review it.' }), column('done')));
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(f.delivered[0]!.delivery).toMatchObject({ entryId: 'entry-9', columnId: 'review' });
+  });
+
+  it('records no entry for a task that has none', async () => {
+    const f = fixture(task(), flow(column('review', { onEnterPrompt: 'Review it.' }), column('done')));
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(f.delivered[0]!.delivery.entryId).toBeUndefined();
+    expect(f.delivered[0]!.delivery.columnId).toBeUndefined();
+  });
+
+  it('composes again from the live workflow after the final check, keeping the delivery identity', async () => {
+    const workflow = flow(
+      column('review', { description: 'Owns the first review.', onEnterPrompt: 'Review it.', allowedTransitions: [{ to: 'done', when: 'Approved.' }, { to: 'rework', when: 'Changes requested.' }] }),
+      column('rework'),
+      column('done'),
+    );
+    const f = fixture(task({ stageEntry: { id: 'entry-1', columnId: 'review', stageIdentity: 'review', enteredAt: now } }), workflow);
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.', requestId: 'fixed-identity' });
+    const first = f.delivered[0]!.delivery;
+    expect(first.text).toContain('Owns the first review.');
+    // An edit lands between the final authority check and the enqueue, and keeps the entry.
+    workflow.columns[0]!.description = 'Owns the second review.';
+    workflow.columns[0]!.allowedTransitions = [{ to: 'done', when: 'Approved without comments.' }, { to: 'rework', when: 'Changes requested.' }];
+    const refreshed = first.refresh!();
+    expect(refreshed.text).toContain('Owns the second review.');
+    expect(refreshed.text).toContain('Condition: Approved without comments.');
+    expect(refreshed.text).not.toContain('Owns the first review.');
+    expect(refreshed).toMatchObject({ requestId: 'fixed-identity', entryId: 'entry-1', columnId: 'review' });
   });
 });

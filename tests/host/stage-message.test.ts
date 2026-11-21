@@ -7,6 +7,9 @@ import {
   scriptedHandoffBlock,
   stageInstructionTarget,
 } from '../../src/host/stage-message.js';
+import { orientStage } from '../../src/domain/stage-orientation.js';
+import { renderOrientationBlock } from '../../src/host/stage-orientation-text.js';
+import { ORIENTATION_OPENING } from '../support/stage-delivery.js';
 
 const column = (id: string, extra: Partial<Column> = {}): Column => ({ id, name: id.toUpperCase(), ...extra });
 const flow = (...columns: Column[]): Workflow => ({ name: 'Flow', initialColumnId: columns[0]!.id, columns, groups: [] });
@@ -17,19 +20,52 @@ const branched = () => flow(
   column('done'),
 );
 
+const opening = (workflow: Workflow, id: string) => renderOrientationBlock(orientStage(workflow, id)!);
+
 describe('stage instruction message', () => {
+  it('opens with the orientation block of the stage being entered', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Review it.', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.text.startsWith(ORIENTATION_OPENING)).toBe(true);
+    expect(delivery.text).toBe(opening(branched(), 'review') + '\n\nReview it.');
+  });
+
+  it('delivers the instruction alone when the workflow no longer holds the stage', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Review it.', stageName: 'GONE', task: { columnId: 'gone' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.text).toBe('Review it.');
+  });
+
+  it('records the stage entry on the delivery and on the durable source', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Review it.', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'r1', entryId: 'entry-1',
+    });
+    expect(delivery).toMatchObject({ entryId: 'entry-1', columnId: 'review' });
+    expect(createStageInstructionMessage(delivery).source).toMatchObject({ kind: 'stage-instruction', requestId: 'r1', entryId: 'entry-1', columnId: 'review' });
+  });
+
+  it('records no entry for a task that has none', () => {
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Review it.', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.entryId).toBeUndefined();
+    expect(createStageInstructionMessage(delivery).source).not.toHaveProperty('entryId');
+  });
+
   it('appends the briefing to the instruction when one applies', () => {
     const delivery = buildStageInstructionDelivery({
       instruction: 'Review it.', briefing: 'Workflow transitions from REVIEW:', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'r1',
     });
-    expect(delivery.text).toBe('Review it.\n\nWorkflow transitions from REVIEW:');
+    expect(delivery.text).toBe(opening(branched(), 'review') + '\n\nReview it.\n\nWorkflow transitions from REVIEW:');
   });
 
-  it('keeps the instruction alone without a briefing', () => {
+  it('keeps the instruction after the block without a briefing', () => {
     const delivery = buildStageInstructionDelivery({
       instruction: 'Review it.', stageName: 'REVIEW', task: { columnId: 'review' }, workflow: branched(), requestId: 'r1',
     });
-    expect(delivery.text).toBe('Review it.');
+    expect(delivery.text).toBe(opening(branched(), 'review') + '\n\nReview it.');
   });
 
   it('places the declared reason between the instruction and the briefing', () => {
@@ -37,7 +73,7 @@ describe('stage instruction message', () => {
       instruction: 'Rework it.', transition: { fromStageName: 'REVIEW', reason: 'Changes are needed.' }, briefing: 'Workflow transitions from REWORK:',
       stageName: 'REWORK', task: { columnId: 'rework' }, workflow: branched(), requestId: 'r1',
     });
-    expect(delivery.text).toBe('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.\n\nWorkflow transitions from REWORK:');
+    expect(delivery.text).toBe(opening(branched(), 'rework') + '\n\nRework it.\n\nTransition reason (from REVIEW):\nChanges are needed.\n\nWorkflow transitions from REWORK:');
   });
 
   it('carries the declared reason without a briefing', () => {
@@ -45,7 +81,16 @@ describe('stage instruction message', () => {
       instruction: 'Rework it.', transition: { fromStageName: 'REVIEW', reason: 'Changes are needed.' },
       stageName: 'REWORK', task: { columnId: 'rework' }, workflow: branched(), requestId: 'r1',
     });
-    expect(delivery.text).toBe('Rework it.\n\nTransition reason (from REVIEW):\nChanges are needed.');
+    expect(delivery.text).toBe(opening(branched(), 'rework') + '\n\nRework it.\n\nTransition reason (from REVIEW):\nChanges are needed.');
+  });
+
+  it('delivers a reason stored beyond the agent limit unchanged', () => {
+    const reason = 'r'.repeat(500);
+    const delivery = buildStageInstructionDelivery({
+      instruction: 'Rework it.', transition: { fromStageName: 'REVIEW', reason },
+      stageName: 'REWORK', task: { columnId: 'rework' }, workflow: branched(), requestId: 'r1',
+    });
+    expect(delivery.text).toContain('Transition reason (from REVIEW):\n' + reason);
   });
 
   it('keeps the reason out of the collapsed summary', () => {

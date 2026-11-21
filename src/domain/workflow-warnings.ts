@@ -1,6 +1,10 @@
 import type { Column, Workflow } from '../shared/types.js';
 import { authoredStageTargets, authoredTransitions } from './transitions.js';
+import { stageKind } from './stage-kind.js';
 import { workflowGraph } from './workflow-graph.js';
+
+/** The longest description the workflow architect is guided to write; a guide and an observation, never a validation limit. */
+export const DESCRIPTION_CEILING = 300;
 
 /** Something a composed workflow admits that its author should look at. */
 export type WorkflowWarning =
@@ -19,7 +23,13 @@ export type WorkflowWarning =
   /** A card parked in a stage declares parameters it holds no value for. */
   | { readonly kind: 'card-missing-parameters'; readonly stage: string; readonly taskId: string; readonly parameters: readonly string[] }
   /** A scripted program reads a parameter its stage never declares. */
-  | { readonly kind: 'scripted-parameter-undeclared'; readonly stage: string; readonly parameter: string; readonly count?: number };
+  | { readonly kind: 'scripted-parameter-undeclared'; readonly stage: string; readonly parameter: string; readonly count?: number }
+  /** A description longer than the ceiling; the stage is absent when it is the workflow's own. */
+  | { readonly kind: 'description-over-ceiling'; readonly stage?: string; readonly length: number }
+  /** A destination without a condition on a stage that authors two or more destinations. */
+  | { readonly kind: 'destination-without-condition'; readonly stage: string; readonly destination: string }
+  /** A scripted stage, or a stage with an entry instruction, that has no description. */
+  | { readonly kind: 'stage-without-description'; readonly stage: string };
 
 /** The verb phrases an instruction uses to cite a destination stage. */
 const ROUTE_CITATION = /\b(?:declare|route\s+to|transition\s+to|move\s+to|advance\s+to|go\s+to)\s+`?([a-z][a-z0-9_-]{1,63})`?/gi;
@@ -198,6 +208,37 @@ function cardParameterWarnings(workflow: Workflow, cards: readonly { readonly id
 }
 
 /**
+ * The stage-contract observations: where a description or a condition does not
+ * carry what the operator reads it for. A description is a stage's responsibility
+ * and a transition condition is its exit, so an executable stage needs the first
+ * and a stage that chooses between destinations needs the second. A decision stage,
+ * a stage with neither script nor instruction, and the named exits of a scripted
+ * stage cannot lack them and are never reported.
+ */
+function contractWarnings(workflow: Workflow): WorkflowWarning[] {
+  const warnings: WorkflowWarning[] = [];
+  if (workflow.description !== undefined && workflow.description.length > DESCRIPTION_CEILING) {
+    warnings.push({ kind: 'description-over-ceiling', length: workflow.description.length });
+  }
+  for (const column of workflow.columns) {
+    if (column.description !== undefined && column.description.length > DESCRIPTION_CEILING) {
+      warnings.push({ kind: 'description-over-ceiling', stage: column.id, length: column.description.length });
+    }
+    const kind = stageKind(column);
+    if ((kind === 'scripted' || kind === 'agent-instruction') && !column.description?.trim()) {
+      warnings.push({ kind: 'stage-without-description', stage: column.id });
+    }
+    if (kind === 'decision' || kind === 'scripted') continue;
+    const destinations = (column.allowedTransitions ?? []).filter(rule => rule.to !== column.id);
+    if (destinations.length < 2) continue;
+    for (const rule of destinations) {
+      if (rule.when === undefined) warnings.push({ kind: 'destination-without-condition', stage: column.id, destination: rule.to });
+    }
+  }
+  return warnings;
+}
+
+/**
  * The graph warnings a composed workflow carries.
  *
  * They describe authored intent that the diagram or the board will ignore, or a
@@ -206,8 +247,8 @@ function cardParameterWarnings(workflow: Workflow, cards: readonly { readonly id
  * for a pair the diagram does not draw, a stage no group claims, an instruction
  * that cites a stage the workflow does not define or that the stage does not
  * permit, a destination parameter the origin instruction never names, a parameter
- * a scripted program reads without declaring, and a card without the values its
- * stage declares.
+ * a scripted program reads without declaring, a card without the values its
+ * stage declares, and the stage-contract observations of {@link contractWarnings}.
  *
  * A citation is an identifier written between backticks, or an identifier the
  * workflow defines that follows one of the authored citing phrases. A plain word
@@ -242,5 +283,6 @@ export function workflowWarnings(
   warnings.push(...destinationParameterWarnings(workflow));
   warnings.push(...undeclaredParameterWarnings(workflow));
   warnings.push(...cardParameterWarnings(workflow, cards));
+  warnings.push(...contractWarnings(workflow));
   return warnings;
 }

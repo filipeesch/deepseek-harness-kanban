@@ -12,6 +12,7 @@ import { KanbanError } from '../../src/shared/errors.js';
 import type { CommandResult } from '../../src/shared/ports.js';
 import type { GitProject, Project } from '../../src/shared/types.js';
 import { MemoryHubStorage, taskWithConversation, TestSessions } from './helpers.js';
+import { afterOrientation } from '../support/stage-delivery.js';
 import { cleanup as cleanupGit, fixture as gitFixture, gitOk, LocalExecutor } from '../worktrees/helpers.js';
 
 const approvedInstruction = '    Implement the approved product change.\n\nKeep the monorepo subdirectory.\n';
@@ -186,7 +187,7 @@ describe('bounded integrated product walkthrough', () => {
     await f.app.command({ type: 'task.runInstruction', taskId: t.id, columnId: 'in_progress', expectedEnteredAt: marker.enteredAt, expectedInstruction: approvedInstruction });
     expect(f.sessions.sent).toHaveLength(1);
     expect(f.sessions.sent[0]).toMatchObject({ id: t.a });
-    expect(f.sessions.sent[0]!.text).toBe(approvedInstruction);
+    expect(afterOrientation(f.sessions.sent[0]!.text)).toBe(approvedInstruction);
     expect(f.sessions.sent.some(value => value.id === t.b)).toBe(false);
     expect(f.app.store.requireTask(t.id)).toMatchObject({ sessionIds: [t.a, t.b], columnId: 'in_progress', effectiveCwd: targetDirectory });
     expect([...f.sessions.histories]).toEqual(histories);
@@ -303,7 +304,9 @@ describe('bounded integrated product walkthrough', () => {
     const ordinarySummary = await f.tool('get_workflow_summary', {}) as { records: Array<Record<string, unknown>> };
     expect(ordinarySummary.records).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'workflow', board: expect.objectContaining({ id: boardId }), hub: expect.objectContaining({ id: hubId }) }), expect.objectContaining({ kind: 'stage', id: 'backlog' })]));
     const taskSummary = await f.tool('get_workflow_summary', {}, a.a) as { records: Array<Record<string, unknown>> };
-    expect(taskSummary.records).toEqual(expect.arrayContaining([...ordinarySummary.records, expect.objectContaining({ kind: 'task', id: a.id })]));
+    expect(taskSummary.records.map(({ current: _current, ...record }) => record)).toEqual(expect.arrayContaining([...ordinarySummary.records, expect.objectContaining({ kind: 'task', id: a.id })]));
+    expect(taskSummary.records.filter(record => record.current === true)).toHaveLength(1);
+    expect(ordinarySummary.records.some(record => record.current !== undefined)).toBe(false);
     expect(await f.tool('list_cards', { project_id: f.project.id, query: 'PRODUCT WALKTHROUGH', limit: 1 })).toEqual([compactCardOf(f.app.store.requireTask(a.id), hubId)]);
     expect(await f.tool('list_cards', { project_id: 'root-project', limit: 1 }, a.b)).toEqual([compactCardOf(b, hubId)]);
     expect(await f.tool('list_cards', { query: 'does not match', limit: 1 })).toEqual([]);

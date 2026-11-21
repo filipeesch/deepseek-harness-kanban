@@ -32,6 +32,7 @@ import type { NativeLocaleSource, NativeSlotSource } from './client/native-slot-
 import type { NativeSeat } from './client/native-slot-host.js';
 import { TASK_CONTEXT_NODE_KIND, TaskContextNodeView, taskContextDefinition } from './client/task-context-node.js';
 import { STAGE_CONTEXT_NODE_KIND, StageInstructionNodeView, stageInstructionDefinition } from './client/stage-instruction-node.js';
+import { STAGE_NOTICE_NODE_KIND, StageNoticeNodeView, stageNoticeDefinition } from './client/stage-notice-node.js';
 import { HANDOFF_CONTEXT_NODE_KIND, ScriptedHandoffNodeView, scriptedHandoffDefinition } from './client/scripted-handoff-node.js';
 import { TASK_MESSAGE_NODE_KIND, TaskMessageNodeView, taskMessageDefinition } from './client/task-message-node.js';
 import { createSidebarPanelPort } from './client/sidebar-panel-port.js';
@@ -283,6 +284,13 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
       t={props.t}
     />;
   }
+  function StageNoticeChatNode(props: ChatNodeViewProps<'kanban-stage-notice'>) {
+    return <StageNoticeNodeView
+      node={props.node}
+      slots={ctx.slots as unknown as NativeSlotSource}
+      t={props.t}
+    />;
+  }
   function ScriptedHandoffChatNode(props: ChatNodeViewProps<'kanban-scripted-handoff'>) {
     return <ScriptedHandoffNodeView node={props.node} slots={ctx.slots as unknown as NativeSlotSource} t={props.t} />;
   }
@@ -361,12 +369,14 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
 
   const offTaskContext = ctx.uiConversation.events.register(taskContextDefinition);
   const offStageInstruction = ctx.uiConversation.events.register(stageInstructionDefinition);
+  const offStageNotice = ctx.uiConversation.events.register(stageNoticeDefinition);
   const offHandoff = ctx.uiConversation.events.register(scriptedHandoffDefinition);
   const offTaskMessage = ctx.uiConversation.events.register(taskMessageDefinition);
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'kanban', children: { 'kanban.conversation': { kind: 'single', scope: 'session' } } }, Main));
   ctx.slots.inject('kanban.conversation', () => ctx.slots.register({ name: 'kanban.conversation' }, ConversationWindowSeat));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskContextChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: STAGE_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, StageInstructionChatNode));
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: STAGE_NOTICE_NODE_KIND, locale: 'chat', inject: () => ({}) }, StageNoticeChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: HANDOFF_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, ScriptedHandoffChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
@@ -381,7 +391,7 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   bridge.start();
   return async () => {
     lifetime.abort(); autoRun.dispose(); decisionWindow.dispose(); unsubscribeAutoRun(); unsubscribeDecisionWindow(); unsubscribeSnapshot();
-    offTaskContext(); offStageInstruction(); offTaskMessage(); offHandoff();
+    offTaskContext(); offStageInstruction(); offStageNotice(); offTaskMessage(); offHandoff();
     try { await presetInjection?.dispose(); } catch { /* the optional namespace fiber is best effort */ }
     try { stopNavigation?.(); navigation.detach(); } catch { /* the navigation subscription is best effort */ }
     sessionStatus.dispose();

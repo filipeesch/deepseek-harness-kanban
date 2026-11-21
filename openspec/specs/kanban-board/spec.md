@@ -34,7 +34,7 @@ This version SHALL NOT implement WIP limits and SHALL NOT introduce reusable wor
 
 A stage SHALL additionally support the scripted configuration defined by `scripted-steps`. A scripted stage SHALL NOT author a nonempty entry instruction or an allowed transitions list. Its named exit mappings SHALL be its configured destinations for workflow access and graph presentation; several exits MAY resolve to the same destination, which SHALL be presented as one connection to that destination. The exit names SHALL NOT be presented on the diagram's connections; each exit name and the destination it resolves to SHALL remain presented and editable in the stage editor. A scripted stage SHALL NOT obtain a default route from the first exit or from workflow order. Exit names SHALL NOT be executable interpretations of a legacy transition condition, and legacy conditions SHALL retain their documentary meaning. A script SHALL NOT supply or override a destination stage identifier.
 
-Optional root and stage descriptions SHALL retain authored content in YAML and the normalized workflow; a missing or blank description SHALL be represented as absent without inventing text. No 150-character schema limit SHALL be imposed on other authors. Unrelated edits SHALL preserve authored descriptions and exact YAML text. Legacy workflows, including those whose stored normalized state omitted an authored stage description, SHALL be read using a versioned migration or equivalent compatibility projection before strict consistency checks without rewriting YAML or hashes. Description changes SHALL participate in semantic comparisons, revision and diff, creation and incremental events, replay, restore, and merge/conflict detection. Team publication and synchronization SHALL preserve them, and incompatible peers SHALL report incompatibility rather than silently discard them.
+Optional root and stage descriptions SHALL retain authored content in YAML and the normalized workflow; a missing or blank description SHALL be represented as absent without inventing text. No description length limit SHALL be imposed by the schema on any author; the workflow architect's 300-character ceiling is guidance and a write-report observation. Unrelated edits SHALL preserve authored descriptions and exact YAML text. Legacy workflows, including those whose stored normalized state omitted an authored stage description, SHALL be read using a versioned migration or equivalent compatibility projection before strict consistency checks without rewriting YAML or hashes. Description changes SHALL participate in semantic comparisons, revision and diff, creation and incremental events, replay, restore, and merge/conflict detection. Team publication and synchronization SHALL preserve them, and incompatible peers SHALL report incompatibility rather than silently discard them.
 
 #### Scenario: Render a configured column group
 
@@ -145,7 +145,7 @@ Optional root and stage descriptions SHALL retain authored content in YAML and t
 - **WHEN** a workflow authors root and stage descriptions and an unrelated field is edited
 - **THEN** both descriptions and their authored text remain unchanged
 - **AND** missing or blank descriptions are treated as absent without generating text
-- **AND** a description longer than 150 characters is not rejected for its length alone
+- **AND** a description longer than 300 characters is not rejected for its length alone
 
 #### Scenario: Read a legacy omitted stage description
 
@@ -2751,43 +2751,44 @@ An explicitly flagged exceptional recording MAY name a different existing destin
 
 ### Requirement: Transition briefing for an instructed stage
 
-When a stage configures two or more transition targets and the host delivers that stage's entry instruction, the delivery SHALL include a host-generated briefing after the instruction and, when the delivery carries a declared transition's reason, after that reason. The briefing SHALL list every configured target with its stage name and its authored condition when the stage authored one, SHALL name the recorded transition when the task already recorded one for that stage, SHALL name the target that applies when nothing is recorded, and SHALL name the tool that records the choice together with its required reason. The briefing SHALL describe conditionally that an eligible declared transition is followed at the end of the completed turn. It SHALL NOT direct the agent to record a transition solely because the stage has multiple targets; an authored instruction or direct user request MAY direct a declaration. The briefing SHALL be derived from the active workflow at the moment of delivery and SHALL appear on every delivery path: the card run action, the timed stage instruction after a move, a confirmed transition, the automatic advance, and the first execution of a task created by an agent. A stage that configures fewer than two targets SHALL produce no briefing, and its context message SHALL contain the entry instruction and, when one applies, the declared transition's reason.
+When a stage configures two or more transition targets and the host delivers that stage's entry instruction, the delivery SHALL include a host-generated briefing after the instruction and, when the delivery carries a declared transition's reason, after that reason. The briefing SHALL NOT list the configured targets, which the delivery's orientation block carries with their conditions. It SHALL name the recorded transition when the task already recorded one for that stage, SHALL name the target that applies when nothing is recorded, and SHALL name the tool that records the choice together with its required reason and the maximum length of that reason. The briefing SHALL describe conditionally that an eligible declared transition is followed at the end of the completed turn. It SHALL NOT direct the agent to record a transition solely because the stage has multiple targets; an authored instruction or direct user request MAY direct a declaration. The briefing SHALL be derived from the active workflow at the moment of delivery and SHALL appear on every delivery path: the card run action, the timed stage instruction after a move, a confirmed transition, the automatic advance, and the first execution of a task created by an agent. A stage that configures fewer than two targets SHALL produce no briefing, and its context message SHALL contain the orientation block, the entry instruction and, when one applies, the declared transition's reason.
 
 When instruction delivery carries a scripted handoff, the handoff SHALL be a separate identified block after any declared agent reason and before this briefing. It SHALL NOT change the briefing's documentary conditions, configured destinations, or end-of-turn declaration guidance. A stage with fewer than two targets SHALL still receive its pending handoff even though it produces no briefing. The handoff SHALL NOT be presented as a reason the agent declared.
 
 #### Scenario: Include the briefing with two or more targets
 
 - **WHEN** the host delivers the entry instruction of a stage that configures two or more targets
-- **THEN** the delivered context message contains the instruction followed by the transition briefing
+- **THEN** the delivered context message contains the orientation block, the instruction, and then the transition briefing
 
 #### Scenario: Place the briefing after the declared reason
 
 - **WHEN** the delivery carries both a declared transition's reason and a briefing
-- **THEN** the message orders the instruction, then the reason, then the briefing
+- **THEN** the message orders the orientation block, the instruction, then the reason, then the briefing
 
 #### Scenario: Omit the briefing with one target
 
 - **WHEN** the host delivers the entry instruction of a stage that configures exactly one target
-- **THEN** the delivered context message contains the entry instruction and, when one applies, the declared transition's reason
+- **THEN** the delivered context message contains the orientation block, the entry instruction and, when one applies, the declared transition's reason
 - **AND** it contains no briefing
 
 #### Scenario: Omit the briefing without configured transitions
 
 - **WHEN** the host delivers the entry instruction of a stage that does not configure transitions
-- **THEN** the delivered context message contains the entry instruction and, when one applies, the declared transition's reason
+- **THEN** the delivered context message contains the orientation block, the entry instruction and, when one applies, the declared transition's reason
 - **AND** it contains no briefing
 
 #### Scenario: State the required reason and the end-of-turn timing
 
 - **WHEN** the briefing names the tool that records the choice
-- **THEN** it states that recording a destination requires a reason
+- **THEN** it states that recording a destination requires a reason and the maximum length of that reason
 - **AND** it states conditionally that an eligible declared transition is followed at the end of the completed turn
 
 #### Scenario: List each target with its condition
 
 - **WHEN** the briefing is generated for a stage whose targets carry authored conditions
-- **THEN** every target is listed with its stage name and its condition
+- **THEN** the delivery's orientation block lists every target with its stage name and its condition
 - **AND** a target without a condition is listed without one
+- **AND** the briefing itself does not repeat the target list
 
 #### Scenario: Name the target that applies without a recording
 
@@ -2812,7 +2813,7 @@ When instruction delivery carries a scripted handoff, the handoff SHALL be a sep
 #### Scenario: Keep scripted handoff when no briefing applies
 
 - **WHEN** an instructed destination receives a scripted handoff and configures fewer than two transition targets
-- **THEN** its context message includes the instruction and the separate scripted handoff block
+- **THEN** its context message includes the orientation block, the instruction, and the separate scripted handoff block
 - **AND** no transition briefing is generated
 - **AND** no agent-declared reason is fabricated
 

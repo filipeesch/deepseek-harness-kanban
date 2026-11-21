@@ -39,12 +39,22 @@ export interface SessionTopologyPort {
 export interface StageInstructionDelivery {
   /** Stable delivery identity; a repeated identity is never delivered twice. */
   readonly requestId: string;
-  /** Model-facing text: the entry instruction, then the transition briefing when one applies. */
+  /** Model-facing text: the orientation block, the entry instruction, then the declared reason, the scripted handoff, and the transition briefing when they apply. */
   readonly text: string;
   /** One-line account the collapsed message row shows. */
   readonly summary: string;
+  /** The stage entry this delivery follows; absent for a task that has none. Recorded on the durable source. */
+  readonly entryId?: string;
+  /** The stage the instruction belongs to; present with the entry identity. */
+  readonly columnId?: string;
   /** Final synchronous authority check immediately before native enqueue. Never serialized. */
   readonly assertCurrent?: () => void;
+  /**
+   * Compose the model-facing content again from the live workflow and task, called
+   * synchronously right after the final authority check so an edit that kept the entry
+   * still reaches the message. Never serialized.
+   */
+  readonly refresh?: () => StageInstructionDelivery;
 }
 export interface SessionPort extends SessionTopologyPort {
   create(projectPath: string, workspaceId?: string): Promise<string>;
