@@ -10,6 +10,15 @@ export const attachmentCss = String.raw`
 .ka-icon-button:disabled{opacity:.4;cursor:not-allowed}
 .ka-icon-button:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .ka-chips{list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:0;padding:0;min-width:0}
+/* Inside the question strip the file list scrolls in its own row: a long list must
+   never grow the footer until the attach and submit actions are clipped. */
+/* Inside the question strip the file list keeps one row and scrolls sideways, so the
+   footer never wraps into a second row that could be clipped by the strip's bound. */
+.kq-footer .ka-attachment-bar{flex:1 1 0;flex-wrap:nowrap;min-width:0}
+.kq-footer .ka-chips{flex:1 1 auto;flex-wrap:nowrap;min-width:32px;max-height:24px;overflow-x:auto;overflow-y:hidden;overscroll-behavior:contain}
+/* A file token keeps its readable width inside the horizontal scroller instead of
+   shrinking its name to nothing. */
+.kq-footer .ka-chip{flex:0 0 auto}
 .ka-chip{display:flex;align-items:center;gap:4px;min-width:0;max-width:220px;padding:2px 4px 2px 7px;border:0.5px solid var(--dsw-alias-border-l2,var(--kb-line));border-radius:999px;background:var(--dsw-alias-bg-base,transparent);font-size:11.5px;line-height:1.6}
 .ka-chip-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ka-chip-size{flex:none;white-space:nowrap;color:var(--dsw-alias-label-tertiary,currentColor)}

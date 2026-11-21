@@ -6,6 +6,7 @@ import type { QuestionRoundView } from './question-round-cache.js';
 import { selectActiveRound } from '../questions/submission.js';
 import { QuestionForm, type QuestionAttachmentPort } from '../questions/QuestionForm.js';
 import type { ClientApi } from '../shared/types.js';
+import { DockStrip } from './dock-seat.js';
 
 /**
  * The question-only facts the dock reads. A board-update status never belongs here: the
@@ -161,7 +162,10 @@ export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
   const round = selectActiveRound(view.rounds, sessionId, id => services.isSubmitted(id), services.focusedRoundId());
   const storedDraft = round === undefined ? undefined : services.drafts.read(round.id);
   const files = api === undefined ? undefined : services.files(sessionId, api);
-  return <>{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} {...(storedDraft === undefined ? {} : { storedDraft })} {...(files === undefined ? {} : { files })} hidden={services.isSubmitted(round.id)} onHide={() => services.focusComposer(sessionId)} onDraftChange={draft => services.drafts.update(sessionId, round.id, draft)} onSubmit={async (text, attached) => {
+  if (historyError === undefined && round === undefined) return null;
+  // A submitted round keeps its form mounted for the draft, but its box takes no space.
+  const visible = historyError !== undefined || (round !== undefined && !services.isSubmitted(round.id));
+  return <DockStrip visible={visible}>{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} {...(storedDraft === undefined ? {} : { storedDraft })} {...(files === undefined ? {} : { files })} hidden={services.isSubmitted(round.id)} onHide={() => services.focusComposer(sessionId)} onDraftChange={draft => services.drafts.update(sessionId, round.id, draft)} onSubmit={async (text, attached) => {
     // This is ordinary native human text. It does not settle native approvals or userQuestions.
     services.assertSubmissionAllowed(sessionId);
     // The dock hides the round before admission settles; a failure restores it with the draft.
@@ -187,5 +191,5 @@ export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
     // draft still inside its debounce window cannot leave bytes behind.
     await services.dismiss(sessionId, round.id);
     for (const file of draft) await services.discardFile(sessionId, file.id, api).catch(() => undefined);
-  }} />}</>;
+  }} />}</DockStrip>;
 }

@@ -23,7 +23,10 @@ body{
   --dsw-static-red-600:rgb(236,19,19);
   --dsw-alias-bg-base:var(--dsw-static-neutral-bluish-00);
   --dsw-alias-bg-l2:rgb(247,247,247);
+  --dsw-alias-border-l1:rgba(0,0,0,0.06);
   --dsw-alias-border-l2:rgb(208,208,208);
+  --dsw-alias-border-l3:rgba(0,0,0,0.12);
+  --dsw-specific-menu:rgb(255,255,255);
   --dsw-alias-label-deep-diving:color-mix(in srgb,var(--dsw-static-deepseek-500) 70%,var(--dsw-static-blue-950));
   --dsw-alias-state-business-primary:var(--dsw-static-deepseek-500);
   --dsw-alias-state-error-primary:var(--dsw-static-red-600);
@@ -40,7 +43,10 @@ body{
   --dsw-static-red-400:rgb(242,90,90);
   --dsw-alias-bg-base:var(--dsw-static-neutral-bluish-950);
   --dsw-alias-bg-l2:rgb(31,31,35);
+  --dsw-alias-border-l1:rgba(255,255,255,0.06);
   --dsw-alias-border-l2:rgb(63,63,70);
+  --dsw-alias-border-l3:rgba(255,255,255,0.16);
+  --dsw-specific-menu:rgb(48,49,54);
   --dsw-alias-label-deep-diving:color-mix(in srgb,var(--dsw-static-deepseek-450) 55%,var(--dsw-static-neutral-bluish-400));
   --dsw-alias-state-business-primary:var(--dsw-static-deepseek-400);
   --dsw-alias-state-error-primary:var(--dsw-static-red-400);

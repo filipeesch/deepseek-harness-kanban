@@ -530,7 +530,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
           navigation?.suppressNextNavigation?.(sessionId);
           onOpenSession(sessionId);
         },
-      })} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} decisionWindow={decisionWindow} />}
+      })} onClose={requestCloseDrawer} onMove={moveTo} onDanger={requestDanger} onForce={destructive.openForce} onToggleAutoMode={toggleAutoMode} autoModePending={autoModePending.has(selected.id)} sessionTitles={sessionTitles} {...(conversationLeases === undefined ? {} : { conversationLeases })} entering={drawerEntering} closing={drawerClosing} autoRun={autoRun} />}
       {destructive.state.view && (() => {
         const view = destructive.state.view;
         const task = state.tasks.find(value => value.id === view.request.taskId);

@@ -107,7 +107,11 @@ columns:
           to: released
 ```
 
-A task in the gate stays in its stage until the person answers. The card presents the awaiting-input tint, a **Decision needed** mark, and a status line; the drawer presents the gate above its sections, in every section and without requiring a conversation. Select one option, optionally add an **Observation** (up to 776 characters), and activate **Confirm choice**; selecting alone does nothing.
+A task in the gate stays in its stage until the person answers. The card presents the awaiting-input tint, a **Decision needed** mark, and a status line. The gate is presented above the composer of every conversation of the task, in the task drawer and in the main chat, the same place a structured question waits; a conversation that belongs to no task, and a task with no conversation open, present no gate. When a question round is waiting in the same conversation, the gate sits above it.
+
+The gate is titled **Decision needed**, or **Confirmation needed** when the stage authors a single option. Select one option, optionally add an **Observation** (up to 776 characters), and activate **Confirm choice**; selecting alone does nothing. Collapsing the gate keeps its header above the composer and preserves what you entered.
+
+The gate keeps its header, its confirm action, and the composer reachable and scrolls its content when the conversation is short; a refusal is presented beside **Confirm choice**, so a scrolled body cannot hide why the task did not move. The answer belongs to the task, so every open conversation presents the same choice while it counts, and a new decision stage starts unanswered.
 
 Confirming opens a cancelable five-second window on the card and in the panel. The task moves only when the window closes; **Cancel**, a reload, or closing the app applies nothing and leaves the gate waiting. The choice moves the task to the option's destination and records it in **History** with the option and the observation. When the destination authors an instruction, that instruction is sent with the choice as its reason, reading `Decision: <title>` and the observation; a scripted destination starts its own execution instead.
 

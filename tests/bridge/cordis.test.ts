@@ -88,7 +88,7 @@ describe('real Cordis + real gateway namespace injection', () => {
     root.provide('locale', { bind: () => (key: string) => key, getSnapshot: () => ({ revision: 0 }), subscribe: () => () => {} });
     root.provide('uiConversation', { events: { register: vi.fn(() => () => {}) } });
     const client = root.plugin(KanbanClient); fibers.push(client); await client;
-    expect(registrations).toHaveBeenCalledTimes(11);
+    expect(registrations).toHaveBeenCalledTimes(12);
     expect(components.has('main:kanban')).toBe(true);
     expect(components.has('kanban.conversation:')).toBe(true);
     expect(components.has('conversation.chat.node:kanban-task-context')).toBe(true);

@@ -116,6 +116,9 @@ it('holds a decision gate, cancels its window, and routes the chosen option with
 
   await openTask.click();
   const drawer = page.locator('.kb-drawer');
+  // No conversation means no gate: the card's attention is the only signal.
+  await visible(drawer);
+  await expect.poll(() => page.locator('.kb-decision').count()).toBe(0);
   // A completed turn must not cross the gate either: open a conversation, send a
   // message, let the replayed turn finish, and assert the card never leaves.
   await drawer.getByRole('button', { name: 'New conversation' }).click();
@@ -132,8 +135,37 @@ it('holds a decision gate, cancels its window, and routes the chosen option with
   await visible(panel);
   await contains(panel, 'How should this review proceed?');
   await contains(panel, 'Address any findings before shipping.');
+  // The gate is docked above the composer, not pinned to the drawer's top, and the
+  // drawer shows exactly one of them.
+  const gateBox = await panel.boundingBox();
+  const composerBox = await composer.boundingBox();
+  expect(gateBox !== null && composerBox !== null && gateBox.y + gateBox.height <= composerBox.y + 1).toBe(true);
+  expect(await page.locator('.kb-decision').count()).toBe(1);
+  // The gate lives in the same composer seat as the native input, not above the drawer.
+  const composerHandle = await composer.elementHandle();
+  const sharesSeat = await panel.evaluate((element, composerElement) => {
+    const gateSeat = element.closest('[data-composer-seat]');
+    const composerSeat = (composerElement as Element).closest('[data-composer-seat]');
+    return gateSeat !== null && gateSeat === composerSeat;
+  }, composerHandle);
+  expect(sharesSeat).toBe(true);
+  // The gate starts unanswered and its confirm action is unavailable until a choice is made.
   const confirm = panel.getByRole('button', { name: 'Confirm choice' });
   expect(await confirm.isDisabled()).toBe(true);
+  // Collapsing keeps the header above the composer and preserves an answer already entered.
+  const gateHeader = panel.getByRole('button', { name: /Decision needed/ });
+  await panel.getByRole('radio', { name: 'Ship it' }).check();
+  await panel.getByRole('textbox', { name: 'Observation' }).fill('Keep this observation.');
+  await gateHeader.click();
+  await attribute(gateHeader, 'aria-expanded', 'false');
+  await count(panel.locator('.kq-scroll'), 0);
+  await gateHeader.click();
+  await attribute(gateHeader, 'aria-expanded', 'true');
+  await count(panel.locator('.kq-scroll'), 1);
+  await expect.poll(() => panel.getByRole('textbox', { name: 'Observation' }).inputValue()).toBe('Keep this observation.');
+  await expect.poll(() => panel.getByRole('radio', { name: 'Ship it' }).isChecked()).toBe(true);
+  // A retained draft keeps the gate answerable.
+  await expect.poll(() => confirm.isEnabled()).toBe(true);
 
   // Choose, start the window, and cancel it: nothing may be applied.
   await panel.getByRole('radio', { name: 'Ship it' }).check();

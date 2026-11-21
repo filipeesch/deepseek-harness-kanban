@@ -86,7 +86,10 @@ export function ChoiceOptions({ prefix, callId, type, options, selected, disable
       : focus
         ? (descriptionFor(options, focus).trim().length > 0
           ? <div className="kq-desc"><div className="kq-desc-body"><Markdown text={descriptionFor(options, focus)} /></div></div>
-          : null)
+          // The pane keeps its place so the strip's height does not change under the
+          // pointer: a strip docked above the composer is bottom-anchored, and a
+          // shrinking pane would move the option row away from the click.
+          : <div className="kq-desc" data-empty="true" />)
         : <div className="kq-desc"><p className="kq-desc-empty">Select an option to see details.</p></div>}
   </>;
 }
