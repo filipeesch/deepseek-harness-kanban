@@ -31,6 +31,8 @@ export interface DecisionWindowInput {
 export type DecisionWindowStatus = 'counting' | 'sending' | 'failed';
 
 export interface DecisionWindowEntry extends DecisionWindowInput {
+  /** Which confirmation this is for the task, so an identical retry is its own attempt. */
+  attempt: number;
   /** The moment the route is submitted; absent while sending or failed. */
   deadline: number | null;
   status: DecisionWindowStatus;
@@ -55,6 +57,8 @@ export interface DecisionWindowOptions {
 export class DecisionWindowController {
   private entries: Record<string, DecisionWindowEntry> = {};
   private readonly timers = new Map<string, unknown>();
+  /** How many windows each task has armed, so two identical choices stay distinguishable. */
+  private readonly attempts = new Map<string, number>();
   private readonly listeners = new Set<() => void>();
   private readonly clock: DecisionClock;
   private readonly windowMs: number;
@@ -78,8 +82,10 @@ export class DecisionWindowController {
   arm = (input: DecisionWindowInput): void => {
     if (this.disposed) return;
     this.clearTimer(input.taskId);
+    const attempt = (this.attempts.get(input.taskId) ?? 0) + 1;
+    this.attempts.set(input.taskId, attempt);
     const deadline = this.clock.now() + this.windowMs;
-    this.commit({ ...input, deadline, status: 'counting' });
+    this.commit({ ...input, attempt, deadline, status: 'counting' });
     const timer = this.clock.setTimeout(() => {
       this.timers.delete(input.taskId);
       void this.expire(input);

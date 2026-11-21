@@ -2,7 +2,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { DecisionPanel } from '../../src/client/decision-panel.js';
+import { DecisionGate, DecisionPanel } from '../../src/client/decision-panel.js';
 import { DecisionWindowController } from '../../src/client/decision-window.js';
 import type { Column, Task } from '../../src/shared/types.js';
 import { fixture } from './helpers.js';
@@ -25,6 +25,53 @@ function setup(column: Column = Gate) {
   const view = render(<DecisionPanel task={task} column={column} columns={columns} controller={controller} />);
   return { ...view, controller };
 }
+
+describe('decision gate presentation', () => {
+  it('renders the strip with no controller and no board', () => {
+    const select = vi.fn(); const confirm = vi.fn();
+    const view = render(<DecisionGate
+      decision={Gate.decision!}
+      selectedId=""
+      focusId=""
+      note=""
+      collapsed={false}
+      error={null}
+      onToggleCollapsed={() => {}}
+      onSelect={select}
+      onFocus={() => {}}
+      onNote={() => {}}
+      onConfirm={confirm}
+      onCancel={() => {}}
+    />);
+    expect(screen.getByRole('heading', { name: 'How should this proceed?' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'Fix it' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Confirm choice' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: 'Fix it' }));
+    expect(select).toHaveBeenCalledWith('fix');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(view.container.querySelector('.kb-decision')).toBeTruthy();
+  });
+
+  it('carries no stylesheet of its own, so the composer strip sets its width', () => {
+    const view = render(<DecisionGate
+      decision={Gate.decision!}
+      selectedId=""
+      focusId=""
+      note=""
+      collapsed={false}
+      error={null}
+      onToggleCollapsed={() => {}}
+      onSelect={() => {}}
+      onFocus={() => {}}
+      onNote={() => {}}
+      onConfirm={() => {}}
+      onCancel={() => {}}
+    />);
+    // Only the shared question stylesheet is injected; a second one would be a second geometry.
+    expect(view.container.querySelectorAll('style')).toHaveLength(1);
+    expect(view.container.innerHTML).not.toContain('.kb-decision{');
+  });
+});
 
 describe('decision panel', () => {
   it('presents the stage question, context, and options', () => {
@@ -104,11 +151,14 @@ describe('decision panel', () => {
     expect(controller.entryFor(task.id)).toMatchObject({ optionId: 'ship' });
   });
 
-  it('omits the description pane for an option without a description', () => {
+  it('keeps the description pane in place for an option without a description', () => {
     const view = setup();
     expect(view.container.querySelector('.kq-desc-empty')).toBeTruthy();
     fireEvent.click(screen.getByRole('radio', { name: 'Fix it' }));
-    expect(view.container.querySelector('.kq-desc')).toBeNull();
+    // The pane stays as empty space, so a bottom-anchored strip never moves the row
+    // away from the click that selected it.
+    expect(view.container.querySelector('.kq-desc[data-empty]')).toBeTruthy();
+    expect(view.container.querySelector('.kq-desc .kq-desc-body')).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: 'Ship it' }));
     expect(view.container.querySelector('.kq-desc .kq-desc-body')?.textContent).toContain('Send it to done.');
   });

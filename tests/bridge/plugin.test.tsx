@@ -208,11 +208,22 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.mount).toHaveBeenCalledWith(TYPERT_REMOTE); expect(f.entries.size).toBe(0);
     f.openMount(); const dispose = await pending; disposers.push(dispose);
     expect(inject).toContain('remote'); expect(inject).toContain('uiConversation'); expect(inject).not.toContain('remote.kanban');
-    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-stage-notice', 'conversation.chat.node:kanban-scripted-handoff', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-questions', 'conversation.input.dock:kanban-session-diagnosis', 'tool.call.toolview:decision_request']);
+    expect([...f.entries.keys()]).toEqual(['main:kanban', 'kanban.conversation:', 'conversation.chat.node:kanban-task-context', 'conversation.chat.node:kanban-stage-context', 'conversation.chat.node:kanban-stage-notice', 'conversation.chat.node:kanban-scripted-handoff', 'conversation.chat.node:kanban-task-message', 'sidebar.panellist:kanban', 'conversation.input.dock:kanban-decision-gate', 'conversation.input.dock:kanban-decision-questions', 'conversation.input.dock:kanban-session-diagnosis', 'tool.call.toolview:decision_request']);
     expect(f.entries.get('main:kanban')?.options.children).toEqual({ 'kanban.conversation': { kind: 'single', scope: 'session' } });
     expect(f.uiConversation.events.register).toHaveBeenCalledTimes(5);
     expect(f.entries.get('sidebar.panellist:kanban')?.options).toMatchObject({ label: 'Kanban', order: 80 });
     expect(f.nativeSelect).not.toHaveBeenCalled(); await dispose(); expect(f.unmount).toHaveBeenCalledOnce();
+  });
+  it('registers the decision gate above the question strip in the input dock', async () => {
+    const f = await installed();
+    const entry = f.entries.get('conversation.input.dock:kanban-decision-gate');
+    expect(entry).toBeTruthy();
+    expect(entry!.options).toMatchObject({ name: 'conversation.input.dock', id: 'kanban-decision-gate', order: 10 });
+    expect(f.entries.get('conversation.input.dock:kanban-decision-questions')!.options.order).toBe(20);
+    // A Session that belongs to no task presents nothing above its composer.
+    const Gate = entry!.Component;
+    const { container } = render(<Gate sessionId="ordinary-chat" />);
+    expect(container.textContent).toBe('');
   });
   it('registers one Session diagnosis seat for every native conversation', async () => {
     const f = await installed();

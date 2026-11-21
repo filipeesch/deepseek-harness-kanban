@@ -11,7 +11,8 @@ import { AgentPresetProvider } from '../../src/client/agent-preset-context.js';
 import type { AgentPresetPortSource } from '../../src/client/agent-preset-port.js';
 import { QuestionForm } from '../../src/questions/QuestionForm.js';
 import { TaskCard } from '../../src/client/task-card.js';
-import { DecisionPanel } from '../../src/client/decision-panel.js';
+import { DecisionDock } from '../../src/client/decision-dock.js';
+import { DockStrip } from '../../src/client/dock-seat.js';
 import { DecisionWindowController } from '../../src/client/decision-window.js';
 import { StageEditorDialog } from '../../src/client/stage/stage-editor-dialog.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
@@ -20,7 +21,7 @@ import { EMPTY_ATTENTION } from '../../src/shared/types.js';
 import { FeedStatus } from '../../src/client/feed-status.js';
 import { QuestionDock, type QuestionDockServices } from '../../src/client/question-dock.js';
 import { SessionDiagnosis } from '../../src/client/session-diagnosis.js';
-import type { BoardState, ClientApi, Column, Command, HubSharingView, QuestionRound, RoundPage, StoredQuestionDraft, Task } from '../../src/shared/types.js';
+import type { BoardState, ClientApi, Column, Command, HubSharingView, HubTask, KanbanSnapshot, QuestionRound, RoundPage, StoredQuestionDraft, Task } from '../../src/shared/types.js';
 import { createHarnessApi, workflowYaml, type TestSnapshot } from './fake-api.js';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { themeFixture } from './theme-fixture.js';
@@ -576,19 +577,69 @@ function FeedStatusScenario() {
 
 /** A task card and the gate strip, both bound to one real decision window. */
 function DecisionScenario() {
-  const base = harness.snapshot().state.hubs[0]!.tasks[0]!;
-  const columns: Column[] = [
-    { id: 'gate', name: 'Gate', decision: { question: 'How should this proceed?', context: 'The review left findings.', options: [
-      { id: 'ship', title: 'Ship it', description: 'Send it to done.', to: 'done' },
-      { id: 'fix', title: 'Fix it', to: 'review' },
-    ] } },
-    { id: 'review', name: 'Review' },
-    { id: 'done', name: 'Done' },
-  ];
-  const workflow = { name: 'Gated', initialColumnId: 'gate', columns, groups: [] };
-  const task: Task = { ...base, id: 'decision-task', title: 'Choose the path', columnId: 'gate', position: 0, operation: null, pendingTransition: undefined, sessionIds: [], closedSessionIds: [], worktree: null, stageEntry: { id: 'entry-gate', columnId: 'gate', stageIdentity: 'gate', enteredAt: '2026-01-01T00:00:00.000Z' } };
+  const long = query.get('long') === '1';
+  const withQuestion = query.get('question') === '1';
+  const fileCount = Number(query.get('files') ?? '0');
+  const noScope = query.get('noscope') === '1';
+  // The composer can grow at runtime, so a test can cross the presentation threshold.
+  const [composerHeight, setComposerHeight] = useState(() => Number(query.get('composer') ?? '96'));
+  const [dockOpen, setDockOpen] = useState(true);
+  useEffect(() => {
+    const bridge = window as unknown as { __harnessSetComposer?: (value: number) => void; __harnessToggleDock?: (open: boolean) => void };
+    bridge.__harnessSetComposer = setComposerHeight;
+    bridge.__harnessToggleDock = setDockOpen;
+    return () => { bridge.__harnessSetComposer = undefined; bridge.__harnessToggleDock = undefined; };
+  }, []);
+  // The scenario drives the real dock entry through a snapshot of its own: the fake
+  // host replays it on subscribe, exactly as the client bridge does.
+  const snapshot = useMemo(() => {
+    const next = structuredClone(harness.snapshot());
+    const hub = next.state.hubs[0]!;
+    const board = hub.boards[0]!;
+    const decision = long
+      ? {
+        question: 'How should this proceed?',
+        context: Array.from({ length: 6 }, () => 'The review left findings that need a decision before shipping.').join(String.fromCharCode(10) + String.fromCharCode(10)),
+        options: Array.from({ length: 12 }, (_value, index) => ({ id: 'option-' + (index + 1), title: 'Option ' + (index + 1), description: 'Send it to stage ' + (index + 1) + '.', to: 'review' })),
+      }
+      : {
+        question: 'How should this proceed?',
+        context: 'The review left findings.',
+        options: [
+          { id: 'ship', title: 'Ship it', description: 'Send it to done.', to: 'done' },
+          { id: 'fix', title: 'Fix it', to: 'review' },
+        ],
+      };
+    board.workflow = { name: 'Gated', initialColumnId: 'gate', columns: [
+      { id: 'gate', name: 'Gate', decision },
+      { id: 'review', name: 'Review' },
+      { id: 'done', name: 'Done' },
+    ], groups: [] };
+    board.localStageIdentities = { gate: 'gate-identity', review: 'review-identity', done: 'done-identity' };
+    const task: HubTask = {
+      ...hub.tasks[0]!,
+      id: 'decision-task',
+      title: 'Choose the path',
+      columnId: 'gate',
+      position: 0,
+      operation: null,
+      pendingTransition: undefined,
+      sessionIds: ['s-decision'],
+      closedSessionIds: [],
+      worktree: null,
+      stageEntry: { id: 'entry-gate', columnId: 'gate', stageIdentity: 'gate', enteredAt: '2026-01-01T00:00:00.000Z' },
+    };
+    hub.tasks = [task];
+    return next;
+  }, [long]);
+  const api = useMemo(() => ({
+    subscribe: (listener: (value: KanbanSnapshot) => void) => { listener(snapshot); return () => {}; },
+    snapshot: async () => snapshot,
+  }) as unknown as ClientApi, [snapshot]);
+  const task = snapshot.state.hubs[0]!.tasks[0]!;
+  const columns = snapshot.state.hubs[0]!.boards[0]!.workflow.columns;
+  const workflow = snapshot.state.hubs[0]!.boards[0]!.workflow;
   const [controller] = useState(() => {
-    const query = new URLSearchParams(window.location.search);
     const windowMs = query.get('windowMs');
     const fail = query.get('fail') === '1';
     return new DecisionWindowController({
@@ -602,12 +653,58 @@ function DecisionScenario() {
     });
   });
   const [autoRun] = useState(() => new AutoRunController({ run: async () => harness.snapshot() }));
-  return <div className="dsh-kanban" style={{ display: 'grid', gap: 18, alignContent: 'start', padding: 24, width: 560 }}>
-    <TaskCard task={task} column={columns[0]!} projectName="API" attention={EMPTY_ATTENTION} selectionMode={false} selected={false}
-      autoRun={autoRun} autoMode={autoModeView(task, workflow)} onToggleAutoMode={() => {}} onOpen={() => {}} onToggleSelect={() => {}} onBeginDrag={() => {}} shouldSuppressClick={() => false}
-      decision={{ label: 'Decision needed' }} decisionWindow={controller} />
-    <DecisionPanel task={task} column={columns[0]} columns={columns} controller={controller} />
+  const [reply, setReply] = useState<{ text: string; files: string[] } | null>(null);
+  const questionRound = useMemo<QuestionRound>(() => ({
+    ...round,
+    id: 'round-dock',
+    sessionId: 's-decision',
+    pages: [{ ...round.pages[0]!, page: { ...round.pages[0]!.page, question: 'Which **storage** should we use?' } }],
+  }), []);
+  const questionDraft = fileCount === 0 ? undefined : {
+    answers: { 'call-1': { choices: [], text: '', other: '', notes: '' } },
+    generalNotes: '',
+    pageAttachments: { 'call-1': Array.from({ length: fileCount }, (_value, index) => ({ id: 'file-' + index, name: 'review-notes-' + index + '.txt', bytes: 1024 + index })) },
+    roundAttachments: [],
+    attachmentOrder: Array.from({ length: fileCount }, (_value, index) => 'file-' + index),
+    active: { kind: 'page' as const, callId: 'call-1' },
+    updatedAt: '2026-11-12T10:00:00.000Z',
+  };
+  // The host conversation root is viewport-sized and hides its overflow in the active
+  // phase; the seat stays sticky at the bottom of the scroller, as the real composer does.
+  const embedded = query.get('embed');
+  const offset = Number(query.get('offset') ?? '0');
+  const rootStyle = {
+    display: 'flex', flexDirection: 'column',
+    height: embedded === null ? (offset === 0 ? '100dvh' : 'calc(100dvh - ' + offset + 'px)') : embedded + 'px',
+    marginTop: offset === 0 ? undefined : offset + 'px',
+    overflow: 'hidden',
+    '--dsh-composer-side-clearance': '16px',
+    '--dsh-composer-dock-inset': '8px',
+    '--dsh-composer-card-max-width': '720px',
+  } as React.CSSProperties;
+  const content = <div data-scroll-body="" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+    <div data-transcript="" style={{ flex: '1 0 auto', padding: 16 }}>
+      <div style={{ display: 'grid', gap: 18, alignContent: 'start', width: 560 }}>
+        <TaskCard task={task} column={columns[0]!} projectName="API" attention={EMPTY_ATTENTION} selectionMode={false} selected={false}
+          autoRun={autoRun} autoMode={autoModeView(task, workflow)} onToggleAutoMode={() => {}} onOpen={() => {}} onToggleSelect={() => {}} onBeginDrag={() => {}} shouldSuppressClick={() => false}
+          decision={{ label: 'Decision needed' }} decisionWindow={controller} />
+        <p data-transcript-line="" style={{ margin: 0, opacity: 0.7 }}>Ordinary conversation transcript (harness stand-in).</p>
+      </div>
+    </div>
+    <div data-composer-seat="" style={{ position: 'sticky', bottom: 0, zIndex: 9, willChange: 'transform', flex: 'none', display: 'flex', flexDirection: 'column' }}>
+      {/* The host nests the entries and the composer card in one stack inside the sticky seat. */}
+      <div data-composer-stack="" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {dockOpen && <DecisionDock sessionId="s-decision" api={api} controller={controller} />}
+      {dockOpen && withQuestion && <DockStrip visible={query.get('submitted') !== '1'}><QuestionForm round={questionRound} {...(questionDraft === undefined ? {} : { storedDraft: questionDraft })} {...(fileCount === 0 ? {} : { files: { save: async (file: { name: string; bytes: number }) => ({ id: 'picked-' + file.name, name: file.name, bytes: file.bytes }), load: async () => 'YWJj' } })} onSubmit={(text: string, files: readonly { name: string }[]) => setReply({ text, files: files.map(file => file.name) })} onDismiss={() => {}} /></DockStrip>}
+      <div data-composer-stand-in="" style={{ boxSizing: 'border-box', width: 'calc(100% - 2 * var(--dsh-composer-side-clearance))', maxWidth: 'var(--dsh-composer-card-max-width)', margin: '0 auto', border: '1px solid var(--dsw-alias-border-l2,CanvasText)', borderRadius: 10, padding: '12px 14px', minHeight: composerHeight, opacity: 0.75 }}>
+        <textarea data-composer-input="" aria-label="Message" placeholder="Message or run a task" style={{ display: 'block', width: '100%', minHeight: 64, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', resize: 'none', padding: 0 }} />
+      </div>
+      {reply === null ? null : <output data-testid="question-reply" data-files={reply.files.join(',')}>{reply.text}</output>}
+      </div>
+    </div>
   </div>;
+  // The no-scope variant proves the strip is self-sufficient outside the Kanban page.
+  return noScope ? <div data-no-scope="" style={rootStyle}>{content}</div> : <div className="dsh-kanban" style={rootStyle}>{content}</div>;
 }
 
 /** One card whose first execution is being prepared, before the countdown arms. */

@@ -19,6 +19,7 @@ import { BoardView, createBoardPageState, type BoardPageState } from './client/b
 import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
 import { DecisionWindowController } from './client/decision-window.js';
+import { DecisionDock } from './client/decision-dock.js';
 import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
 import { createAnswerFileDelivery, type AnswerFileUploadPort } from './client/answer-files.js';
 import { createSessionStatusPort, type SessionStatusHost } from './client/session-status.js';
@@ -358,6 +359,9 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: HANDOFF_CONTEXT_NODE_KIND, locale: 'chat', inject: () => ({}) }, ScriptedHandoffChatNode));
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({ name: 'conversation.chat.node', key: TASK_MESSAGE_NODE_KIND, locale: 'chat', inject: () => ({}) }, TaskMessageChatNode));
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: 'kanban', order: 80, label: 'Kanban' }, BoardIcon));
+  // The gate sits closest to the transcript: a task-level wait reads first, and a
+  // waiting question round keeps the lower slot.
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-gate', order: 10 }, props => <DecisionDock sessionId={props.sessionId} api={bridge.api} controller={decisionWindow} />));
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'kanban-decision-questions', order: 20 }, props => <QuestionDock sessionId={props.sessionId} services={questionDockServices} api={bridge.api} />));
   // One diagnosis for every native conversation: the drawer and ordinary chats share it,
   // and it is the only plugin-owned message about a Session that could not open.

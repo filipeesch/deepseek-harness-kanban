@@ -1,23 +1,10 @@
-import React, { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
-import type { Column, Problem, Task } from '../shared/types.js';
+import React, { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import type { Column, DecisionDefinition, Problem, Task } from '../shared/types.js';
 import { ChoiceOptions, Markdown } from '../questions/choice-slide.js';
 import { questionCss } from '../questions/styles.js';
 import { DECISION_LIMITS } from '../domain/decision-definition.js';
 import { decisionLabel } from './decision-view.js';
 import { DecisionWindowController, type DecisionWindowEntry } from './decision-window.js';
-
-/** The drawer's own styling; the shared question styles keep the composer's widths. */
-const decisionCss = String.raw`
-.dsh-kanban .kb-decision{flex:none;padding:8px 14px 0;border-bottom:0.5px solid var(--kb-line);min-width:0}
-.dsh-kanban .kb-decision .kq-strip{width:100%;max-width:none;margin:0;box-shadow:none;border-radius:var(--dsw-radius-md,8px)}
-.dsh-kanban .kb-decision .kq-scroll{max-height:46vh}
-.dsh-kanban .kb-decision .kq-desc{min-height:56px;max-height:140px}
-.dsh-kanban .kb-decision-observation{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,currentColor)}
-.dsh-kanban .kb-decision-observation .kq-input{border:1px solid var(--dsw-alias-border-l2,var(--kb-line));background:var(--dsw-alias-bg-base,var(--kb-surface))}
-.dsh-kanban .kq-collapsed-status{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--kb-line);font-size:12px;color:var(--dsw-alias-label-secondary,currentColor)}
-.dsh-kanban .kq-collapsed-status p{margin:0;flex:1 1 auto}
-.dsh-kanban .kb-decision-footer-note{margin:0;flex:1 1 auto;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-tertiary,currentColor)}
-`;
 
 const EMPTY_ENTRIES: Record<string, DecisionWindowEntry> = {};
 const NO_SUBSCRIBE = () => () => {};
@@ -25,7 +12,7 @@ const getEmptyEntries = () => EMPTY_ENTRIES;
 
 /** Subscribe to one task's window; the entry is undefined once the window settles. */
 export function useDecisionWindowEntry(controller: DecisionWindowController | undefined, taskId: string): DecisionWindowEntry | undefined {
-  const snapshot = useSyncExternalStore(controller?.subscribe ?? NO_SUBSCRIBE, controller?.getSnapshot ?? getEmptyEntries, controller?.getSnapshot ?? getEmptyEntries);
+  const snapshot = React.useSyncExternalStore(controller?.subscribe ?? NO_SUBSCRIBE, controller?.getSnapshot ?? getEmptyEntries, controller?.getSnapshot ?? getEmptyEntries);
   return snapshot[taskId];
 }
 
@@ -56,69 +43,63 @@ function errorText(problem: Problem): string {
   return problem.message;
 }
 
+/** Everything the gate presents, with no controller and no task: the strip is the whole surface. */
+export interface DecisionGateProps {
+  /** The authored decision the stage carries. */
+  decision: DecisionDefinition;
+  /** The option identity the person selected, or an empty string while nothing is selected. */
+  selectedId: string;
+  /** The option whose row holds keyboard focus, so its row keeps the focus style. */
+  focusId: string;
+  /** The observation the person typed; plain text. */
+  note: string;
+  collapsed: boolean;
+  /** The window the shared controller holds for the task this gate belongs to. */
+  entry?: DecisionWindowEntry;
+  /** A refusal to present beside the retained selection and observation. */
+  error?: string | null;
+  onToggleCollapsed: () => void;
+  onSelect: (optionId: string) => void;
+  onFocus: (optionId: string) => void;
+  onNote: (value: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
 /**
- * The decision gate docked above the drawer's sections.
+ * The decision gate's presentation.
  *
- * It is the same presentation as the structured-question surface, resolved from
- * the stage the task sits in. Confirming starts the cancelable five-second window;
- * the panel keeps the choice while the window counts, and presents the host's
- * refusal when the route could not be applied.
+ * It is the same strip the structured-question surface draws, resolved from the
+ * stage the task sits in. It owns no state and no controller: the composer dock
+ * above it holds the selection, and the shared window controller holds the
+ * countdown.
  */
-export function DecisionPanel({ task, column, columns, controller, stageIdentities }: { task: Task; column: Column | undefined; columns: readonly Column[]; controller: DecisionWindowController; stageIdentities?: Readonly<Record<string, string>> }) {
+export function DecisionGate({ decision, selectedId, focusId, note, collapsed, entry, error = null, onToggleCollapsed, onSelect, onFocus, onNote, onConfirm, onCancel }: DecisionGateProps) {
   const prefix = useId();
-  const decision = column?.decision;
-  const entry = useDecisionWindowEntry(controller, task.id);
-  const [selectedId, setSelectedId] = useState('');
-  const [focusId, setFocusId] = useState('');
-  const [note, setNote] = useState('');
-  const [collapsed, setCollapsed] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
-  const counting = entry?.status === 'counting';
-  useTicking(counting);
-  // A renamed or removed option must not stay selected.
-  useEffect(() => {
-    if (decision === undefined || selectedId.length === 0) return;
-    if (!decision.options.some(option => option.id === selectedId)) { setSelectedId(''); setFocusId(''); }
-  }, [decision, selectedId]);
-  if (decision === undefined) return null;
   const options = decision.options;
+  const counting = entry?.status === 'counting';
   const busy = entry?.status === 'counting' || entry?.status === 'sending';
-  const error = entry?.status === 'failed' ? errorText(entry.error ?? { code: 'DECISION_FAILED', message: 'The choice could not be applied.' }) : draftError;
-  const confirm = (): void => {
-    if (selectedId.length === 0 || busy) return;
-    const option = options.find(value => value.id === selectedId);
-    if (option === undefined) return;
-    setDraftError(null);
-    const destination = columns.find(value => value.id === option.to);
-    controller.arm({
-      taskId: task.id,
-      entryId: task.stageEntry?.id ?? '',
-      optionId: option.id,
-      ...(note.trim().length === 0 ? {} : { note: note.trim() }),
-      destinationId: option.to,
-      destinationIdentity: stageIdentities?.[option.to] ?? destination?.key ?? option.to,
-      destinationName: destination?.name ?? option.to,
-    });
-  };
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    confirm();
+    onConfirm();
   };
   return <div className="kb-decision" aria-label="Decision">
     <style>{questionCss}</style>
-    <style>{decisionCss}</style>
     <form className="kq-strip" aria-label={decisionLabel(options.length)} onSubmit={submit}>
-      <button type="button" className="kq-header" aria-expanded={!collapsed} onClick={() => setCollapsed(value => !value)}>
-        <span className="kq-icon"><DecisionGlyph /></span>
-        <span className="kq-title">{decisionLabel(options.length)}</span>
-        <span className="kq-progress" aria-live="polite">{counting ? remainingSeconds(entry?.deadline ?? null) + 's' : ''}</span>
-        <span className="kq-chevron" data-open={!collapsed}><Chevron up={!collapsed} /></span>
-      </button>
+      <div className="kq-header-row">
+        <button type="button" className="kq-header" aria-expanded={!collapsed} onClick={onToggleCollapsed}>
+          <span className="kq-icon"><DecisionGlyph /></span>
+          <span className="kq-title">{decisionLabel(options.length)}</span>
+          <span className="kq-progress" aria-live="polite">{counting ? remainingSeconds(entry?.deadline ?? null) + 's' : ''}</span>
+          <span className="kq-chevron" data-open={!collapsed}><Chevron up={!collapsed} /></span>
+        </button>
+        {/* The cancel action lives in the header, which stays pinned even when the strip scrolls. */}
+        {counting && <button type="button" className="kq-secondary kq-header-cancel" onClick={onCancel}>Cancel</button>}
+      </div>
       {collapsed && (counting || entry?.status === 'sending' || entry?.status === 'failed') && <div className="kq-collapsed-status">
         {counting && <p role="status">Moving to {entry?.destinationName} in {remainingSeconds(entry?.deadline ?? null)} seconds.</p>}
         {entry?.status === 'sending' && <p role="status">Applying…</p>}
         {entry?.status === 'failed' && <p role="alert">{error}</p>}
-        {counting && <button type="button" className="kq-secondary" onClick={() => controller.cancel(task.id)}>Cancel</button>}
       </div>}
       {!collapsed && <div className="kq-panel">
         <div className="kq-scroll">
@@ -136,25 +117,119 @@ export function DecisionPanel({ task, column, columns, controller, stageIdentiti
               disabled={busy}
               focus={focusId}
               legend={options.length === 1 ? 'Confirm to continue' : 'Choose one path'}
-              onFocus={setFocusId}
-              onSelect={(value, checked) => { if (checked) { setSelectedId(value); setFocusId(value); } }}
+              onFocus={onFocus}
+              onSelect={(value, checked) => { if (checked) onSelect(value); }}
             />
-            <label className="kb-decision-observation">Observation (optional)
-              <textarea className="kq-input" aria-label="Observation" maxLength={DECISION_LIMITS.noteLength} value={note} disabled={busy} onChange={event => setNote(event.target.value)} />
+            <label className="kq-field">Observation (optional)
+              <textarea className="kq-input" aria-label="Observation" maxLength={DECISION_LIMITS.noteLength} value={note} disabled={busy} onChange={event => onNote(event.target.value)} />
             </label>
           </section>
-          {error !== null && <p className="kq-error" role="alert">{error}</p>}
         </div>
         <footer className="kq-footer">
-          {counting && <p className="kb-decision-footer-note" role="status">Moving to {entry?.destinationName} in {remainingSeconds(entry?.deadline ?? null)} seconds. The task stays here until the window closes.</p>}
+          {/* A refusal belongs beside the action: below the folding body it could be invisible. */}
+          {error !== null && <p className="kq-error" role="alert">{error}</p>}
+          {counting && <p className="kq-confirm-text" role="status">Moving to {entry?.destinationName} in {remainingSeconds(entry?.deadline ?? null)} seconds. The task stays here until the window closes.</p>}
           <div className="kq-footer-actions">
-            {counting && <button type="button" className="kq-secondary" onClick={() => controller.cancel(task.id)}>Cancel</button>}
             <button type="submit" className="kq-primary" disabled={selectedId.length === 0 || busy}>{entry?.status === 'sending' ? 'Applying…' : 'Confirm choice'}</button>
           </div>
         </footer>
       </div>}
     </form>
   </div>;
+}
+
+/** What the gate's host supplies: the task, its stage, and the shared window. */
+export interface DecisionPanelProps {
+  task: Task;
+  column: Column | undefined;
+  columns: readonly Column[];
+  controller: DecisionWindowController;
+  /** Local stage identities, so a choice names the destination the person saw. */
+  stageIdentities?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The decision gate wired to the board.
+ *
+ * The draft belongs to one stage entry: a task that leaves a gate and enters
+ * another one starts a new unanswered draft even when the options reuse their
+ * identities. Every conversation of the task renders its own container, so the
+ * draft is per surface and the answer being applied is read from the one shared
+ * window.
+ */
+export function DecisionPanel(props: DecisionPanelProps) {
+  const entryId = props.task.stageEntry?.id ?? props.task.columnId;
+  return <DecisionDraft key={props.task.id + ':' + entryId} {...props} />;
+}
+
+function DecisionDraft({ task, column, columns, controller, stageIdentities }: DecisionPanelProps) {
+  const decision = column?.decision;
+  const entry = useDecisionWindowEntry(controller, task.id);
+  const [selectedId, setSelectedId] = useState('');
+  const [focusId, setFocusId] = useState('');
+  const [note, setNote] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
+  const counting = entry?.status === 'counting';
+  useTicking(counting);
+  // The task's answer is shared: when another conversation confirms (or the window
+  // records a refusal), this surface adopts the option and the observation the one
+  // window holds, so two conversations never present different answers. Adopting
+  // once per entry value also leaves the person free to edit after a refusal.
+  const adopted = useRef<string | null>(null);
+  useEffect(() => {
+    if (entry === undefined) { adopted.current = null; return; }
+    // One attempt, one adoption: an identical retry is a new attempt, and editing after a
+    // refusal never re-adopts over what the person typed.
+    const identity = entry.entryId + ':' + entry.attempt;
+    if (adopted.current === identity) return;
+    adopted.current = identity;
+    setSelectedId(entry.optionId);
+    setFocusId(entry.optionId);
+    setNote(entry.note ?? '');
+  }, [entry]);
+  // A renamed or removed option must not stay selected.
+  useEffect(() => {
+    if (decision === undefined || selectedId.length === 0) return;
+    if (!decision.options.some(option => option.id === selectedId)) { setSelectedId(''); setFocusId(''); }
+  }, [decision, selectedId]);
+  if (decision === undefined) return null;
+  const busy = entry?.status === 'counting' || entry?.status === 'sending';
+  // While a choice is being applied, every conversation presents that choice from the
+  // shared window — not its own draft, which may hold a different option or a refusal retry.
+  const applying = busy;
+  const shownSelection = applying && entry !== undefined ? entry.optionId : selectedId;
+  const shownNote = applying && entry !== undefined ? entry.note ?? '' : note;
+  const error = entry?.status === 'failed' ? errorText(entry.error ?? { code: 'DECISION_FAILED', message: 'The choice could not be applied.' }) : null;
+  const confirm = (): void => {
+    if (selectedId.length === 0 || busy) return;
+    const option = decision.options.find(value => value.id === selectedId);
+    if (option === undefined) return;
+    const destination = columns.find(value => value.id === option.to);
+    controller.arm({
+      taskId: task.id,
+      entryId: task.stageEntry?.id ?? '',
+      optionId: option.id,
+      ...(note.trim().length === 0 ? {} : { note: note.trim() }),
+      destinationId: option.to,
+      destinationIdentity: stageIdentities?.[option.to] ?? destination?.key ?? option.to,
+      destinationName: destination?.name ?? option.to,
+    });
+  };
+  return <DecisionGate
+    decision={decision}
+    selectedId={shownSelection}
+    focusId={applying && entry !== undefined ? entry.optionId : focusId}
+    note={shownNote}
+    collapsed={collapsed}
+    {...(entry === undefined ? {} : { entry })}
+    error={error}
+    onToggleCollapsed={() => setCollapsed(value => !value)}
+    onSelect={value => { setSelectedId(value); setFocusId(value); }}
+    onFocus={setFocusId}
+    onNote={setNote}
+    onConfirm={confirm}
+    onCancel={() => controller.cancel(task.id)}
+  />;
 }
 
 /** The card's countdown while the five-second window is open. */

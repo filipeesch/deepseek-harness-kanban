@@ -36,7 +36,7 @@ test('submits the choice and the observation when the window closes', async ({ p
   await page.getByRole('textbox', { name: 'Observation' }).fill('  Please fix the copy.  ');
   await page.getByRole('button', { name: 'Confirm choice' }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as HarnessWindow).__decisionCommands ?? []), { timeout: 8_000 }).toEqual([
-    { type: 'task.decide', taskId: 'decision-task', entryId: 'entry-gate', optionId: 'fix', destinationIdentity: 'review', note: 'Please fix the copy.' },
+    { type: 'task.decide', taskId: 'decision-task', entryId: 'entry-gate', optionId: 'fix', destinationIdentity: 'review-identity', note: 'Please fix the copy.' },
   ]);
 });
 
@@ -52,13 +52,44 @@ test('keeps the gate usable by keyboard and at a narrow width', async ({ page })
   await page.locator('.kb-decision').screenshot({ path: path.join(OUT, 'decision-panel-narrow.png') });
 });
 
-test('presents a host refusal in the gate', async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 900 });
-  await page.goto(HARNESS + '?scenario=decision&theme=host&windowMs=600&fail=1');
-  await page.getByRole('radio', { name: 'Fix it' }).check();
+test('presents a host refusal beside the action, inside a short window', async ({ page }) => {
+  // A long gate in a short window scrolls its body: the refusal must still be visible.
+  await page.setViewportSize({ width: 900, height: 460 });
+  await page.goto(HARNESS + '?scenario=decision&theme=host&windowMs=600&fail=1&long=1');
+  await page.getByRole('radio', { name: 'Option 3' }).check();
+  await page.getByRole('textbox', { name: 'Observation' }).fill('Please fix the copy.');
   await page.getByRole('button', { name: 'Confirm choice' }).click();
-  await expect(page.getByRole('alert')).toContainText('The destination stage changed');
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText('The destination stage changed');
+  const alertBox = await alert.boundingBox();
+  const stripBox = await page.locator('.kb-decision .kq-strip').boundingBox();
+  expect(alertBox).not.toBeNull();
+  expect(stripBox).not.toBeNull();
+  // Inside the strip and inside the viewport: a body at the end of the scroller would fail here.
+  expect(alertBox!.y).toBeGreaterThanOrEqual(stripBox!.y);
+  expect(alertBox!.y + alertBox!.height).toBeLessThanOrEqual(stripBox!.y + stripBox!.height + 1);
+  expect(alertBox!.y + alertBox!.height).toBeLessThanOrEqual(460 + 1);
+  // The choice and the observation survive the refusal.
+  await expect(page.getByRole('radio', { name: 'Option 3' })).toBeChecked();
+  await expect(page.getByRole('textbox', { name: 'Observation' })).toHaveValue('Please fix the copy.');
   await page.locator('.kb-decision').screenshot({ path: path.join(OUT, 'decision-panel-refused.png') });
+});
+
+test('captures the collapsed and refused dock gate in both appearances', async ({ page }) => {
+  await mkdir(OUT, { recursive: true });
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await open(page);
+    const header = page.getByRole('button', { name: /Decision needed/ });
+    await header.click();
+    await expect(header).toHaveAttribute('aria-expanded', 'false');
+    await page.locator('.kb-decision').screenshot({ path: path.join(OUT, 'decision-dock-collapsed-' + scheme + '.png') });
+    await page.goto(HARNESS + '?scenario=decision&theme=host&windowMs=600&fail=1');
+    await page.getByRole('radio', { name: 'Fix it' }).check();
+    await page.getByRole('button', { name: 'Confirm choice' }).click();
+    await expect(page.getByRole('alert')).toContainText('The destination stage changed');
+    await page.locator('.kb-decision').screenshot({ path: path.join(OUT, 'decision-dock-refused-' + scheme + '.png') });
+  }
 });
 
 test('uses legible host colors in both appearances', async ({ page }) => {

@@ -7,18 +7,23 @@ import { attachmentCss } from '../attachments/styles.js';
  * shared attachment controls arrive with their own ka- styles.
  */
 export const questionCss = String.raw`
-.kq-strip{box-sizing:border-box;display:flex;flex-direction:column;flex:none;width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));margin:0 auto;min-width:0;overflow:hidden;border:0.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu,Canvas);color:var(--dsw-alias-label-primary,inherit);font:inherit;color-scheme:inherit;box-shadow:var(--dsw-elevation-panel,none)}
+.kq-strip{box-sizing:border-box;display:flex;flex-direction:column;flex:none;width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));margin:0 auto;min-width:0;overflow:hidden;border:0.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu,Canvas);color:var(--dsw-alias-label-primary,inherit);font:inherit;color-scheme:inherit;box-shadow:var(--dsw-elevation-panel,none);max-height:var(--kb-dock-budget,clamp(120px,calc(100dvh - 360px),460px))}
 .kq-strip[hidden]{display:none}
-.kq-header{display:flex;align-items:center;gap:8px;flex:1;min-width:0;min-height:34px;padding:5px 12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+
+.kq-header{display:flex;align-items:center;gap:8px;flex:none;width:100%;min-width:0;min-height:34px;padding:5px 12px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .kq-header:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.kq-header-row{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
+.kq-header-row .kq-header{flex:1 1 auto;width:auto;padding-right:0}
+.kq-header-cancel{flex:none;margin-right:8px}
 .kq-icon{display:grid;place-items:center;flex:none;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-secondary,currentColor)}
 .kq-progress{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-chevron{display:grid;place-items:center;flex:none;color:var(--dsw-alias-label-tertiary,currentColor);transition:transform .15s}
 .kq-chevron[data-open=true]{transform:rotate(180deg)}
-.kq-panel{display:flex;flex-direction:column;min-height:0;border-top:0.5px solid var(--dsw-alias-border-l1)}
-.kq-scroll{display:flex;flex-direction:column;gap:10px;max-height:min(52vh,520px);overflow-y:auto;overscroll-behavior:contain;padding:10px 12px}
+.kq-panel{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;border-top:0.5px solid var(--dsw-alias-border-l1)}
+.kq-scroll{display:flex;flex:1 1 auto;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:10px 12px}
 .kq-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 12px;border-top:0.5px solid var(--dsw-alias-border-l1);flex-shrink:0}.kq-footer-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-left:auto}.kq-confirm-text{margin:0;flex:1 1 180px;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary,currentColor)}.kq-dismiss{flex:none}.kq-dismiss-confirm{color:var(--dsw-alias-state-error-primary,crimson);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,crimson) 40%,transparent)}
+.kq-collapsed-status{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--dsw-alias-label-secondary,currentColor)}.kq-collapsed-status p{margin:0;flex:1 1 auto}
 .kq-status{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-step{margin:0;font-size:11px;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-context{padding-bottom:6px;border-bottom:0.5px solid var(--dsw-alias-border-l1);font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary,currentColor)}
@@ -44,13 +49,36 @@ export const questionCss = String.raw`
 .kq-ai{flex:none;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-state-business-tertiary);color:var(--dsw-alias-state-business-primary,currentColor);font-size:10px;font-weight:600}
 .kq-desc{box-sizing:border-box;min-height:88px;max-height:200px;overflow-y:auto;padding:10px 12px;border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base,Canvas);font-size:13px;line-height:1.55;color:var(--dsw-alias-label-secondary,currentColor)}
 .kq-desc[data-other=true]{padding:0;overflow:hidden}
+/* An option without a description keeps the pane's space: the docked strip must not change height under the pointer. */
+.kq-desc[data-empty=true]{border-color:transparent;background:transparent}
 .kq-desc-body{min-width:0;overflow-wrap:anywhere}
 .kq-desc-empty{margin:0;font-size:12px;font-style:italic;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-field{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,currentColor)}
-.kq-input{box-sizing:border-box;width:100%;min-height:60px;padding:7px 9px;border:0.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,currentColor);font:inherit;font-size:13px;line-height:1.5;resize:vertical}
+.kq-input{box-sizing:border-box;width:100%;min-height:60px;padding:7px 9px;border:0.5px solid var(--dsw-alias-border-l3,var(--dsw-alias-border-l2,GrayText));border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base,Canvas);color:var(--dsw-alias-label-primary,currentColor);font:inherit;font-size:13px;line-height:1.5;resize:vertical}
 .kq-input[data-fill=true]{height:100%;min-height:88px;border:0;border-radius:0;resize:none}
 .kq-hint{margin:0;font-size:12px;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-error{margin:0;font-size:12px;color:var(--dsw-alias-state-error-primary,crimson)}
+/* When the fixed controls cannot all fit, the strip scrolls as a whole from its pinned
+   header, so a running countdown can always be cancelled and no band ever covers the
+   controls it belongs to. */
+[data-kb-dock-tight] .kq-strip{overflow-y:auto;scroll-padding-top:40px}
+/* The whole header row stays pinned, so an action beside the toggle — the countdown
+   cancel — cannot scroll away. */
+[data-kb-dock-tight] .kq-header-row{position:sticky;top:0;z-index:2;background:var(--dsw-specific-menu,Canvas)}
+[data-kb-dock-tight] .kq-strip > .kq-header{position:sticky;top:0;z-index:2;background:var(--dsw-specific-menu,Canvas)}
+[data-kb-dock-tight] .kq-panel{flex:none}
+[data-kb-dock-tight] .kq-scroll{overflow:visible;max-height:none}
+/* When the seat cannot hold the controls beside the composer at all, the strip is
+   presented above the conversation instead: it stays answerable, scrolls as a whole,
+   and leaves the composer reachable again when it is collapsed. */
+/* The cramped panel is portaled to the document body and carries its placement; the
+   strip fills it and scrolls as a whole. */
+[data-kb-dock-panel] .kq-strip{width:100%;max-width:100%;margin:0;max-height:var(--kb-dock-panel-height,60vh);overflow-y:auto;box-shadow:var(--dsw-elevation-panel,0 8px 24px #0003)}
+[data-kb-dock-launcher][data-kb-dock-active=false] .kq-panel,
+[data-kb-dock-launcher][data-kb-dock-active=false] .kq-collapsed-status{display:none}
+/* A refusal in the footer wraps, so it scrolls inside its own band and never pushes the
+   action it explains out of the strip. */
+.kq-footer .kq-error{flex:1 1 100%;max-height:3.3em;overflow-y:auto;overscroll-behavior:contain}
 .kq-waiting{flex:1 1 100%;margin:0;font-size:12px;line-height:1.4;color:var(--dsw-alias-label-tertiary,currentColor)}
 .kq-new-page{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0;padding:8px 10px;border-left:2px solid var(--dsw-alias-state-business-primary);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-state-business-tertiary,transparent);font-size:12px;line-height:1.4;color:var(--dsw-alias-label-primary,currentColor)}
 .kq-primary{flex:none;padding:6px 14px;border:0;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font:inherit;font-size:13px;font-weight:500;cursor:pointer}
@@ -60,5 +88,5 @@ export const questionCss = String.raw`
 .kq-secondary:disabled{opacity:.4;cursor:not-allowed}
 .kq-header:focus-visible,.kq-primary:focus-visible,.kq-secondary:focus-visible,.kq-question:focus-visible,.kq-input:focus-visible,.kq-dismiss-confirm:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText));outline-offset:2px}
 .kq-option:focus-within{box-shadow:inset 0 0 0 2px var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,CanvasText))}
-@media(max-width:760px){.kq-scroll{max-height:60vh;padding:8px}.kq-footer{padding:6px 8px}.kq-confirm-text{font-size:11px}}
+@media(max-width:760px){.kq-scroll{padding:8px}.kq-footer{padding:6px 8px}.kq-confirm-text{font-size:11px}}
 ` + attachmentCss;
