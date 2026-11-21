@@ -99,11 +99,16 @@ export function NewTaskDialog({ state, projects, closedForCreation, run, onClose
       <p className="kb-hint">Runs the {columnName} instruction after a five-second countdown once the worktree and the first conversation are ready.</p></>}
     <p className="kb-hint">Creates in {columnName}.{startApplies ? '' : ' No agent starts automatically.'}</p>
     <AttachmentFailureNotice failed={picks.failed} message={attachmentFailure} disabled={action.pending} onRetry={picks.retryFailed} onDiscard={picks.discardFailed} />
-    <ErrorNotice problem={action.error} /><ErrorNotice problem={creationError} /><div className="kb-actions">
-      <div className="ka-attachment-bar" role="group" aria-label="Files for this task">
+    <ErrorNotice problem={action.error} /><ErrorNotice problem={creationError} /><div className="kb-actions kb-actions-split">
+      <div className="ka-attachment-bar kb-actions-start" role="group" aria-label="Files for this task">
         <AttachButton label="Attach files" buttonRef={attachRef} disabled={action.pending} onPick={files => pickFiles(files, 'upload')} />
         <AttachmentChips attachments={attachmentUploads.map(file => ({ id: file.id, name: file.name, bytes: base64Size(file.data) }))} disabled={action.pending} focusFallback={attachRef} onRemove={id => { setAttachmentUploads(current => current.filter(file => file.id !== id)); }} />
-      </div><button className="kb-button" type="button" disabled={action.pending} onClick={onClose}>{creationError ? 'Close and inspect board' : 'Cancel'}</button><button className="kb-button kb-primary" disabled={action.pending || Boolean(creationError) || !title.trim() || cannotSave || filesBlocked}>{action.pending ? 'Creating…' : picks.pending > 0 ? 'Reading files…' : 'Create task'}</button></div>
+      </div>
+      <div className="kb-actions-end">
+        <button className="kb-button" type="button" disabled={action.pending} onClick={onClose}>{creationError ? 'Close and inspect board' : 'Cancel'}</button>
+        <button className="kb-button kb-primary" disabled={action.pending || Boolean(creationError) || !title.trim() || cannotSave || filesBlocked}>{action.pending ? 'Creating…' : picks.pending > 0 ? 'Reading files…' : 'Create task'}</button>
+      </div>
+    </div>
   </form></Modal>;
 }
 
