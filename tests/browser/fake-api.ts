@@ -369,6 +369,18 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
       if (command.type === 'retainedCheckout.dismiss') {
         value.retainedCheckouts = value.retainedCheckouts?.filter(entry => !command.paths.includes(entry.path));
       }
+      if (command.type === 'task.edit') {
+        const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
+        if (task) {
+          if (command.title !== undefined) task.title = command.title;
+          if (command.description !== undefined) task.description = command.description;
+          // The host stores supplied bytes and records them on the task in one operation,
+          // so the surface re-renders from the snapshot exactly as it does against it.
+          const added = (command.attachmentUploads ?? []).map((upload, index) => ({ id: 'att-added-' + commands.length + '-' + index, name: upload.name, bytes: Math.floor((upload.data.length * 3) / 4), origin: upload.origin }));
+          if (added.length > 0) task.attachments = [...(task.attachments ?? []), ...added];
+          if ((command.removeAttachmentIds ?? []).length > 0) task.attachments = (task.attachments ?? []).filter(attachment => !(command.removeAttachmentIds ?? []).includes(attachment.id));
+        }
+      }
       if (command.type === 'task.move') {
         const task = value.state.hubs.flatMap(hub => hub.tasks).find(item => item.id === command.taskId);
         const hub = task ? value.state.hubs.find(item => item.tasks.some(candidate => candidate.id === task.id)) : undefined;

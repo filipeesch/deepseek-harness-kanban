@@ -3,8 +3,14 @@ import type { QuestionAttachment, QuestionDraftContent, QuestionDraftSlide, Ques
 import { OTHER_CHOICE, answerFor, emptyAnswer, formatAnswers, isAnswerValid } from './validation.js';
 import { ChoiceOptions, Markdown } from './choice-slide.js';
 import { canSubmit, submitState } from './submission.js';
-import { activeSlide, draftAnswer, hasContent, orderedAttachments, pageAttachments, restoreDraft } from './draft.js';
-import { QuestionFiles, clipboardFiles } from './QuestionFiles.js';
+import { activeSlide, draftAnswer, hasContent, orderedAttachments, orderedPageAttachments, orderedRoundAttachments, restoreDraft } from './draft.js';
+import { AttachButton } from '../attachments/AttachButton.js';
+import { readFilesBase64 } from '../attachments/bytes.js';
+import { AttachmentChips } from '../attachments/AttachmentChips.js';
+import { AttachmentFailureNotice } from '../attachments/AttachmentFailureNotice.js';
+import { clipboardFiles } from '../attachments/clipboard.js';
+import { useAttachmentPicks } from '../attachments/picks.js';
+import { useRestoreFocusAfterFailure } from '../attachments/focus.js';
 import { useQuestionDraft } from './use-question-draft.js';
 import { questionCss } from './styles.js';
 
@@ -28,21 +34,6 @@ export interface QuestionAttachmentPort {
   load(attachment: QuestionAttachment): Promise<string>;
   /** Delete one draft copy whose attachment the person detached. */
   discard?(attachment: QuestionAttachment): Promise<void>;
-}
-
-/** Read one browser file as canonical base64. */
-function readFileData(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = String(reader.result ?? '');
-      const separator = url.indexOf(',');
-      if (separator < 0) { reject(new Error('The selected file could not be read.')); return; }
-      resolve(url.slice(separator + 1));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('The selected file could not be read.'));
-    reader.readAsDataURL(file);
-  });
 }
 
 export interface QuestionFormProps {
@@ -118,15 +109,13 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
   const firstSlide = useRef(true);
   const sending = useRef(false);
   const seenPages = useRef<Set<string>>(new Set());
-  // Reads in flight. A file picked a moment before Submit must not be omitted from
-  // the reply, so submission waits until none remain and reports a failed read.
-  const pendingReads = useRef(0);
-  /** Selections that failed; a later pick clears only its own entry. */
-  const failures = useRef<Array<{ selection: number; failure: unknown; retry: () => void }>>([]);
-  /** One identity per pick, so a retry clears exactly the selection it retries. */
-  const selectionIds = useRef(0);
-  /** Serializes attachment batches so selection order survives async completion. */
-  const attachmentQueue = useRef<Promise<void>>(Promise.resolve());
+  // A file picked a moment before Submit must not be omitted from the reply, so
+  // submission waits until none remain and reports a failed read. The shared hook
+  // owns that ordering, the in-flight count, and the per-selection failure gate.
+  const picks = useAttachmentPicks();
+  /** Draft copies whose delete failed; each one is retried on the next opportunity. */
+  const leftoverCopies = useRef<QuestionAttachment[]>([]);
+  const attachRef = useRef<HTMLButtonElement>(null);
   const onHideRef = useRef(onHide);
   useEffect(() => { onHideRef.current = onHide; }, [onHide]);
   const draft = useQuestionDraft({ round, ...(storedDraft === undefined ? {} : { stored: storedDraft }), ...(onDraftChange === undefined ? {} : { onChange: onDraftChange }) });
@@ -138,19 +127,24 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
   const value = draft.draft.roundId === round.id ? draft.draft : restoreDraft(round.id, storedDraft);
   // A closure created before a state update would read the previous draft, so the
   // latest value is published here for helpers that run after the commit.
-  const latestDraft = useRef(value);
-  /** The draft as the hook last produced it, updated synchronously by every mutator. */
-  const committedDraft = useRef(value);
   const slides: ActiveSlide[] = [...round.pages.map(page => ({ kind: 'page' as const, callId: page.callId })), { kind: 'notes' as const }];
   const active = activeSlide(round, value);
   const index = slides.findIndex(slide => sameSlide(slide, active));
   const entry = active.kind === 'page' ? round.pages.find(page => page.callId === active.callId) : undefined;
   const answer = entry ? draftAnswer(value, entry.callId) : emptyAnswer();
+  // What the footer shows follows the order the person picked, like the reply that leaves.
+  const activeAttachments = active.kind === 'page' ? orderedPageAttachments(value, active.callId) : orderedRoundAttachments(value);
+  /** The footer group names the slide the control attaches to. */
+  const attachLabel = active.kind === 'page' ? 'Attach files to this question' : 'Attach files to the round';
+  const filesLabel = active.kind === 'page' ? 'Files for this question' : 'Files for the whole round';
+  const failureMessage = picks.failure === undefined ? '' : errorMessage(picks.failure);
   const disabled = round.answered || current.submission === 'submitting' || current.dismissing;
+  useRestoreFocusAfterFailure(picks.failed, !disabled, attachRef);
   const hasDraft = hasContent(value);
   const answersValid = round.pages.length > 0 && round.pages.every(page => isAnswerValid(page.page, answerFor(value.answers, page.callId)));
   const state = submitState({ complete: round.complete, answersValid, busy: current.submission === 'submitting', error: current.error });
-  const canSubmitNow = canSubmit(state);
+  // A failed selection keeps the round unsubmittable until it is retried or discarded.
+  const canSubmitNow = canSubmit(state) && picks.failed === 0;
   const canAdvance = entry !== undefined && !disabled && isAnswerValid(entry.page, answer);
   const activeKey = active.kind === 'page' ? active.callId : 'notes';
   const optionFocus = entry ? focused[entry.callId] ?? answer.choices[0] ?? '' : '';
@@ -224,7 +218,9 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
     // A pick may still be storing bytes; waiting keeps a dismissal from orphaning them.
     updateSurface(previous => ({ ...previous, dismissing: true, dismissError: null }));
     try {
-      await attachmentQueue.current;
+      // A pick may still be storing bytes; waiting keeps a dismissal from orphaning them.
+      await picks.waitForReads();
+      await discardCopies(leftoverCopies.current);
       await onDismiss(draftFiles());
       setSurface(previous => previous.roundId === round.id ? { ...previous, dismissing: false } : previous);
     } catch (error) {
@@ -236,93 +232,68 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
   }
 
   /**
-   * Store picked files for one slide. The read is counted while it runs, so a Submit
-   * pressed in the same breath waits for it instead of sending an answer without it.
-   *
-   * A batch is all-or-nothing: every file is stored first and only then added to the
-   * draft, so a failure partway leaves nothing behind and a retry cannot duplicate a
-   * prefix. A failure is recorded against its own selection, so an unrelated successful
-   * pick cannot release the gate and let an incomplete answer through.
+   * The store that accepts a pick for one slide. A pick, and a retry of it, stay bound
+   * to the slide the person was looking at when they picked, even after the panel moves
+   * on, so a file never lands on a question the person did not attach it to.
    */
-
-  async function attach(target: ActiveSlide, picked: readonly File[], retrying?: number): Promise<void> {
-    if (files === undefined || picked.length === 0) return;
-    // A retry keeps the identity of the selection it retries, so its own failure is the
-    // one cleared and no duplicate selection is invented.
-    const selection = retrying ?? ++selectionIds.current;
-    pendingReads.current += picked.length;
-    // Batches run one after another, so a later fast pick cannot overtake an earlier one.
-    const run = async (): Promise<void> => {
+  function acceptFor(target: ActiveSlide): (picked: readonly File[], selection: number) => Promise<void> {
+    /**
+     * A batch is all-or-nothing: every file is stored first and only then added to the
+     * draft, so a failure partway leaves nothing behind and a retry cannot duplicate a
+     * prefix. The hook records the failure against this same selection, so an unrelated
+     * successful pick cannot release the gate.
+     */
+    return async (picked, selection) => {
+      if (files === undefined) return;
+      // A copy a previous batch failed to delete is finished here, so it never outlives the
+      // selection that discarded it.
+      await discardCopies(leftoverCopies.current);
+      // Every file is read before anything is stored, so a partially read selection never
+      // looks like a batch that can be retried from its middle.
+      const reads = await readFilesBase64(picked);
       const saved: QuestionAttachment[] = [];
       try {
-        for (const file of picked) saved.push(await files.save({ name: file.name, bytes: file.size, data: await readFileData(file) }));
+        for (const read of reads) saved.push(await files.save({ name: read.file.name, bytes: read.file.size, data: read.data }));
       } catch (failure) {
-        // The batch is all-or-nothing, so the objects it already stored are discarded
-        // here: otherwise a retry would duplicate them and leave the prefix orphaned.
-        for (const attachment of saved) await files.discard?.(attachment)?.catch(() => undefined);
-        failures.current = [...failures.current.filter(entry => entry.selection !== selection), { selection, failure, retry: () => { failures.current = failures.current.filter(entry => entry.selection !== selection); void attach(target, picked, selection); } }];
-        updateSurface(previous => ({ ...previous, error: errorMessage(failure) }));
-        pendingReads.current -= picked.length;
-        return;
+        // The objects this batch already stored would otherwise be orphaned, and a retry
+        // would duplicate them.
+        await discardCopies(saved);
+        throw failure;
       }
-      for (const attachment of saved) {
-        if (target.kind === 'page') draft.addPageFile(target.callId, attachment);
-        else draft.addRoundFile(attachment);
-      }
-      // This selection succeeded, so its own failure clears. Other selections keep theirs,
-      // because only the person retrying them may release the gate.
-      failures.current = failures.current.filter(entry => entry.selection !== selection);
-      if (failures.current.length === 0) updateSurface(previous => ({ ...previous, error: null }));
-      pendingReads.current -= picked.length;
+      draft.addPicked(saved.map(attachment => ({ attachment, slide: target })), selection);
     };
-    attachmentQueue.current = attachmentQueue.current.then(run, run);
-    await attachmentQueue.current;
   }
-
   /**
-   * Wait for every in-flight file read, then report the one that failed. Without this
-   * a fast Submit would race the read and send the answer without its evidence.
+   * Delete the stored copies a selection no longer names. A delete that fails is kept and
+   * tried again while this form stays open: on the next pick, when the selection is
+   * discarded, before the answer leaves, and on dismissal. A copy that outlives the form is
+   * reported and may remain in the conversation's store, because the host's own reclaim only
+   * removes identities a discarded draft record named.
    */
-  async function settleFileReads(): Promise<void> {
-    // The counter drops the moment a save resolves, but the attachment reaches the
-    // draft through a state update that React commits a tick later. Waiting for the
-    // counter alone would let the reply go out before the file is in the draft.
-    while (pendingReads.current > 0) await new Promise(resolve => setTimeout(resolve, 0));
-    await new Promise(resolve => setTimeout(resolve, 0));
-    if (failures.current.length > 0) {
-      // Any outstanding selection blocks the submission until it is retried or removed.
-      throw failures.current[0]!.failure;
+  async function discardCopies(attachments: readonly QuestionAttachment[]): Promise<void> {
+    if (files === undefined || attachments.length === 0) return;
+    for (const attachment of attachments) {
+      try {
+        await files.discard?.(attachment);
+        leftoverCopies.current = leftoverCopies.current.filter(entry => entry.id !== attachment.id);
+      } catch (failure) {
+        if (!leftoverCopies.current.some(entry => entry.id === attachment.id)) leftoverCopies.current.push(attachment);
+        console.warn('kanban: a discarded answer file could not be deleted; its stored copy may remain in this conversation.', failure);
+      }
     }
   }
-  /**
-   * Drop the recorded failure of one selection the person retried. Exposed so a retry
-   * path can release the gate without inventing a new selection identity.
-   */
-  function clearFailure(selection: number): void {
-    failures.current = failures.current.filter(entry => entry.selection !== selection);
-    if (failures.current.length === 0) updateSurface(previous => ({ ...previous, error: null }));
+  /** Queue the files picked for one slide. */
+  function attach(target: ActiveSlide, picked: readonly File[]): void {
+    if (files === undefined || picked.length === 0) return;
+    picks.pick(picked, acceptFor(target));
   }
-  /** Retry every failed selection with the files it already carried. */
-  function retryFailed(): void {
-    // Each closure claims its selection before saving, so repeated clicks in the same
-    // breath cannot save one selection twice.
-    for (const entry of [...failures.current]) entry.retry();
-  }
-  /** Drop every failed selection; the answer then proceeds without those files. */
-  function discardFailed(): void {
-    failures.current = [];
-    updateSurface(previous => ({ ...previous, error: null }));
-  }
-  /** How many selections currently block submission. */
-  const failedCount = failures.current.filter(entry => pendingReads.current === 0).length;
-  /** Every attached file, in the order the person attached them. */
   /**
    * Detach one file and delete its stored draft copy. The draft copy is otherwise
    * unreachable, so leaving it would accumulate bytes the person discarded.
    */
   function detach(attachment: QuestionAttachment, remove: () => void): void {
     changeAnswer(remove);
-    void files?.discard?.(attachment)?.catch(() => undefined);
+    void discardCopies([attachment]);
   }
 
   function draftFiles(): QuestionAttachment[] {
@@ -342,16 +313,24 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
     sending.current = true;
     updateSurface(previous => ({ ...previous, submission: 'submitting', error: null }));
     try {
-      // A file selected moments ago may still be reading; waiting keeps the reply
-      // from omitting evidence the person already attached. A round with no files stays
-      // synchronous, which the double-click guard depends on.
-      if (pendingReads.current > 0 || failures.current.length > 0) await settleFileReads();
+      // A file selected moments ago may still be reading, so waiting keeps the reply from
+      // omitting evidence the person already attached. A selection that needs a decision is
+      // reported by its own notice, not as a delivery error: the answer simply does not go
+      // out yet, and the round returns to its idle state.
+      if (picks.outstanding() && !(await picks.settle())) {
+        updateSurface(previous => ({ ...previous, submission: 'idle' }));
+        return;
+      }
+      // The answer is about to leave the form, so any copy it still owes a delete is
+      // finished here rather than waiting for a pick that may never come. A reply with no
+      // such copy stays synchronous, which the duplicate-submit guard depends on.
+      if (leftoverCopies.current.length > 0) await discardCopies(leftoverCopies.current);
       const pageFiles: Record<string, readonly { name: string }[]> = {};
       for (const page of round.pages) {
-        const attached = pageAttachments(draft.current(), page.callId);
+        const attached = orderedPageAttachments(draft.current(), page.callId);
         if (attached.length > 0) pageFiles[page.callId] = attached.map(attachment => ({ name: attachment.name }));
       }
-      const text = formatAnswers(round, draft.current().answers, draft.current().generalNotes, pageFiles, draft.current().roundAttachments.map(attachment => ({ name: attachment.name })));
+      const text = formatAnswers(round, draft.current().answers, draft.current().generalNotes, pageFiles, orderedRoundAttachments(draft.current()).map(attachment => ({ name: attachment.name })));
       // A round with files reads them before sending, so a vanished object fails the
       // submission whole and the draft survives for a retry. A text-only answer keeps
       // the synchronous call the double-click guard relies on.
@@ -379,17 +358,20 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
         <span className="kq-progress" aria-live="polite">{index + 1} / {slides.length}</span>
         <span className="kq-chevron" data-open={!current.collapsed}><Chevron up={!current.collapsed} /></span>
       </button>
-      {!current.collapsed && <div className="kq-panel" id={bodyId}>
+      {!current.collapsed && <div className="kq-panel" id={bodyId} onPaste={event => {
+        // Paste belongs to the whole panel, not only its body: a file pasted while the
+        // attach control or a footer button has focus still reaches the active slide.
+        // Pasted text stays text, and a surface that is submitting or dismissing takes
+        // no new file.
+        const picked = clipboardFiles(event.clipboardData);
+        if (picked.length === 0) return;
+        event.preventDefault();
+        if (disabled) return;
+        attach(active, picked);
+      }}>
         <div className="kq-scroll">
           {round.answered && <p className="kq-status" role="status">This round has been answered in the conversation.</p>}
-          {entry ? <section className="kq-slide" aria-labelledby={headingId} onPaste={event => {
-            // Paste belongs to the slide, not only the file control: a file pasted
-            // while the answer or notes field has focus still attaches here.
-            const picked = clipboardFiles(event.clipboardData);
-            if (picked.length === 0) return;
-            event.preventDefault();
-            void attach({ kind: 'page', callId: entry.callId }, picked);
-          }}>
+          {entry ? <section className="kq-slide" aria-labelledby={headingId}>
             {entry.page.context && <div className="kq-context"><Markdown text={entry.page.context} /></div>}
             <div className="kq-question-head">
               <div ref={headingRef} id={headingId} role="heading" aria-level={3} tabIndex={-1} className="kq-question"><Markdown text={entry.page.question} /></div>
@@ -417,42 +399,11 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
             <label className="kq-field">Notes for this answer
               <textarea className="kq-input" aria-label="Notes for this answer" value={answer.notes} disabled={disabled} onChange={event => changeAnswer(() => draft.setText(entry.callId, 'notes', event.target.value))} />
             </label>
-            {files !== undefined && <QuestionFiles
-              attachments={pageAttachments(value, entry.callId)}
-              disabled={disabled}
-              label={'Files for this question'}
-              failures={failedCount}
-              onRetryFailed={retryFailed}
-              onDiscardFailed={discardFailed}
-              onPick={picked => { void attach({ kind: 'page', callId: entry.callId }, picked); }}
-              onRemove={attachmentId => {
-                const attached = pageAttachments(value, entry.callId).find(item => item.id === attachmentId);
-                if (attached !== undefined) detach(attached, () => draft.removePageFile(entry.callId, attachmentId));
-              }}
-            />}
             {entry.page.answers_affect_followup && <p className="kq-hint">Your answer here will shape follow-up questions.</p>}
-          </section> : <section className="kq-slide" aria-labelledby={headingId} onPaste={event => {
-            const picked = clipboardFiles(event.clipboardData);
-            if (picked.length === 0) return;
-            event.preventDefault();
-            void attach({ kind: 'notes' }, picked);
-          }}>
+          </section> : <section className="kq-slide" aria-labelledby={headingId}>
             <div ref={headingRef} id={headingId} role="heading" aria-level={3} tabIndex={-1} className="kq-question">Additional Notes</div>
             {round.pages.length === 0 && <p className="kq-hint">Waiting for question pages.</p>}
             <textarea className="kq-input" aria-label="Additional Notes" placeholder="Anything else the agent should know?" value={value.generalNotes} disabled={disabled} onChange={event => changeAnswer(() => draft.setGeneralNotes(event.target.value))} />
-            {files !== undefined && <QuestionFiles
-              attachments={value.roundAttachments}
-              disabled={disabled}
-              label={'Files for the whole round'}
-              failures={failedCount}
-              onRetryFailed={retryFailed}
-              onDiscardFailed={discardFailed}
-              onPick={picked => { void attach({ kind: 'notes' }, picked); }}
-              onRemove={attachmentId => {
-                const attached = value.roundAttachments.find(item => item.id === attachmentId);
-                if (attached !== undefined) detach(attached, () => draft.removeRoundFile(attachmentId));
-              }}
-            />}
             {newPage && <div className="kq-new-page" role="status">
               <span>New question received.</span>
               <button type="button" className="kq-secondary" onClick={() => goTo({ kind: 'page', callId: newPage.callId })}>Answer new question</button>
@@ -461,6 +412,14 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
           {current.error && <p className="kq-error" role="alert">{current.error}</p>}
           {current.dismissError && <p className="kq-error" role="alert">{current.dismissError}</p>}
         </div>
+        {/* A failed selection stays visible above a long slide, and its two ways out
+            live beside the message rather than inside the slide. */}
+        <AttachmentFailureNotice failed={picks.failed} message={failureMessage} disabled={disabled} onRetry={picks.retryFailed} onDiscard={() => {
+          picks.discardFailed();
+          // A copy an earlier batch failed to delete is finished when the person resolves
+          // the selection, so it does not have to wait for another pick.
+          void discardCopies(leftoverCopies.current);
+        }} />
         <footer className="kq-footer">
           {current.confirmingDismiss ? <>
             <p className="kq-confirm-text">Discard this and other unanswered rounds? Your answers and notes will not be submitted.</p>
@@ -471,6 +430,17 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
           </> : <>
             {awaitingTurn && <p className="kq-waiting" role="status">Waiting for the agent to finish this turn before Submit is available.</p>}
             {onDismiss && <button ref={dismissRef} type="button" className="kq-secondary kq-dismiss" disabled={disabled} onClick={requestDismiss}>Dismiss</button>}
+            {files !== undefined && <div className="ka-attachment-bar" role="group" aria-label={filesLabel}>
+              <AttachButton label={attachLabel} buttonRef={attachRef} disabled={disabled} onPick={picked => attach(active, picked)} />
+              <AttachmentChips attachments={activeAttachments} disabled={disabled} focusFallback={attachRef} onRemove={attachmentId => {
+                const attached = activeAttachments.find(item => item.id === attachmentId);
+                if (attached === undefined) return;
+                detach(attached, () => {
+                  if (active.kind === 'page') draft.removePageFile(active.callId, attachmentId);
+                  else draft.removeRoundFile(attachmentId);
+                });
+              }} />
+            </div>}
             <div className="kq-footer-actions">
               <button type="button" className="kq-secondary" onClick={back} disabled={index === 0 || disabled}>Back</button>
               {active.kind === 'notes'

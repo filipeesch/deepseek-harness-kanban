@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPageAttachment, addRoundAttachment, emptyDraft, hasContent, orderedAttachments, pageAttachments, removePageAttachment, removeRoundAttachment, restoreDraft, toStoredDraft } from '../../src/questions/draft.js';
+import { addPageAttachment, addPickedAttachments, addRoundAttachment, emptyDraft, hasContent, orderedAttachments, pageAttachments, removePageAttachment, removeRoundAttachment, restoreDraft, toStoredDraft } from '../../src/questions/draft.js';
 import { formatAnswers } from '../../src/questions/validation.js';
 import { choice, free, round } from './fixtures.js';
 
@@ -11,6 +11,21 @@ describe('answer attachments in a draft', () => {
     draft = addPageAttachment(draft, 'page-0', file('a'));
     expect(pageAttachments(draft, 'page-0').map(value => value.id)).toEqual(['a']);
     expect(pageAttachments(draft, 'page-1')).toEqual([]);
+  });
+
+  it('places a selection that resolved late where it was picked', () => {
+    // Pick ranks: a was picked first, b second, but b was stored first.
+    const ranks = new Map([['a', 1], ['b', 2]]);
+    const rank = (id: string) => ranks.get(id) ?? 0;
+    let draft = emptyDraft('round-1');
+    draft = addPickedAttachments(draft, [{ attachment: file('b'), slide: { kind: 'page', callId: 'page-0' } }], rank, 2);
+    draft = addPickedAttachments(draft, [
+      { attachment: file('a'), slide: { kind: 'page', callId: 'page-0' } },
+      { attachment: file('a2'), slide: { kind: 'notes' } },
+    ], id => ranks.get(id) ?? (id === 'a2' ? 1 : 0), 1);
+    // The retried selection keeps its own source order and predates the later one.
+    expect(orderedAttachments(draft).map(value => value.id)).toEqual(['a', 'a2', 'b']);
+    expect(draft.attachmentOrder).toEqual(['a', 'a2', 'b']);
   });
 
   it('detaches one page file and leaves the page answer intact', () => {

@@ -12,25 +12,27 @@ Each row shows the file name and its size and offers **Download** and **Remove**
 
 ## Adding a file
 
-Files come from three sources.
+The files panel offers one add action, an **Attach files** paperclip icon that opens the browser's file dialog and copies the chosen files into the task.
 
-**Attach a file by host path** takes an absolute path on the machine serving the plugin, and **Add** copies that file into the task.
+Pasting a file from the clipboard while the panel has focus adds it the same way, and pasting anywhere in the **New task** dialog attaches to the task being created; pasted text stays text and is never treated as a file.
 
-**Choose a file** opens the browser file dialog.
+A file that cannot be read is refused with a message naming it, and the task is left unchanged.
 
-Pasting a file into the path field attaches it from the clipboard; pasted text stays text and is never treated as a file.
+## When adding a file fails
 
-Attaching a file by path is the efficient route because the plugin already runs on that machine; the browser route is the one that works when the interface is served elsewhere.
+A selection that could not be read is reported with **Try again** and **Discard failed files**: below the **Attach files** action in the files panel, above the footer's actions in the **New task** dialog, and above the footer of a question round.
 
-A path that does not exist, names a directory, or cannot be read is refused with a message naming that source, and the task is left unchanged.
+Retrying reads the same files again and discarding drops the selection; either way the notice closes once nothing is left to decide.
+
+The two actions behave differently while files are unsettled. **Create task** stays unavailable, because a task is never created without the files it was given. **Submit** stays available and waits: pressing it sends nothing until every read finishes, and a selection that then needs a decision is reported by its own notice instead of as a delivery failure. After a read fails, **Submit** stays unavailable until the selection is retried or discarded.
 
 ## Creating a task with files
 
-The **New task** dialog collects files under **Files**, with the same path, browser, and clipboard sources.
+The **New task** dialog offers the same **Attach files** action in its footer, next to **Cancel** and **Create task**, and each chosen file appears there as a small token carrying its name, its size, and a remove control.
 
-The files are attached in the same operation that creates the task, so a created task never appears without the evidence it was created with.
+Files are attached in the same operation that creates the task, so a created task never appears without the evidence it was created with.
 
-Creation is all or nothing: one unreadable source creates no task and stores nothing.
+Creation is all or nothing: the task is created with every file or with none.
 
 ## Downloading a file
 
@@ -74,13 +76,13 @@ The list is bounded in what it prints, never in what it stores: a long list stat
 
 A file added after the conversation began is discovered by reading the task again, so an agent that re-reads the task sees the new evidence.
 
-The card tools can also attach files: creation takes absolute paths and resolves every one before the task exists, and editing can add files or remove them, removal requiring explicit confirmation because it deletes bytes.
-
-[Agent tools](agent-tools.md) owns the tool contract; this document owns what the person sees.
+The card tools attach files by absolute host path, which is the agent's source and not one the person's interface offers. [Agent tools](agent-tools.md) owns the tool contract; this document owns what the person sees.
 
 ## Answer files
 
-A question round accepts files as part of the answer: each question slide has its own **Attach file** control, and the **Additional Notes** slide has one for files that belong to the round as a whole.
+A question round accepts files as part of the answer through one paperclip action in the question panel's footer, next to its navigation actions: **Attach files to this question** on a question slide and **Attach files to the round** on **Additional Notes**.
+
+The action attaches to the slide currently shown, and the files of that slide are listed beside it as small tokens; a question slide keeps its own files, and **Additional Notes** keeps the files that belong to the round as a whole.
 
 Files come from the browser file dialog or a clipboard paste, and neither requires a task card, so an answer in an ordinary chat accepts files the same way.
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { QuestionAttachment, QuestionDraftContent, QuestionDraftSlide, QuestionPage, QuestionRound, StoredQuestionDraft } from '../shared/types.js';
-import { activeSlide, addPageAttachment, addRoundAttachment, choose, removePageAttachment, removeRoundAttachment, restoreDraft, setActive, setAnswerText, setGeneralNotes as setNotes, toDraftContent, type QuestionDraft } from './draft.js';
+import { activeSlide, addPickedAttachments, choose, removePageAttachment, removeRoundAttachment, restoreDraft, setActive, setAnswerText, setGeneralNotes as setNotes, toDraftContent, type PickedAttachment, type QuestionDraft } from './draft.js';
 
 export interface UseQuestionDraftOptions {
   round: QuestionRound;
@@ -20,9 +20,14 @@ export interface QuestionDraftHandle {
   setText(callId: string, field: 'text' | 'other' | 'notes', value: string): void;
   setGeneralNotes(value: string): void;
   goTo(slide: QuestionDraftSlide): void;
-  addPageFile(callId: string, attachment: QuestionAttachment): void;
+  /**
+   * Store one selection's files where the person picked them.
+   *
+   * @param picked - the accepted files with the slide each belongs to.
+   * @param sequence - the pick rank the selection was started with.
+   */
+  addPicked(picked: readonly PickedAttachment[], sequence: number): void;
   removePageFile(callId: string, attachmentId: string): void;
-  addRoundFile(attachment: QuestionAttachment): void;
   removeRoundFile(attachmentId: string): void;
 }
 
@@ -38,9 +43,15 @@ export function useQuestionDraft({ round, stored, onChange }: UseQuestionDraftOp
   draftRef.current = draft;
   const storedRef = useRef(stored);
   storedRef.current = stored;
+  /**
+   * The pick rank of every attachment this form stored. A restored attachment has none,
+   * which places it before every pick of the session.
+   */
+  const ranks = useRef(new Map<string, number>());
   const notifyRef = useRef(onChange);
   useEffect(() => { notifyRef.current = onChange; }, [onChange]);
   useEffect(() => {
+    ranks.current = new Map();
     setDraft(previous => previous.roundId === round.id ? previous : restoreDraft(round.id, storedRef.current));
   }, [round.id]);
 
@@ -63,9 +74,13 @@ export function useQuestionDraft({ round, stored, onChange }: UseQuestionDraftOp
     setText: (callId, field, value) => commit(current => setAnswerText(setActive(current, { kind: 'page', callId }), callId, field, value)),
     setGeneralNotes: value => commit(current => setNotes(current, value)),
     goTo: slide => commit(current => setActive(current, slide)),
-    addPageFile: (callId, attachment) => commit(current => addPageAttachment(setActive(current, { kind: 'page', callId }), callId, attachment)),
+    // A file can arrive after the person moved on, so attaching never claims the page: the
+    // store keeps the file on the question it was picked for and in the order it was picked.
+    addPicked: (picked, sequence) => commit(current => {
+      for (const entry of picked) ranks.current.set(entry.attachment.id, sequence);
+      return addPickedAttachments(current, picked, id => ranks.current.get(id) ?? 0, sequence);
+    }),
     removePageFile: (callId, attachmentId) => commit(current => removePageAttachment(current, callId, attachmentId)),
-    addRoundFile: attachment => commit(current => addRoundAttachment(current, attachment)),
     removeRoundFile: attachmentId => commit(current => removeRoundAttachment(current, attachmentId)),
   };
 }

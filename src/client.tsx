@@ -20,6 +20,7 @@ import { allTasks } from './client/snapshot-normalize.js';
 import { AutoRunController } from './client/auto-run.js';
 import { DecisionWindowController } from './client/decision-window.js';
 import { QuestionDock, createQuestionDockServices, type QuestionDockSessions } from './client/question-dock.js';
+import { createAnswerFileDelivery, type AnswerFileUploadPort } from './client/answer-files.js';
 import { createSessionStatusPort, type SessionStatusHost } from './client/session-status.js';
 import { FeedStatus } from './client/feed-status.js';
 import { RetainedConversation, TaskConversationWindow, type ConversationSurfaceMode, type ConversationSurfaceOwner, type ConversationSurfaceServices } from './client/conversation-surface.js';
@@ -186,38 +187,15 @@ function initializeClient(raw: Context, pageState: BoardPageState): () => Promis
     sessions: ctx.sessions as unknown as QuestionDockSessions,
     // An answer's files go through the host upload service and the native prompt, so
     // the reply is one message carrying real attachments rather than inline text.
-    fileDelivery: {
-      upload: async (sessionId, file) => {
-        const uploads = ctx.get('fileUpload') as {
-          upload?(id: SessionId, data: Uint8Array, name?: string): Promise<{ ok: boolean; value?: { receiptId?: unknown }; error?: { message?: unknown } }>;
-        } | undefined;
-        if (uploads?.upload === undefined) throw new Error('This host cannot upload a file for an answer.');
-        const binary = atob(file.data);
-        const bytes = new Uint8Array(binary.length);
-        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-        // The id is the session this dock was mounted for, so it is already a real
-        // identity; the brand is a compile-time marker, not a runtime check.
-        const result = await uploads.upload(sessionId as never, bytes, file.name);
-        if (!result.ok || typeof result.value?.receiptId !== 'string') {
-          throw new Error(typeof result.error?.message === 'string' ? result.error.message : 'The file could not be uploaded for this answer.');
-        }
-        return result.value.receiptId;
-      },
-      submit: async (sessionId, text, receipts) => {
+    fileDelivery: createAnswerFileDelivery({
+      uploads: () => ctx.get('fileUpload') as AnswerFileUploadPort | undefined,
+      // The id is the session this dock was mounted for, so it is already a real
+      // identity; the brand is a compile-time marker, not a runtime check.
+      conversation: sessionId => {
         const session = ctx.sessions.binding(sessionId as never)?.session;
-        if (session === undefined) throw new Error('The native conversation is not available. Reopen this conversation and retry.');
-        const result = await session.prompt(
-          [
-            // The receipt type is branded by the upload service, so the cast is the one
-            // place the wire identity is asserted after a successful upload.
-            ...receipts.map(receiptId => ({ type: 'file' as const, receiptId: receiptId as never })),
-            ...(text === '' ? [] : [{ type: 'text' as const, text }]),
-          ],
-          'queue',
-        );
-        if (!result.ok) throw new Error('The answer could not be submitted: ' + result.error.message);
+        return session === undefined ? undefined : { prompt: (content, mode) => session.prompt(content, mode) };
       },
-    },
+    }),
   });
   // An older host exposes neither call, and the seat then presents the diagnosis
   // without actions instead of pretending it can check or repair.

@@ -7,6 +7,21 @@ import { QuestionDock, createQuestionDockServices, type QuestionDockProps, type 
 import type { QuestionRoundView } from '../../src/client/question-round-cache.js';
 import type { QuestionDraftContent, QuestionRound } from '../../src/shared/types.js';
 import { QuestionDraftState } from '../../src/client/question-draft-state.js';
+import { createAnswerFileDelivery } from '../../src/client/answer-files.js';
+
+/** The question-only bridge the composition root supplies, with no board state. */
+function bridge(): Parameters<typeof createQuestionDockServices>[0]['bridge'] {
+  return {
+    questionsView: observable<QuestionRoundView>({ rounds: [], errors: new Map() }),
+    questionDrafts: { read: () => undefined, update: () => {}, clear: () => {}, flush: () => {} },
+    questions: { isSubmitted: () => false, focusedRoundId: undefined, submit: () => {}, settle: () => {}, rollback: () => {} },
+    retry: () => {},
+    trackQuestions: () => () => {},
+    retryQuestions: () => {},
+    assertSubmissionAllowed: () => {},
+    dismissQuestions: async () => [],
+  };
+}
 
 /** The dock's contracts must never carry a board-update status again. */
 type DockContractStatus =
@@ -76,6 +91,33 @@ describe('question dock surfaces', () => {
     const { container } = render(<QuestionDock sessionId="session-1" services={services({ rounds: [], errors: new Map() })} />);
     expectNoBoardStatus(container);
     expect(container.textContent).toBe('');
+  });
+
+  it('builds an answered round as one prompt carrying one receipt per file', async () => {
+    // The real delivery factory, a recording upload port, and a recording conversation:
+    // a regression in the composition fails here, not only in a surface test.
+    const uploads = { upload: vi.fn(async (_sessionId: never, _data: Blob, name?: string) => ({ ok: true, value: { receiptId: 'receipt-' + name } })) };
+    const prompts: Array<{ content: unknown[]; mode: string }> = [];
+    const built = createQuestionDockServices({
+      bridge: bridge(),
+      sessions: { scope: () => ({ get: () => ({ send: async () => {}, input: { for: () => ({ focus: () => {} }) } }) }) },
+      fileDelivery: createAnswerFileDelivery({
+        uploads: () => uploads,
+        conversation: () => ({ prompt: async (content, mode) => { prompts.push({ content, mode }); return { ok: true }; } }),
+      }),
+    });
+    await built.submitWithFiles('session-1', 'Answered', [{ name: 'a.txt', data: 'YWJj' }, { name: 'b.txt', data: 'YWJj' }]);
+    expect(uploads.upload).toHaveBeenCalledTimes(2);
+    expect(uploads.upload.mock.calls[0]![1]).toBeInstanceOf(File);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toEqual({
+      content: [
+        { type: 'file', receiptId: 'receipt-a.txt' },
+        { type: 'file', receiptId: 'receipt-b.txt' },
+        { type: 'text', text: 'Answered' },
+      ],
+      mode: 'queue',
+    });
   });
 
   it('keeps attachments and their order through update, read, and hydrate', async () => {

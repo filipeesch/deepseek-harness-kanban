@@ -1,23 +1,27 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import type { ClientApi, Problem, Task, TaskAttachment } from '../shared/types.js';
+import type { Problem, Task, TaskAttachment } from '../shared/types.js';
 import { ErrorNotice } from './ui.js';
-import { TaskFilesPanel, attachmentDownloadUrl, readFileBase64 } from './task-files.js';
+import { TaskFilesPanel, attachmentDownloadUrl } from './task-files.js';
+import { readFilesBase64 } from '../attachments/bytes.js';
+import { AttachButton } from '../attachments/AttachButton.js';
+import { AttachmentFailureNotice } from '../attachments/AttachmentFailureNotice.js';
+import { useAttachmentPicks } from '../attachments/picks.js';
+import { clipboardFiles } from '../attachments/clipboard.js';
+import { useRestoreFocusAfterFailure } from '../attachments/focus.js';
 import type { RunCommand } from './ui.js';
 
 /** The attachments of one task, presented inside the drawer's Info section. */
-export function TaskFilesSection({ task, api, hubId, run }: {
+export function TaskFilesSection({ task, hubId, run }: {
   task: Task;
-  api: ClientApi | undefined;
   /** The Hub holding the task, so the download route can resolve it directly. */
   hubId?: string;
   run: RunCommand;
 }) {
   const [busy, setBusy] = useState(false);
+  /** A removal or download failure; an add failure belongs to the pick's own notice. */
   const [problem, setProblem] = useState<Problem | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<TaskAttachment | null>(null);
   useEffect(() => { if (pendingRemoval !== null) keepFileRef.current?.focus(); }, [pendingRemoval]);
-  const pathInput = useRef<HTMLInputElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
   // The safe choice takes focus, so an accidental Enter cannot delete a file.
   const keepFileRef = useRef<HTMLButtonElement>(null);
   /** The Remove control that opened the dialog, so cancelling can return focus to it. */
@@ -32,32 +36,27 @@ export function TaskFilesSection({ task, api, hubId, run }: {
     removalTrigger.current = null;
   }
   const removalWarningId = useId();
+  const picks = useAttachmentPicks();
+  const attachRef = useRef<HTMLButtonElement>(null);
+  const attachmentFailure = picks.failure === undefined ? '' : toProblem(picks.failure).message;
+  // A selection still reading, or one that failed until it is retried or discarded, keeps
+  // the add action unavailable: the surface recovers before it takes more files.
+  const attachBlocked = busy || picks.pending > 0 || picks.failed > 0;
+  useRestoreFocusAfterFailure(picks.failed, !attachBlocked, attachRef);
 
-  async function addPaths(): Promise<void> {
-    const value = pathInput.current?.value.trim() ?? '';
-    if (value === '' || busy) return;
-    await add({ attachmentPaths: [value] });
-    if (pathInput.current !== null) pathInput.current.value = '';
+  /**
+   * Add one picked batch to the task. The command publishes the updated board, so the
+   * list re-renders from the snapshot rather than from local state.
+   */
+  function acceptPick(origin: 'upload' | 'clipboard'): (files: readonly File[]) => Promise<void> {
+    return async picked => {
+      const reads = await readFilesBase64(picked);
+      await add({ attachmentUploads: reads.map(read => ({ name: read.file.name, origin, data: read.data })) });
+    };
   }
-  async function addFiles(files: readonly File[], origin: 'upload' | 'clipboard'): Promise<void> {
-    if (files.length === 0 || busy) return;
-    try {
-      const uploads = await Promise.all(files.map(async file => ({
-        name: file.name,
-        origin,
-        data: await readFileBase64(file),
-      })));
-      await add({ attachmentUploads: uploads });
-    } catch (failure) { setProblem(toProblem(failure)); }
-  }
-  async function add(command: { attachmentPaths?: string[]; attachmentUploads?: Array<{ name: string; origin: 'upload' | 'clipboard'; data: string }> }): Promise<void> {
-    if (busy) return;
+  async function add(command: { attachmentUploads: Array<{ name: string; origin: 'upload' | 'clipboard'; data: string }> }): Promise<void> {
     setBusy(true); setProblem(null);
-    try {
-      // The command publishes the updated board, so the list re-renders from the
-      // snapshot rather than from local state.
-      await run({ type: 'task.edit', taskId: task.id, ...command });
-    } catch (failure) { setProblem(toProblem(failure)); }
+    try { await run({ type: 'task.edit', taskId: task.id, ...command }); }
     finally { setBusy(false); }
   }
   async function remove(attachment: TaskAttachment): Promise<void> {
@@ -84,31 +83,20 @@ export function TaskFilesSection({ task, api, hubId, run }: {
 
   // One named region only: the inner panel carries the accessible name, so the
   // wrapper stays an unnamed layout container.
-  return <div className="kb-form kb-task-files-section">
-    <TaskFilesPanel task={task} api={api} busy={busy} problem={problem} onDownloadRequest={attachment => { void download(attachment); }} onRemoveRequest={attachment => { removalTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setPendingRemoval(attachment); }} />
-    <div className="kb-file-add">
-      <label className="kb-field">Attach a file by host path
-        <div className="kb-input-row">
-          <input ref={pathInput} className="kb-input" placeholder="/absolute/path/to/file" disabled={busy} aria-label="Attachment host path" onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void addPaths(); } }} onPaste={event => {
-            // A pasted file is an attachment; pasted text stays text.
-            const files = Array.from(event.clipboardData?.files ?? []);
-            if (files.length === 0) return;
-            event.preventDefault();
-            void addFiles(files, 'clipboard');
-          }} />
-          <button type="button" className="kb-button" disabled={busy} onClick={() => { void addPaths(); }}>Add</button>
-        </div>
-      </label>
-      <div className="kb-file-add-actions">
-        <input ref={fileInput} type="file" hidden aria-label="Attach a file" onChange={event => {
-          const files = Array.from(event.target.files ?? []);
-          event.target.value = '';
-          void addFiles(files, 'upload');
-        }} />
-        <button type="button" className="kb-button" disabled={busy} onClick={() => fileInput.current?.click()}>Choose a file</button>
-        <span className="kb-hint">Or paste a file from the clipboard into the path field.</span>
-      </div>
+  return <div className="kb-form kb-task-files-section" onPaste={event => {
+    // A pasted file is an attachment; pasted text stays text. A blocked surface takes no
+    // new file from the clipboard either.
+    const files = clipboardFiles(event.clipboardData);
+    if (files.length === 0) return;
+    event.preventDefault();
+    if (attachBlocked) return;
+    picks.pick(files, acceptPick('clipboard'));
+  }}>
+    <TaskFilesPanel task={task} busy={busy} problem={problem} onDownloadRequest={attachment => { void download(attachment); }} onRemoveRequest={attachment => { removalTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setPendingRemoval(attachment); }} />
+    <div className="ka-attachment-bar" role="group" aria-label="Files for this task">
+      <AttachButton label="Attach files" buttonRef={attachRef} disabled={attachBlocked} onPick={files => picks.pick(files, acceptPick('upload'))} />
     </div>
+    <AttachmentFailureNotice failed={picks.failed} message={attachmentFailure} disabled={busy} onRetry={picks.retryFailed} onDiscard={picks.discardFailed} />
     {pendingRemoval !== null && <div
       className="kb-inline-confirm"
       role="alertdialog"
