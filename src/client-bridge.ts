@@ -292,11 +292,9 @@ export class ClientBridge {
   async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
     const remaining = await this.questions.dismiss(sessionId, roundId);
-    // A successful dismissal retires every unresolved round, but a stale target only
-    // retires the displayed one; keep exactly the rounds the cache still presents so a
-    // newer round's draft survives.
-    const live = this.questions.view.getSnapshot().rounds.filter(round => round.sessionId === sessionId).map(round => round.id);
-    this.draftState.retainSession(sessionId, live);
+    // Only the dismissed round's draft retires; every other round keeps its draft, even
+    // one the feed delivered while the command was in flight.
+    this.draftState.retire([roundId]);
     return remaining;
   }
 

@@ -65,7 +65,7 @@ Every durable question write — the debounced autosave and the explicit retirem
 
 Alternative: a separate `retiredTurns` field. Rejected because the stored question record is strict: an older plugin would reject a record carrying an unknown field during a rollback, and the same durable effect would be implemented twice.
 
-A failed retirement write after an admitted reply is reported beside the stack and retried from the same conversation; the block stays answerable, and the reply itself is already durable, so no answer is ever lost. The failure is kept in the client cache keyed by its conversation, so closing or switching the dock never loses the retry.
+A failed retirement write after an admitted reply is reported beside the stack, and only that retirement write is retried from the same conversation. The submitted block stays hidden for the session, so the person does not answer it twice; the reply is already durable, so no answer is ever lost. If the write never lands, a reload can bring the unresolved block back for a dismissal. The failure is kept in the client cache keyed by its conversation, so closing or switching the dock never loses the retry.
 
 ### Per-round dismissal
 
@@ -94,7 +94,7 @@ The content height is read from the expanded body's `scrollHeight` while the str
 - Measurement feedback loop between the budget and the measured content height → the policy is a pure function of numbers with a stable equality check already in place (`sameSeat`); the content probe reads the unclipped body, and only the strip, its layer, and the scrollport are observed.
 - A tall single strip hides the conversation → accepted: the header always stays visible and collapsing reveals the chat.
 - An ordinary chat reply no longer retires rounds → the open-round notice tells the agent the round is open, and the person can dismiss it; documented in `docs/user/conversations.md`.
-- The durable retirement write can fail after the reply was admitted → the block stays answerable, the dock reports the problem with a retry kept with its conversation; a reload can resurrect the round for dismissal, never the answer.
+- The durable retirement write can fail after the reply was admitted → the submitted block stays hidden for the session and only the retirement write is retried, with the retry kept with its conversation; a reload can resurrect the round for dismissal, never the answer.
 - A stack of many blocks may exhaust the seat → the existing fallbacks keep every block reachable; a stack-specific cap is deliberately not added. The launcher list is bounded and scrolls, and the open panel keeps the top of it.
 - A very short conversation that still fits both fixed control sets gives each body little height (the question body can be under 30px at 360x420 with a 190px composer). Reserving a usable minimum body would need either a transcript reserve or a new forced fallback the product has not chosen, so the trade-off stands: every fixed control stays reachable and the body scrolls, and collapsing one block gives the other more height.
 - Reusing the dismissal record for retirement means the stored marker cannot tell the two triggers apart → the projection never needs that distinction after the fact, because the reply in the transcript is the answer's record.

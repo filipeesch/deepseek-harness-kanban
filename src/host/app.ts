@@ -668,7 +668,10 @@ export class KanbanApp {
   const previous=this.persistLanes.get(sessionId)??Promise.resolve();
   const next=previous.then(work,work);
   // The lane must survive a failed job without rejecting the next one.
-  this.persistLanes.set(sessionId,next.then(()=>undefined,()=>undefined));
+  const settled=next.then(()=>undefined,()=>undefined);
+  this.persistLanes.set(sessionId,settled);
+  // A settled empty lane is not needed; drop it only when no newer job replaced it.
+  void settled.then(()=>{if(this.persistLanes.get(sessionId)===settled)this.persistLanes.delete(sessionId);});
   return next;
  }
  private async persistSession(sessionId:string):Promise<void>{
