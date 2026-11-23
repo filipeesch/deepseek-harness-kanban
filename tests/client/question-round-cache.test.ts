@@ -84,17 +84,19 @@ describe('QuestionRoundCache', () => {
     expect(feeds.has('c')).toBe(false);
   });
 
-  it('dismisses every unresolved round in the conversation and keeps other rounds', async () => {
+  it('dismisses only the chosen round and keeps every other round in the conversation', async () => {
     const { cache, feeds, dismissal } = harness();
     cache.track('a');
     feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2'), round('b:1', 'b')] });
-    dismissal.dismiss.mockResolvedValueOnce([]);
+    // The host keeps a:1 and returns it; only a:2 is dismissed.
+    dismissal.dismiss.mockResolvedValueOnce([round('a:1')]);
     await cache.dismiss('a', 'a:2');
     expect(dismissal.dismiss).toHaveBeenCalledWith('a', 'a:2');
-    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['b:1']);
-    // A later baseline for the dismissed conversation must not resurrect it.
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'b:1']);
+    // A later baseline must not resurrect the dismissed round, and must not lose the
+    // round the host kept because of a stale all-rounds tombstone.
     feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
-    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['b:1']);
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'b:1']);
   });
 
   it('does not hide unrelated rounds when the host reports the round already settled', async () => {

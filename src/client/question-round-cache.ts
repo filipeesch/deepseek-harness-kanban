@@ -138,23 +138,22 @@ export class QuestionRoundCache {
     this.publish();
   }
 
-  /** Dismiss the displayed round and every unresolved round in that conversation. */
+  /** Dismiss the displayed round; every other unresolved round stays in the stack. */
   async dismiss(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
-    const unresolved = this.rounds.filter(round => round.sessionId === sessionId && !round.answered).map(round => round.id);
     let remaining: readonly QuestionRound[];
-    let missing = false;
     try {
       remaining = await this.options.dismissal.dismiss(sessionId, roundId);
     } catch (error) {
       if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
-      // The displayed round was already answered or dismissed elsewhere. Do not hide
-      // unrelated unresolved rounds that the host did not actually dismiss.
-      missing = true;
+      // The displayed round was already answered or dismissed elsewhere. Drop only that
+      // round; unrelated unresolved rounds the host did not dismiss must stay visible.
       remaining = this.rounds.filter(round => round.sessionId === sessionId && round.id !== roundId);
     }
     if (this.disposed) return [];
-    if (!missing) for (const id of unresolved) { this.dismissed.add(id); this.submitted.delete(id); }
+    // Only the dismissed round is tombstoned. Tombstoning every unresolved round here
+    // would hide the rounds the host deliberately kept, and a later frame could never
+    // bring them back.
     this.dismissed.add(roundId);
     this.submitted.delete(roundId);
     if (this.focused === roundId) this.focused = undefined;
