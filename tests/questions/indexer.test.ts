@@ -77,13 +77,15 @@ describe('QuestionIndex canonical events', () => {
     expect(index.getRounds()).toEqual([]);
   });
 
-  it('retires only on a later genuine human message in the same session', () => {
+  it('never retires on an ordinary human message; only the durable retirement list retires', () => {
     const index = new QuestionIndex();
     for (const event of [human(0), call(1, 2, 'one'), result(2, 2, 'one'), end(3, 2), runtime(4)]) index.apply('a', event);
     index.apply('b', human(5));
+    index.apply('a', human(6));
+    // A steering message says nothing about the answer, so the round stays open.
     expect(index.pending('a')).toBe(true);
     expect(index.getRounds('a')[0]!.answered).toBe(false);
-    index.apply('a', human(6));
+    index.dismiss('a', [index.getRounds('a')[0]!.id]);
     expect(index.pending('a')).toBe(false);
     expect(index.getRounds('a')[0]!.answered).toBe(true);
     index.apply('a', call(7, 3, 'next'));
@@ -92,10 +94,19 @@ describe('QuestionIndex canonical events', () => {
     expect(index.pending()).toBe(true);
   });
 
-  it('does not resurrect a dismissed round when a normal reply precedes later streamed pages', () => {
+  it('keeps a later turn as its own round even while the earlier one is still open', () => {
+    const index = new QuestionIndex();
+    for (const event of [call(1, 1, 'first'), result(2, 1, 'first'), end(3, 1), call(4, 2, 'second'), result(5, 2, 'second')]) index.apply('a', event);
+    expect(index.getRounds('a').map(round => round.turnId)).toEqual(['1', '2']);
+    expect(index.getRounds('a').map(round => round.answered)).toEqual([false, false]);
+    expect(index.pending('a')).toBe(true);
+  });
+
+  it('keeps late pages of a retired turn inside the retired round instead of reopening it', () => {
     const index = new QuestionIndex();
     for (const event of [call(1, 2, 'one'), result(2, 2, 'one'), human(3)]) index.apply('a', event);
-    expect(index.pending('a')).toBe(false);
+    expect(index.pending('a')).toBe(true);
+    index.dismiss('a', [index.getRounds('a')[0]!.id]);
     index.apply('a', call(4, 2, 'two'));
     index.apply('a', result(5, 2, 'two', free));
     expect(index.getRounds('a')[0]).toMatchObject({ answered: true, complete: false });
@@ -103,7 +114,7 @@ describe('QuestionIndex canonical events', () => {
     expect(new QuestionIndex(index.serialize()).pending('a')).toBe(false);
   });
 
-  it('serializes only projection data and reconstructs open/complete/answered rounds after reload', () => {
+  it('serializes only projection data and reconstructs the open round after reload', () => {
     const index = new QuestionIndex();
     for (const event of [call(1, 1, 'root', 'run_code'), ptcStart(2, 'root', 'q'), ptcResult(3, 'root', 'q')]) index.apply('a', event);
     const open = new QuestionIndex(JSON.parse(JSON.stringify(index.serialize())));
@@ -112,9 +123,15 @@ describe('QuestionIndex canonical events', () => {
     open.apply('a', runtime(5));
     expect(new QuestionIndex(open.serialize()).pending('a')).toBe(true);
     open.apply('a', human(6));
+    // A reload presents the round again: an ordinary reply did not answer it.
     const restored = new QuestionIndex(open.serialize());
-    expect(restored.getRounds('a')[0]).toMatchObject({ complete: true, answered: true });
-    expect(restored.pending('a')).toBe(false);
+    expect(restored.getRounds('a')[0]).toMatchObject({ complete: true, answered: false });
+    expect(restored.pending('a')).toBe(true);
+    open.dismiss('a', [open.getRounds('a')[0]!.id]);
+    // Retirement prunes the stored pages, so the restored projection no longer presents it.
+    const retired = new QuestionIndex(open.serialize());
+    expect(retired.getRounds('a')).toEqual([]);
+    expect(retired.pending('a')).toBe(false);
     expect(JSON.stringify(restored.serialize())).not.toContain('Runtime context changed');
     expect(JSON.stringify(restored.serialize())).not.toContain('I prefer a normal text reply');
   });
@@ -152,12 +169,13 @@ describe('QuestionIndex canonical events', () => {
     expect(index.apply('a', result(3, 1, 'q'))).toBe(false);
   });
 
-  it('dismisses a round, filters it from pending, and keeps it dismissed across restore', () => {
+  it('retires one round, filters it from pending, and prunes it from the stored record', () => {
     const index = new QuestionIndex();
     for (const event of [call(1, 2, 'one'), result(2, 2, 'one'), end(3, 2), call(4, 3, 'two'), result(5, 3, 'two')]) index.apply('a', event);
     const first = index.getRounds('a')[0]!;
     expect(index.dismiss('a', [first.id])).toBe(1);
-    expect(index.getRounds('a').map(round => round.turnId)).toEqual(['3']);
+    expect(index.getRounds('a').map(round => round.turnId)).toEqual(['2', '3']);
+    expect(index.getRounds('a')[0]).toMatchObject({ turnId: '2', answered: true });
     expect(index.pending('a')).toBe(true);
     const record = index.serializeSession('a')!;
     expect(record.dismissedTurns).toEqual([2]);
@@ -171,25 +189,26 @@ describe('QuestionIndex canonical events', () => {
     expect(new QuestionIndex(index.serialize()).getRounds('a').map(round => round.turnId)).toEqual(['3']);
   });
 
-  it('dismisses every unresolved round without touching another conversation', () => {
+  it('retires every listed round without touching another conversation', () => {
     const index = new QuestionIndex();
     for (const event of [call(1, 1, 'a'), result(2, 1, 'a'), end(3, 1), call(4, 2, 'b'), result(5, 2, 'b'), end(6, 2)]) index.apply('one', event);
     index.apply('two', call(7, 1, 'c'));
     index.apply('two', result(8, 1, 'c'));
     expect(index.dismiss('one', index.getRounds('one').map(round => round.id))).toBe(2);
-    expect(index.getRounds('one')).toEqual([]);
+    expect(index.getRounds('one').map(round => round.answered)).toEqual([true, true]);
     expect(index.pending('one')).toBe(false);
     expect(index.getRounds('two')).toHaveLength(1);
     expect(index.pending('two')).toBe(true);
   });
 
-  it('does not resurrect a dismissed turn when late pages arrive', () => {
+  it('does not resurrect a retired turn when late pages arrive', () => {
     const index = new QuestionIndex();
     for (const event of [call(1, 4, 'first'), result(2, 4, 'first'), end(3, 4)]) index.apply('a', event);
     index.dismiss('a', [index.getRounds('a')[0]!.id]);
     index.apply('a', call(4, 4, 'late'));
     index.apply('a', result(5, 4, 'late', free));
-    expect(index.getRounds('a')).toEqual([]);
+    expect(index.getRounds('a')).toHaveLength(1);
+    expect(index.getRounds('a')[0]!.answered).toBe(true);
     expect(index.pending('a')).toBe(false);
     expect(index.serializeSession('a')!.events.some(event => event.kind === 'native-page' && event.callId === 'late')).toBe(false);
   });

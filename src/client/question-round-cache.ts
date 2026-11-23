@@ -9,6 +9,10 @@ export interface QuestionFeedPort {
 export interface QuestionDismissPort {
   dismiss(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
 }
+/** The host-owned retirement command: the round's own answer was submitted and admitted. */
+export interface QuestionAnswerPort {
+  answer(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+}
 export interface QuestionRoundView {
   rounds: readonly QuestionRound[];
   errors: ReadonlyMap<string, Problem>;
@@ -16,6 +20,7 @@ export interface QuestionRoundView {
 export interface QuestionRoundCacheOptions {
   feed: QuestionFeedPort;
   dismissal: QuestionDismissPort;
+  answerer: QuestionAnswerPort;
 }
 
 const EMPTY_VIEW: QuestionRoundView = Object.freeze({ rounds: Object.freeze([]), errors: new Map() });
@@ -154,6 +159,31 @@ export class QuestionRoundCache {
     this.submitted.delete(roundId);
     if (this.focused === roundId) this.focused = undefined;
     this.rounds = ordered([...this.rounds.filter(round => round.sessionId !== sessionId), ...remaining.filter(round => !this.dismissed.has(round.id))]);
+    this.errors.delete(sessionId);
+    this.publish();
+    return this.rounds.filter(round => round.sessionId === sessionId);
+  }
+
+  /**
+   * Record a round whose own answer was submitted and admitted. Only that round leaves
+   * the stack; a round the host already retired is dropped without failing the caller.
+   */
+  async answer(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
+    if (this.disposed) return [];
+    let remaining: readonly QuestionRound[];
+    try {
+      remaining = await this.options.answerer.answer(sessionId, roundId);
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
+      remaining = this.rounds.filter(round => round.sessionId !== sessionId || round.id !== roundId);
+    }
+    if (this.disposed) return [];
+    this.submitted.delete(roundId);
+    if (this.focused === roundId) this.focused = undefined;
+    this.rounds = ordered([
+      ...this.rounds.filter(round => round.sessionId !== sessionId),
+      ...remaining.filter(round => !this.dismissed.has(round.id)),
+    ]);
     this.errors.delete(sessionId);
     this.publish();
     return this.rounds.filter(round => round.sessionId === sessionId);

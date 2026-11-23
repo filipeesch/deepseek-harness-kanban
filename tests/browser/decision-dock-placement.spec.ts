@@ -126,24 +126,24 @@ test('a narrow file row can be scrolled to its last token and cleared, then the 
   await expect(page.getByTestId('question-reply')).toContainText('Local');
 });
 
-test('a growing composer keeps the fixed controls reachable through the strip itself', async ({ page }) => {
+test('a growing composer keeps the fixed controls reachable', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 420 });
   await open(page, '&long=1&question=1&composer=250');
-  // The fixed controls cannot all fit, so both strips opt into scrolling as a whole.
-  await expect(page.locator('[data-kb-dock-tight]')).toHaveCount(2);
-  const firstStrip = page.locator('.kb-decision .kq-strip');
-  const scrollToEnd = async (selector: string) => page.locator(selector).evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await scrollToEnd('.kb-decision .kq-strip');
-  const strip = await box(page, '.kb-decision .kq-strip');
+  // The fixed controls fit, so the seat keeps them outside a body that has no height
+  // left: both confirm actions stay on screen without a strip scrolling as a whole.
+  const viewport = page.viewportSize()!;
   const confirm = await box(page, '.kb-decision .kq-primary');
-  expect(confirm.y).toBeGreaterThanOrEqual(strip.y - 1);
-  expect(confirm.y + confirm.height).toBeLessThanOrEqual(strip.y + strip.height + 1);
-  await expect(firstStrip).toBeVisible();
-  await scrollToEnd(QUESTION);
-  const questionStrip = await box(page, QUESTION);
+  expect(bottom(confirm)).toBeLessThanOrEqual(viewport.height + 1);
   const next = await box(page, QUESTION + ' .kq-primary');
-  expect(next.y).toBeGreaterThanOrEqual(questionStrip.y - 1);
-  expect(next.y + next.height).toBeLessThanOrEqual(questionStrip.y + questionStrip.height + 1);
+  expect(bottom(next)).toBeLessThanOrEqual(viewport.height + 1);
+  const gate = page.locator('.kb-decision');
+  await gate.getByRole('radio', { name: 'Option 3' }).check();
+  await expect(gate.getByRole('button', { name: 'Confirm choice' })).toBeEnabled();
+  const question = page.locator(QUESTION);
+  await question.getByRole('radio', { name: 'Local' }).check();
+  await question.getByRole('button', { name: 'Next' }).click();
+  await question.getByRole('button', { name: 'Submit' }).click();
+  await expect(page.getByTestId('question-reply')).toContainText('Local');
 });
 
 test('a hidden question round leaves the whole height to the gate', async ({ page }) => {
@@ -532,3 +532,84 @@ test('the gate is self-sufficient outside the Kanban page scope', async ({ page 
   expect(style.border).not.toBe('0px');
   expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
 });
+test('a short decision grows to its content instead of a fixed cap', async ({ page }) => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 2560, height: 1440 }]) {
+    await page.setViewportSize(viewport);
+    await open(page, '');
+    const gate = await box(page, '.kb-decision .kq-strip');
+    expect(gate.height).toBeGreaterThan(400);
+    expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  }
+});
+
+test('a long decision passes the old fixed cap on a large conversation', async ({ page }) => {
+  await page.setViewportSize({ width: 2560, height: 1440 });
+  await open(page, '&long=1');
+  const gate = await box(page, '.kb-decision .kq-strip');
+  expect(gate.height).toBeGreaterThan(460);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'decision-dock-large-conversation.png') });
+});
+
+test('a long decision scrolls only when the seat cannot hold it', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '&long=1');
+  const budget = await page.locator('[data-kb-dock-strip]').first().evaluate(element => Number.parseFloat(getComputedStyle(element).getPropertyValue('--kb-dock-budget')));
+  expect(budget).toBeGreaterThan(0);
+  expect(budget).toBeLessThan(900);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(true);
+});
+
+test('the strips never start above the chat scrollport', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await open(page, '&question=1&rounds=2&offset=40');
+  const port = await box(page, '[data-scroll-body]');
+  const strips = page.locator('.kq-strip');
+  const count = await strips.count();
+  expect(count).toBeGreaterThanOrEqual(3);
+  for (let index = 0; index < count; index += 1) {
+    const strip = await strips.nth(index).boundingBox();
+    expect(strip!.y).toBeGreaterThanOrEqual(port.y - 1);
+  }
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'decision-dock-offset.png') });
+});
+
+test('a short strip keeps its whole body while both strips share the seat', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await open(page, '&question=1');
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  expect(await page.locator(QUESTION + ' .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+});
+
+test('the seat gives the short strip what it needs and the rest to the long one', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await open(page, '&long=1&question=1');
+  const gateBudget = await page.locator('[data-kb-dock-strip]').first().evaluate(element => Number.parseFloat(getComputedStyle(element).getPropertyValue('--kb-dock-budget')));
+  const questionBudget = await page.locator('[data-kb-dock-strip]').nth(1).evaluate(element => Number.parseFloat(getComputedStyle(element).getPropertyValue('--kb-dock-budget')));
+  expect(gateBudget).toBeGreaterThan(questionBudget);
+  expect(await page.locator(QUESTION + ' .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(true);
+});
+
+test('two unresolved rounds stack with the oldest expanded below the gate', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '&question=1&rounds=2');
+  const questions = page.locator(QUESTION);
+  await expect(questions).toHaveCount(2);
+  const gate = await box(page, '.kb-decision .kq-strip');
+  const forms = page.getByRole('form', { name: 'Questions from the agent' });
+  await expect(forms).toHaveCount(2);
+  const first = await questions.nth(0).boundingBox();
+  expect(first!.y).toBeGreaterThanOrEqual(gate.y + gate.height - 1);
+  await expect(questions.nth(0).locator('.kq-panel')).toHaveCount(1);
+  await expect(questions.nth(1).locator('.kq-panel')).toHaveCount(0);
+  const collapsed = await questions.nth(1).boundingBox();
+  expect(collapsed!.height).toBeLessThan(60);
+  await questions.nth(1).locator('.kq-header').click();
+  await expect(questions.nth(1).locator('.kq-panel')).toHaveCount(1);
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'question-dock-stack.png') });
+});
+

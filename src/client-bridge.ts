@@ -69,6 +69,7 @@ export class ClientBridge {
     this.questions = new QuestionRoundCache({
       feed: { open: (sessionId, onFrame, onError) => this.openQuestionFeed(sessionId, onFrame, onError) },
       dismissal: { dismiss: async (sessionId, roundId) => unwrap(await this.remote.kanban.dismissQuestions({ sessionId, roundId })) },
+      answerer: { answer: async (sessionId, roundId) => unwrap(await this.remote.kanban.answerQuestionRound({ sessionId, roundId })) },
     });
     this.questionsView = this.questions.view;
     this.control = this.makeControl();
@@ -262,7 +263,15 @@ export class ClientBridge {
   settleSubmission(id: string): void {
     if (!this.disposed) this.questions.settle(id);
   }
-  /** Dismiss the displayed round and every other unresolved round in that conversation. */
+  /** Record that a round's own answer was admitted, so it leaves the stack for good. */
+  async answerQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
+    if (this.disposed) return [];
+    const remaining = await this.questions.answer(sessionId, roundId);
+    // The round is retired, so its draft can never be restored or submitted again.
+    this.draftState.retire([roundId]);
+    return remaining;
+  }
+  /** Dismiss the displayed round and leave every other unresolved round in the stack. */
   async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
     const remaining = await this.questions.dismiss(sessionId, roundId);

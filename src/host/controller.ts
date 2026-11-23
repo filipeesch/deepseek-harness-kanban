@@ -18,6 +18,7 @@ export class KanbanController extends TypertRemoteService {
  @Remote async sessionRepair(request:{sessionId:string}):Promise<Outcome<SessionRepairResult>>{return this.attempt(()=>this.app.sessionRepair(request.sessionId));}
  @Remote async localDrive(request:LocalDriveRequest):Promise<Outcome<LocalDriveResult>>{return this.attempt(()=>this.app.localDrive(request));}
  @Remote async dismissQuestions(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.dismissQuestions(request.sessionId,request.roundId));}
+ @Remote async answerQuestionRound(request:{sessionId:string;roundId:string}):Promise<Outcome<QuestionRound[]>>{return this.attempt(()=>this.app.answerQuestionRound(request.sessionId,request.roundId));}
  @Remote async saveQuestionDraft(request:{sessionId:string;roundId:string;draft:QuestionDraftContent|null}):Promise<Outcome<StoredQuestionDraft|null>>{return this.attempt(()=>this.app.saveQuestionDraft(request.sessionId,request.roundId,request.draft));}
  @Remote async scriptedReview(request:{boardId?:string;stageId?:string;taskId?:string}):Promise<Outcome<ScriptedStageReview>>{return this.attempt(()=>this.app.scriptedReview(request));}
  @Remote async scriptedVariables(request:{taskId:string}):Promise<Outcome<ScriptedVariablesView>>{return this.attempt(()=>this.app.scriptedVariables(request.taskId));}

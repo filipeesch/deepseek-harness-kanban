@@ -105,7 +105,6 @@ function buildRounds(sessionId: string, entries: Iterable<ProjectionEvent>, dism
   const calls = events.filter((e): e is Extract<ProjectionEvent, { kind: 'call' }> => e.kind === 'call');
   const starts = events.filter((e): e is Extract<ProjectionEvent, { kind: 'ptc-start' }> => e.kind === 'ptc-start');
   const ends = events.filter((e): e is Extract<ProjectionEvent, { kind: 'end' }> => e.kind === 'end');
-  const humans = events.filter(e => e.kind === 'human');
   const rounds = new Map<number, { pages: Map<string, RoundPage>; latestResult: number; firstResult: number }>();
   for (const event of events) {
     if (event.kind !== 'native-page' && event.kind !== 'ptc-page') continue;
@@ -132,14 +131,19 @@ function buildRounds(sessionId: string, entries: Iterable<ProjectionEvent>, dism
     }
     rounds.set(turn, round);
   }
-  return freeze([...rounds].filter(([turn]) => !dismissedTurns.has(turn)).map(([turn, round]): QuestionRound => ({
+  return freeze([...rounds].map(([turn, round]): QuestionRound => ({
     id: 'question-round:' + sessionId + ':' + turn,
     sessionId,
     turnId: String(turn),
     pages: [...round.pages.values()].sort((a, b) => a.sequence - b.sequence || a.callId.localeCompare(b.callId)),
     complete: ends.some(end => end.turn === turn && end.seq > round.latestResult),
-    // A free-text reply also retires a live round; late pages cannot resurrect it.
-    answered: humans.some(human => human.seq > round.firstResult),
+    // A round is retired only by its own submission or by dismissal, both recorded in
+    // the durable no-longer-answerable list. An ordinary chat message never retires it:
+    // it cannot tell an answer from a steering remark, and on a stack it would retire
+    // every other open round too. The retired round stays in the projection so the
+    // client can drop its draft in the same frame; its stored pages are pruned, so a
+    // reload no longer presents it.
+    answered: dismissedTurns.has(turn),
   })).sort((a, b) => Number(a.turnId) - Number(b.turnId)));
 }
 

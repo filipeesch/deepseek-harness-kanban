@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canSubmit, selectActiveRound, submitState } from '../../src/questions/submission.js';
+import { canSubmit, selectVisibleRounds, submitState } from '../../src/questions/submission.js';
 import type { QuestionRound } from '../../src/shared/types.js';
 
 function round(id: string, sessionId = 'a', turnId = '1', overrides: Partial<QuestionRound> = {}): QuestionRound {
@@ -24,24 +24,29 @@ describe('submitState', () => {
   });
 });
 
-describe('selectActiveRound', () => {
-  const none = () => false;
-
-  it('selects only the requested conversation, ignores answered and pageless rounds, and prefers the newest', () => {
-    const rounds = [round('older', 'a', '1'), round('newer', 'a', '2'), round('empty', 'a', '3', { pages: [] }), round('other', 'b', '9'), round('answered', 'a', '4', { answered: true })];
-    expect(selectActiveRound(rounds, 'a', none)?.id).toBe('newer');
-    expect(selectActiveRound(rounds, 'b', none)?.id).toBe('other');
-    expect(selectActiveRound(rounds, 'missing', none)).toBeUndefined();
+describe('selectVisibleRounds', () => {
+  it('returns every unresolved round of the conversation, oldest first', () => {
+    const rounds = [round('newer', 'a', '2'), round('older', 'a', '1'), round('other', 'b', '9')];
+    expect(selectVisibleRounds(rounds, 'a').map(value => value.id)).toEqual(['older', 'newer']);
+    expect(selectVisibleRounds(rounds, 'b').map(value => value.id)).toEqual(['other']);
+    expect(selectVisibleRounds(rounds, 'missing')).toEqual([]);
   });
 
-  it('keeps an in-flight submitted round selected so its mounted form keeps the draft', () => {
+  it('leaves out a retired round and a round with no pages', () => {
+    const rounds = [round('open', 'a', '1'), round('retired', 'a', '2', { answered: true }), round('empty', 'a', '3', { pages: [] })];
+    expect(selectVisibleRounds(rounds, 'a').map(value => value.id)).toEqual(['open']);
+  });
+
+  it('keeps an in-flight submitted round so its mounted form keeps the draft', () => {
     const rounds = [round('submitted', 'a', '1'), round('newer', 'a', '2')];
-    expect(selectActiveRound(rounds, 'a', id => id === 'submitted')?.id).toBe('submitted');
+    expect(selectVisibleRounds(rounds, 'a').map(value => value.id)).toEqual(['submitted', 'newer']);
   });
 
-  it('puts a rolled-back round ahead of a newer one', () => {
-    const rounds = [round('failed', 'a', '1'), round('newer', 'a', '2')];
-    expect(selectActiveRound(rounds, 'a', none, 'failed')?.id).toBe('failed');
-    expect(selectActiveRound(rounds, 'a', none, 'answered')?.id).toBe('newer');
+  it('orders rounds of one turn by their last page sequence', () => {
+    const rounds = [
+      round('later', 'a', '1', { pages: [{ callId: 'x', sequence: 7, page: { type: 'freetext', question: 'Later' } }] }),
+      round('earlier', 'a', '1', { pages: [{ callId: 'y', sequence: 2, page: { type: 'freetext', question: 'Earlier' } }] }),
+    ];
+    expect(selectVisibleRounds(rounds, 'a').map(value => value.id)).toEqual(['earlier', 'later']);
   });
 });

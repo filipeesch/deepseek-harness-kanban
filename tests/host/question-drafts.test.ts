@@ -99,11 +99,11 @@ describe('conversation question drafts', () => {
     await app.close();
   });
 
-  it('ignores a write for a round that was already answered', async () => {
+  it('ignores a write for a round that is already retired', async () => {
     const drafts = memoryDraftStore();
     const app = await appWith(drafts.store);
     const routed = unresolvedRound(app, 's', 1);
-    app.observe('s', human(20));
+    await app.answerQuestionRound('s', routed);
     expect(app.questions.getRounds('s').every(round => round.answered)).toBe(true);
     await expect(app.saveQuestionDraft('s', routed, content())).resolves.toBeNull();
     expect(drafts.saves).toEqual([]);
@@ -132,35 +132,44 @@ describe('conversation question drafts', () => {
     await app.close();
   });
 
-  it('prunes a draft once the round is answered by an ordinary reply', async () => {
+  it('keeps the draft when an ordinary chat reply arrives, because it retires nothing', async () => {
     vi.useFakeTimers();
     const drafts = memoryDraftStore();
     const app = await appWith(drafts.store);
     const routed = unresolvedRound(app, 's', 1);
     await app.saveQuestionDraft('s', routed, content());
-    expect(drafts.store.load('s')).toBeDefined();
     app.observe('s', human(20));
     await vi.advanceTimersByTimeAsync(500);
+    expect(drafts.store.load('s')).toBeDefined();
+    expect(Object.keys(await app.questionDrafts('s'))).toEqual([routed]);
+    await app.close();
+  });
+
+  it('prunes a draft once the round is retired by its own answer', async () => {
+    const drafts = memoryDraftStore();
+    const app = await appWith(drafts.store);
+    const routed = unresolvedRound(app, 's', 1);
+    await app.saveQuestionDraft('s', routed, content());
+    expect(drafts.store.load('s')).toBeDefined();
+    await app.answerQuestionRound('s', routed);
     expect(drafts.store.load('s')).toBeUndefined();
     expect(await app.questionDrafts('s')).toEqual({});
     await app.close();
   });
 
-  it('prunes drafts after a dismissal is persisted and ignores a later save', async () => {
+  it('prunes only the dismissed round and ignores a later save for it', async () => {
     const drafts = memoryDraftStore();
     const app = await appWith(drafts.store);
     const first = unresolvedRound(app, 's', 1);
     const second = unresolvedRound(app, 's', 2);
     await app.saveQuestionDraft('s', first, content());
     await app.saveQuestionDraft('s', second, content());
-    const [round] = await app.rounds('s');
-    await app.dismissQuestions('s', round!.id);
-    expect(drafts.store.load('s')).toBeUndefined();
-    expect(await app.questions.pending('s')).toBe(false);
+    await app.dismissQuestions('s', first);
+    expect(Object.keys(drafts.store.load('s')!.drafts)).toEqual([second]);
+    expect(await app.questions.pending('s')).toBe(true);
     // A debounced write that lands after the dismissal must not recreate the draft.
-    await expect(app.saveQuestionDraft('s', second, content())).resolves.toBeNull();
-    expect(drafts.store.load('s')).toBeUndefined();
-    expect(drafts.saves).toHaveLength(2);
+    await expect(app.saveQuestionDraft('s', first, content())).resolves.toBeNull();
+    expect(Object.keys(drafts.store.load('s')!.drafts)).toEqual([second]);
     await app.close();
   });
 
@@ -239,12 +248,12 @@ describe('conversation question drafts', () => {
     await app.close();
   });
 
-  it('flushes a pending answered-draft prune on shutdown', async () => {
+  it('flushes a pending retired-draft prune on shutdown', async () => {
     const drafts = memoryDraftStore();
     const app = await appWith(drafts.store);
     const routed = unresolvedRound(app, 's', 1);
     await app.saveQuestionDraft('s', routed, content());
-    app.observe('s', human(20));
+    await app.answerQuestionRound('s', routed);
     // Close before the coalescing window elapses: shutdown must run the cleanup, not cancel it.
     await app.close();
     expect(drafts.store.load('s')).toBeUndefined();

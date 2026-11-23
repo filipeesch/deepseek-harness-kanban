@@ -203,6 +203,7 @@ const contribution=createTypertContribution({package:PACKAGE_NAME,methods:{
  'kanban/sessionRepair':{...base,parameters:[parameter('request',z.object({sessionId:id}).strict(),'SessionLookup')],result:codec('SessionRepairOutcome',()=>outcome(SessionRepairResultSchema))},
  'kanban/localDrive':{...base,parameters:[parameter('request',LocalDriveRequestSchema,'LocalDriveRequest')],result:codec('LocalDriveOutcome',()=>outcome(LocalDriveResultSchema))},
  'kanban/dismissQuestions':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id}).strict(),'QuestionDismissal')],result:codec('QuestionDismissalOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
+ 'kanban/answerQuestionRound':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id}).strict(),'QuestionRetirement')],result:codec('QuestionRetirementOutcome',()=>outcome(z.array(QuestionRoundSchema)))},
  'kanban/saveQuestionDraft':{...base,parameters:[parameter('request',z.object({sessionId:id,roundId:id,draft:QuestionDraftContentSchema.nullable()}).strict(),'QuestionDraftWrite')],result:codec('QuestionDraftOutcome',()=>outcome(StoredQuestionDraftSchema.nullable()))},
  'kanban/scriptedReview':{...base,parameters:[parameter('request',z.object({boardId:id.optional(),stageId:id.optional(),taskId:id.optional()}).strict(),'ScriptedReviewLookup')],result:codec('ScriptedReviewOutcome',()=>outcome(ScriptedStageReviewSchema))},
  'kanban/scriptedVariables':{...base,parameters:[parameter('request',z.object({taskId:id}).strict(),'TaskLookup')],result:codec('ScriptedVariablesOutcome',()=>outcome(ScriptedVariablesSchema))},
@@ -230,6 +231,7 @@ export interface KanbanRemote {
  sessionRepair(request:{sessionId:string}):Promise<RemoteResult<Outcome<SessionRepairResult>>>;
  localDrive(request:LocalDriveRequest):Promise<RemoteResult<Outcome<LocalDriveResult>>>;
  dismissQuestions(request:{sessionId:string;roundId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
+ answerQuestionRound(request:{sessionId:string;roundId:string}):Promise<RemoteResult<Outcome<QuestionRound[]>>>;
  saveQuestionDraft(request:{sessionId:string;roundId:string;draft:QuestionDraftContent|null}):Promise<RemoteResult<Outcome<StoredQuestionDraft|null>>>;
  scriptedReview(request:{boardId?:string;stageId?:string;taskId?:string}):Promise<RemoteResult<Outcome<ScriptedStageReview>>>;
  scriptedVariables(request:{taskId:string}):Promise<RemoteResult<Outcome<ScriptedVariablesView>>>;

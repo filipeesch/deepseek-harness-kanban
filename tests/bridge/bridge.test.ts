@@ -66,6 +66,7 @@ function fixture(options: { storage?: KeyValueStorage } = {}) {
       branches: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['main'] } }),
       modelCatalog: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { default: { provider: 'deepseek', model: 'chat' }, providers: [], failures: [] } } }),
       mcpServers: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: ['atlassian', 'trino'] } }),
+      answerQuestionRound: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: [] } }),
       readTaskAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { name: 'notes.txt', bytes: 3, origin: 'path', data: 'YWJj' } } }),
       saveQuestionAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { id: 'att-1', name: 'notes.txt', bytes: 3 } } }),
       readQuestionAttachment: vi.fn().mockResolvedValue({ ok: true, value: { ok: true, value: { name: 'notes.txt', data: 'YWJj' } } }),

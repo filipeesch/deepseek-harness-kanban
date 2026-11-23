@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { HEADER_FALLBACK, seatPlan, type StripMetrics } from './seat-budget.js';
 
 /** Marks a docked strip's box, so the seat can tell the strips apart from the composer. */
 export const DOCK_STRIP_ATTRIBUTE = 'data-kb-dock-strip';
@@ -15,18 +16,10 @@ export const DOCK_PANEL_ATTRIBUTE = 'data-kb-dock-panel';
 export const DOCK_LAUNCHER_ATTRIBUTE = 'data-kb-dock-launcher';
 /** Whether this launcher box is the open one. */
 export const DOCK_ACTIVE_ATTRIBUTE = 'data-kb-dock-active';
-/** The largest height a docked strip may use, whatever the conversation offers. */
-const CEILING = 460;
 /** The host seat's gap, used when the computed gap is unreadable. */
 const GAP_FALLBACK = 6;
-/** The narrowest body worth presenting under a strip's fixed header and footer. */
-const MIN_BODY = 24;
-/** The smallest panel worth presenting above the conversation in the cramped fallback. */
-const MIN_PANEL = 96;
 /** The padding the cramped panel keeps from the conversation it floats over. */
 const PANEL_INSET = 8;
-/** A readable fallback header height when a strip is portaled and not yet measurable. */
-const HEADER_FALLBACK = 34;
 
 let nextSeat = 0;
 
@@ -110,10 +103,27 @@ function headerHeightOf(strip: HTMLElement | undefined): number {
   return header === null || header === undefined ? HEADER_FALLBACK : heightOf(header);
 }
 
-/** The fixed part of one strip: its header bar and its action footer, which never shrink. */
-function fixedHeightOf(strip: HTMLElement | undefined): number {
-  const footer = strip?.querySelector<HTMLElement>('.kq-footer');
-  return headerHeightOf(strip) + (footer === null || footer === undefined ? 0 : heightOf(footer));
+/**
+ * The measured geometry of one strip, as the height policy takes it.
+ *
+ * A strip whose body is hidden costs only its header. An expanded strip reports the
+ * height its body content needs, read from the unclipped scroll body, so a strip that is
+ * currently squeezed still reports the height it would like.
+ */
+function stripMetricsOf(strip: HTMLElement | undefined): StripMetrics {
+  const header = Math.ceil(headerHeightOf(strip));
+  if (strip === null || strip === undefined) return { header, fixed: header, content: 0, expanded: false };
+  // The budget bounds the strip's border box, so its own border and the panel's rule
+  // belong to what the strip needs; leaving them out would clip the body by a pixel or
+  // two and keep a scrollbar on content that actually fits.
+  const borders = Math.max(0, strip.offsetHeight - strip.clientHeight);
+  const panel = strip.querySelector<HTMLElement>('.kq-panel');
+  if (panel === null) return { header, fixed: header + borders, content: 0, expanded: false };
+  const footer = strip.querySelector<HTMLElement>('.kq-footer');
+  const panelRule = Number.parseFloat(getComputedStyle(panel).borderTopWidth) || 0;
+  const fixed = Math.ceil(header + (footer === null ? 0 : heightOf(footer)) + borders + panelRule);
+  const content = Math.ceil(strip.querySelector<HTMLElement>('.kq-scroll')?.scrollHeight ?? 0);
+  return { header, fixed, content, expanded: true };
 }
 
 /**
@@ -171,10 +181,11 @@ function visibleConversation(port: HTMLElement): { left: number; top: number; ri
  * strips, the composer, and any other seat entry must share the scrollport's height
  * instead of each taking a share of the browser viewport. Every non-strip child of the
  * layer that holds the strips — the composer card above all — and every element the seat
- * adds above that layer is reserved first. Each strip's fixed header and footer are then
- * reserved, and only the remainder is split between the strip bodies. When the fixed
- * controls cannot share the seat with the composer at all, the strip is presented above
- * the visible conversation in a portaled panel, so it stays answerable.
+ * adds above that layer is reserved first. Each strip then grows with its own content up
+ * to what the seat can spare, never past the conversation's chat scrollport, and the
+ * spare height is shared by need (see `seat-budget`). When the fixed controls cannot
+ * share the seat with the composer at all, the strip is presented above the visible
+ * conversation in a portaled panel, so it stays answerable.
  * @param anchor - the strip's box in the seat.
  * @returns how that strip may be presented, or undefined when the host gives no scrollport.
  */
@@ -207,36 +218,25 @@ export function seatStripBudget(anchor: HTMLElement | null): SeatBudget | undefi
   }
 
   const count = boxes.length;
-  const spare = port.clientHeight - reserved - gaps;
-  const needs = strips.map(strip => fixedHeightOf(strip) + MIN_BODY);
-  const total = needs.reduce((left, right) => left + right, 0);
-  if (spare >= total) {
-    const extra = Math.floor((spare - total) / count);
-    return { mode: 'dock', budget: Math.min(CEILING, needs[index]! + extra), tight: false };
-  }
-
-  const headers = strips.map(strip => headerHeightOf(strip));
-  const seatsForHeaders = headers.reduce((left, right) => left + right, 0) + gaps;
-  if (spare >= seatsForHeaders) {
-    // The fixed controls cannot all fit: every strip keeps its header and scrolls as a
-    // whole from it, so its controls stay reachable without a band covering them.
-    const extra = Math.floor((spare - seatsForHeaders) / count);
-    return { mode: 'dock', budget: Math.min(CEILING, Math.max(headers[index]!, headers[index]! + extra)), tight: true };
+  const view = visibleConversation(port);
+  const panelGap = rowGapOf(layer);
+  const top = Math.round(view.top + PANEL_INSET);
+  const crampedSpace = Math.max(0, Math.round(view.bottom - top - PANEL_INSET));
+  const plan = seatPlan(strips.map(stripMetricsOf), { dockSpace: port.clientHeight - reserved - gaps, crampedSpace, gap: panelGap });
+  if (plan.mode === 'dock') {
+    // The strips live in the seat: each keeps its fixed controls, and its body scrolls
+    // only when the content is taller than the height the seat can spare.
+    return { mode: 'dock', budget: plan.budgets[index]!, tight: plan.tight };
   }
 
   // Not even the headers fit beside the composer: present each strip above the visible
   // part of the conversation, in a portaled panel that scrolls as a whole.
-  const view = visibleConversation(port);
-  const panelGap = rowGapOf(layer);
-  const top = Math.round(view.top + PANEL_INSET);
-  const available = Math.max(0, Math.round(view.bottom - top - PANEL_INSET));
   const width = Math.min(688, Math.max(160, Math.round(view.right - view.left - 32)));
   const group = groupOf(layer);
   const seatIds = boxes.map(box => box.getAttribute(DOCK_SEAT_ATTRIBUTE) ?? '');
-  const share = Math.floor(Math.max(0, available - panelGap * Math.max(0, count - 1)) / count);
-  if (share >= MIN_PANEL) {
+  if (!plan.launcher) {
     // Every strip gets a disjoint slot, so expanded panels never cover each other.
-    const panelHeight = Math.min(share, 560);
+    const panelHeight = plan.panelHeight;
     const slot = panelHeight + panelGap;
     return {
       mode: 'cramped',
@@ -254,7 +254,7 @@ export function seatStripBudget(anchor: HTMLElement | null): SeatBudget | undefi
   if (stored !== active) activeByGroup.set(group, active);
   const isActive = seatIds[index] === active;
   const pitch = HEADER_FALLBACK + panelGap;
-  const openHeight = Math.max(0, available - count * pitch);
+  const openHeight = Math.max(0, crampedSpace - count * pitch);
   return {
     mode: 'cramped',
     budget: openHeight,

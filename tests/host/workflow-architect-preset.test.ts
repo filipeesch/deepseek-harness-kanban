@@ -143,6 +143,14 @@ describe('shipped agent presets', () => {
     expect(plugin(operator, 'planning')).toBeDefined();
   });
 
+  it('asks for self-contained question pages in the operator guidance', async () => {
+    const patch = await readFile(path.join(root, 'cordis.patch.yml'), 'utf8');
+    expect(patch).toContain('Ask each question as a self-contained page');
+    expect(patch).toContain('never announce, preview, or summarize the pages that follow');
+    expect(patch).toContain('the form already shows the round');
+    expect(patch).toContain('Never ask again what the conversation already settled');
+  });
+
   it('keeps workflow operation and authoring guidance within their roles', async () => {
     const operator = await readFile(path.join(skillRoot, 'kanban-workflow-operation/SKILL.md'), 'utf8');
     for (const phrase of [

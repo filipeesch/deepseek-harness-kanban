@@ -26,8 +26,9 @@ function harness(initialDismissal: readonly QuestionRound[] = []) {
     },
   };
   const dismissal = { dismiss: vi.fn().mockResolvedValue(initialDismissal) };
-  const cache = new QuestionRoundCache({ feed, dismissal });
-  return { cache, feeds, dismissal, opens: () => opens };
+  const answerer = { answer: vi.fn().mockResolvedValue([]) };
+  const cache = new QuestionRoundCache({ feed, dismissal, answerer });
+  return { cache, feeds, dismissal, answerer, opens: () => opens };
 }
 
 describe('QuestionRoundCache', () => {
@@ -197,6 +198,29 @@ describe('QuestionRoundCache', () => {
     expect(cache.focusedRoundId).toBe('a:1');
     cache.submit('a:1');
     expect(cache.focusedRoundId).toBeUndefined();
+  });
+
+  it('retires only the answered round and keeps the other rounds of the conversation', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockResolvedValueOnce([{ ...round('a:1'), answered: true }, round('a:2')]);
+    const remaining = await cache.answer('a', 'a:1');
+    expect(answerer.answer).toHaveBeenCalledWith('a', 'a:1');
+    expect(remaining.map(value => value.id)).toEqual(['a:1', 'a:2']);
+    // The retired round keeps its identity so its draft can be dropped, but the other round stays answerable.
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'a:2']);
+    expect(cache.view.getSnapshot().rounds.filter(value => !value.answered).map(value => value.id)).toEqual(['a:2']);
+  });
+
+  it('drops a round the host already retired without failing the caller', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'QUESTION_ROUND_NOT_FOUND' }));
+    const remaining = await cache.answer('a', 'a:1');
+    expect(remaining.map(value => value.id)).toEqual(['a:2']);
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:2']);
   });
 
   it('ignores a submission for a round the cache does not know', () => {

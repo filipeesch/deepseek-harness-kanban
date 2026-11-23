@@ -39,6 +39,14 @@ export interface QuestionAttachmentPort {
 export interface QuestionFormProps {
   round: QuestionRound;
   hidden?: boolean;
+  /**
+   * Whether the block's body is hidden. The dock that stacks several rounds owns this
+   * state, so it can expand the oldest round and leave the newer ones collapsed; an
+   * unstacked form keeps its own state when these props are omitted.
+   */
+  collapsed?: boolean;
+  /** Ask the owner to toggle the block's body. Ignored when the form owns the state. */
+  onToggleCollapsed?: () => void;
   /** The durably stored draft this round was restored with. */
   storedDraft?: StoredQuestionDraft;
   /** Receives the durable projection after every change worth persisting. */
@@ -61,7 +69,6 @@ type Submission = 'idle' | 'submitting' | 'failed';
 /** Transient state of the mounted strip; none of it survives a remount. */
 interface Surface {
   roundId: string;
-  collapsed: boolean;
   submission: Submission;
   error: string | null;
   confirmingDismiss: boolean;
@@ -76,7 +83,7 @@ const WEIGHT_LABELS: Record<NonNullable<QuestionPage['weight']>, string> = {
 };
 
 function newSurface(roundId: string): Surface {
-  return { roundId, collapsed: false, submission: 'idle', error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
+  return { roundId, submission: 'idle', error: null, confirmingDismiss: false, dismissing: false, dismissError: null };
 }
 function sameSlide(left: ActiveSlide, right: ActiveSlide): boolean {
   if (left.kind !== right.kind) return false;
@@ -96,11 +103,15 @@ function Chevron({ up }: { up: boolean }) {
 }
 
 /** The fixed question strip docked above the composer: pages first, Additional Notes last. */
-export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange, onSubmit, onDismiss, onHide, files }: QuestionFormProps) {
+export function QuestionForm({ round, hidden = false, collapsed, onToggleCollapsed, storedDraft, onDraftChange, onSubmit, onDismiss, onHide, files }: QuestionFormProps) {
   const prefix = useId();
   const bodyId = prefix + '-body';
   const headingId = prefix + '-heading';
   const [surface, setSurface] = useState<Surface>(() => newSurface(round.id));
+  // The dock owns the expansion state of a stacked block; a standalone form keeps its
+  // own, so the same component serves both without a second collapse implementation.
+  const [ownCollapsed, setOwnCollapsed] = useState(false);
+  const isCollapsed = collapsed ?? ownCollapsed;
   const [focused, setFocused] = useState<Record<string, string>>({});
   const headingRef = useRef<HTMLDivElement>(null);
   const keepAnsweringRef = useRef<HTMLButtonElement>(null);
@@ -203,10 +214,18 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
   }
   function next() { if (canAdvance) goTo(slides[index + 1]); }
   function back() { goTo(slides[index - 1]); }
-  function toggle() { updateSurface(previous => ({ ...previous, collapsed: !previous.collapsed })); }
+  function toggle() {
+    if (collapsed === undefined) setOwnCollapsed(value => !value);
+    else onToggleCollapsed?.();
+  }
   function requestDismiss() {
     if (!onDismiss || disabled) return;
-    if (hasDraft && !current.confirmingDismiss) { updateSurface(previous => ({ ...previous, collapsed: false, confirmingDismiss: true, dismissError: null })); return; }
+    if (hasDraft && !current.confirmingDismiss) {
+      // The confirmation must be visible, so a collapsed block is opened first.
+      if (isCollapsed) toggle();
+      updateSurface(previous => ({ ...previous, confirmingDismiss: true, dismissError: null }));
+      return;
+    }
     void dismiss();
   }
   function cancelDismiss() {
@@ -352,13 +371,13 @@ export function QuestionForm({ round, hidden = false, storedDraft, onDraftChange
   return <>
     <style>{questionCss}</style>
     <form className="kq-strip" aria-label="Questions from the agent" hidden={hidden} aria-hidden={hidden || undefined} onSubmit={submit}>
-      <button type="button" className="kq-header" aria-expanded={!current.collapsed} aria-controls={bodyId} onClick={toggle}>
+      <button type="button" className="kq-header" aria-expanded={!isCollapsed} aria-controls={bodyId} onClick={toggle}>
         <span className="kq-icon"><QuestionGlyph /></span>
         <span className="kq-title">Questions from the agent</span>
         <span className="kq-progress" aria-live="polite">{index + 1} / {slides.length}</span>
-        <span className="kq-chevron" data-open={!current.collapsed}><Chevron up={!current.collapsed} /></span>
+        <span className="kq-chevron" data-open={!isCollapsed}><Chevron up={!isCollapsed} /></span>
       </button>
-      {!current.collapsed && <div className="kq-panel" id={bodyId} onPaste={event => {
+      {!isCollapsed && <div className="kq-panel" id={bodyId} onPaste={event => {
         // Paste belongs to the whole panel, not only its body: a file pasted while the
         // attach control or a footer button has focus still reaches the active slide.
         // Pasted text stays text, and a surface that is submitting or dismissing takes

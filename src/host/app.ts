@@ -673,19 +673,41 @@ export class KanbanApp {
   await Promise.allSettled(ids.map(sessionId=>this.persistSession(sessionId)));
  }
  async rounds(sessionId:string):Promise<QuestionRound[]>{await this.prepareQuestions(sessionId);return structuredClone([...this.questions.getRounds(sessionId)]);}
+ /**
+  * Retire one round because the person dismissed it. Only that round's block leaves the
+  * stack: the other unresolved rounds keep their pages and drafts.
+  */
  async dismissQuestions(sessionId:string,roundId:string):Promise<QuestionRound[]>{
-  // Dismissal and its persistence/rollback share the session's draft lane: a
-  // concurrent draft write must not observe the provisional dismissal and prune a
-  // draft that a failed projection write would bring back.
+  return this.retireQuestionRound(sessionId,roundId,'dismissed');
+ }
+ /**
+  * Retire one round because its own answer was submitted and admitted. The durable fact
+  * is the same as a dismissal, so the block never reappears after a reload; the reply
+  * itself is the answer's record in the transcript.
+  */
+ async answerQuestionRound(sessionId:string,roundId:string):Promise<QuestionRound[]>{
+  return this.retireQuestionRound(sessionId,roundId,'answered');
+ }
+ /**
+  * Mark one round no longer answerable and persist it.
+  *
+  * Retirement and its persistence/rollback share the session's draft lane: a concurrent
+  * draft write must not observe the provisional retirement and prune a draft that a
+  * failed projection write would bring back. The durable list is the same one dismissal
+  * has always used, so an older plugin can still read the stored record after a rollback.
+  */
+ private async retireQuestionRound(sessionId:string,roundId:string,trigger:'answered'|'dismissed'):Promise<QuestionRound[]>{
+  const failure=trigger==='answered'
+   ? 'The answered question round could not be recorded.'
+   : 'The question dismissal could not be saved.';
   return this.enqueueDraftWrite(sessionId,async()=>{
    await this.prepareQuestions(sessionId);
    const rounds=this.questions.getRounds(sessionId);
    const target=rounds.find(round=>round.id===roundId);
-   if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for dismissal.');
-   const unresolved=rounds.filter(round=>!round.answered);
-   const turns=unresolved.map(round=>Number(round.turnId));
-   this.questions.dismiss(sessionId,unresolved.map(round=>round.id));
-   // Dismissal consumes pending user work without a conversation event, so the derived
+   if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for retirement.');
+   const turns=rounds.filter(round=>round.id===roundId).map(round=>Number(round.turnId));
+   this.questions.dismiss(sessionId,[roundId]);
+   // A retirement consumes pending user work without a conversation event, so the derived
    // hold must be re-projected even when the task has no activity left to reconcile.
    this.rederiveAttention(sessionId,true);
    const existing=this.saveTimers.get(sessionId);
@@ -696,7 +718,7 @@ export class KanbanApp {
     this.rederiveAttention(sessionId,true);
     this.schedulePersist(sessionId);
     this.options.report?.(error);
-    throw new KanbanError('STORAGE_SAVE_FAILED','The question dismissal could not be saved.');
+    throw new KanbanError('STORAGE_SAVE_FAILED',failure);
    }
    this.cancelDraftPrune(sessionId);
    await this.pruneAnsweredDrafts(sessionId);
