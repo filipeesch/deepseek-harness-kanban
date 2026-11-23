@@ -224,6 +224,49 @@ describe('conversation question persistence', () => {
     await app.close();
   });
 
+  it('a queued autosave cannot undo a successful retirement', async () => {
+    const saves: QuestionSessionRecord[] = [];
+    const gates: Array<() => void> = [];
+    const store: QuestionStore = {
+      load: () => undefined,
+      save: async (_id, record) => { saves.push(record); await new Promise<void>(resolve => gates.push(resolve)); },
+      remove: async () => false,
+    };
+    const until = async (check: () => boolean): Promise<void> => {
+      for (let attempt = 0; attempt < 400; attempt += 1) {
+        if (check()) return;
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      throw new Error('condition not reached');
+    };
+    const app = await appWith(store);
+    app.observe('s', call(1, 1, 'a'));
+    app.observe('s', result(2, 1, 'a'));
+    app.observe('s', end(3, 1));
+    const round = (await app.rounds('s'))[0]!;
+    const dismissal = app.dismissQuestions('s', round.id);
+    await until(() => gates.length === 1);
+    // A live event schedules the debounced autosave while the retirement write waits.
+    app.observe('s', call(4, 1, 'b'));
+    await new Promise(resolve => setTimeout(resolve, 320));
+    // The retirement write finishes first; the queued autosave runs only after it applied.
+    gates[0]!();
+    await dismissal;
+    await until(() => gates.length === 2);
+    gates[1]!();
+    await until(() => saves.length >= 2);
+    // The last write is authoritative and carries the durable retirement.
+    expect(saves.at(-1)!.dismissedTurns).toContain(1);
+    const reloaded = await appWith({
+      load: sessionId => sessionId === 's' ? saves.at(-1) : undefined,
+      save: async () => {},
+      remove: async () => false,
+    });
+    expect((await reloaded.rounds('s')).filter(value => !value.answered)).toHaveLength(0);
+    await app.close();
+    await reloaded.close();
+  });
+
   it('records an admitted answer durably and never presents the round again', async () => {
     let saved: QuestionSessionRecord | undefined;
     const store: QuestionStore = { load: id => id === 's' ? saved : undefined, save: async (_id, record) => { saved = structuredClone(record); }, remove: async () => false };

@@ -266,10 +266,27 @@ export class ClientBridge {
   /** Record that a round's own answer was admitted, so it leaves the stack for good. */
   async answerQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
-    const remaining = await this.questions.answer(sessionId, roundId);
+    let remaining: readonly QuestionRound[];
+    try {
+      remaining = await this.questions.answer(sessionId, roundId);
+    } catch (error) {
+      // The reply is already admitted; keep the retry with the conversation even if the
+      // dock unmounts before the rejection reaches it.
+      this.questions.noteRetirementFailure(sessionId, roundId, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    this.questions.clearRetirementFailure(roundId);
     // The round is retired, so its draft can never be restored or submitted again.
     this.draftState.retire([roundId]);
     return remaining;
+  }
+  /** Record a failed retirement with the conversation, so its dock can offer a retry. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void {
+    if (!this.disposed) this.questions.noteRetirementFailure(sessionId, roundId, message);
+  }
+  /** Drop a failed retirement once the same round retired. */
+  clearRetirementFailure(roundId: string): void {
+    if (!this.disposed) this.questions.clearRetirementFailure(roundId);
   }
   /** Dismiss the displayed round and leave every other unresolved round in the stack. */
   async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {

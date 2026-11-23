@@ -436,22 +436,29 @@ describe('public SDK plugin binding contracts', () => {
       active: { kind: 'page', callId: 'call-a' },
       updatedAt: '2026-11-12T10:00:00.000Z',
     };
-    const f = await installed([older, question], { [question.id]: stored });
+    // Numeric turns keep the stack order deterministic, as the host's ids always are.
+    const subject: QuestionRound = { ...question, turnId: '2' };
+    const f = await installed([older, subject], { [subject.id]: stored });
     const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
     // The host dismisses only the older round and keeps the one that still owes an answer.
     vi.mocked(f.remote.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [question] } });
     render(<Dock sessionId="a" />);
     const forms = await screen.findAllByRole('form', { name: 'Questions from the agent' });
     expect(forms).toHaveLength(2);
+    // A newer round reaches the client through the feed before the command answers.
+    // A later turn than the question round, so it sorts after it once the older round leaves.
+    const newer: QuestionRound = { ...subject, id: 'newer', turnId: '3', pages: [{ callId: 'call-c', sequence: 1, page: { question: 'Newer question', type: 'freetext' } }] };
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [older, subject, newer] });
+    const formsNow = () => screen.getAllByRole('form', { name: 'Questions from the agent' });
+    await waitFor(() => expect(formsNow()).toHaveLength(3));
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    await waitFor(() => expect(screen.getAllByRole('form', { name: 'Questions from the agent' })).toHaveLength(1));
+    // The acknowledgement names only the dismissal's target, so the newer round survives
+    // even though the host's response list predates it.
+    await waitFor(() => expect(formsNow()).toHaveLength(2));
     // The surviving round becomes the oldest, opens, and keeps its draft.
     expect(screen.getByRole('heading', { name: 'Choose the implementation' })).toBeTruthy();
     expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Surviving draft.');
-    // A later feed update still carries it, and its draft was never discarded.
-    f.questionFeeds[0]!.push({ kind: 'update', rounds: [question] });
-    await waitFor(() => expect(screen.getAllByRole('form', { name: 'Questions from the agent' })).toHaveLength(1));
-    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Surviving draft.');
+    expect(document.querySelectorAll('.kq-panel')).toHaveLength(1);
     expect(f.remote.saveQuestionDraft).not.toHaveBeenCalledWith(expect.objectContaining({ draft: null }));
   });
 

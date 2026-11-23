@@ -562,6 +562,8 @@ test('a stack taller than the visible chat keeps every launcher reachable and th
   const active = page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]');
   await expect(active).toHaveCount(1);
   await expect(active.locator('.kq-panel')).toHaveCount(1);
+  // The open one is the round that was activated, not just any active launcher.
+  await expect(active).toContainText('Follow-up question 12');
   // The open panel settles at the top of the list, inside the same visible rectangle.
   await expect.poll(async () => (await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]')).y).toBeGreaterThanOrEqual(0);
   const activeBox = await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]');
@@ -581,6 +583,48 @@ test('closing a shallow conversation removes its launcher list too', async ({ pa
   await page.evaluate(() => (window as unknown as { __harnessToggleDock: (open: boolean) => void }).__harnessToggleDock(false));
   await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(0);
   await expect(page.locator('[data-kb-dock-panel]')).toHaveCount(0);
+});
+
+test('a launcher panel stays inside a very shallow conversation', async ({ page }) => {
+  // The visible conversation is barely taller than one header row.
+  await page.setViewportSize({ width: 360, height: 120 });
+  await open(page, '&long=1&question=1&composer=400');
+  const rail = await box(page, '[data-kb-dock-rail]');
+  expect(rail.height).toBeLessThanOrEqual(100);
+  const active = page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]');
+  await expect(active.locator('.kq-panel')).toHaveCount(1);
+  // The open strip is bounded by the list instead of growing past the chat.
+  const activeBox = await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]');
+  expect(activeBox.height).toBeLessThanOrEqual(rail.height + 1);
+  expect(bottom(activeBox)).toBeLessThanOrEqual(bottom(rail) + 1);
+  // It scrolls as a whole, so every control stays reachable inside the same rectangle.
+  const strip = active.locator('.kq-strip');
+  expect(await strip.evaluate(element => getComputedStyle(element).overflowY)).toBe('auto');
+  expect(await strip.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await strip.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  // The open launcher's own last action is reachable inside the same rectangle.
+  const action = active.locator('.kq-footer .kq-primary').last();
+  const actionBox = await action.boundingBox();
+  expect(actionBox).not.toBeNull();
+  expect(actionBox!.y).toBeGreaterThanOrEqual(rail.y - 1);
+  expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(bottom(rail) + 1);
+});
+
+test('a launcher list is released on every presentation change', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 200 });
+  await open(page, '&long=1&question=1&composer=400');
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(1);
+  // Grow into disjoint cramped panels: the list must not stay attached empty.
+  await page.setViewportSize({ width: 360, height: 900 });
+  await page.evaluate(() => (window as unknown as { __harnessSetComposer: (value: number) => void }).__harnessSetComposer(800));
+  await expect(page.locator('[data-kb-dock-cramped]')).toHaveCount(2);
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(0);
+  // Back to the launchers, then close the conversation: no list remains either.
+  await page.setViewportSize({ width: 360, height: 200 });
+  await page.evaluate(() => (window as unknown as { __harnessSetComposer: (value: number) => void }).__harnessSetComposer(400));
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(1);
+  await page.evaluate(() => (window as unknown as { __harnessToggleDock: (open: boolean) => void }).__harnessToggleDock(false));
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(0);
 });
 
 test('a short decision grows to its content instead of a fixed cap', async ({ page }) => {
@@ -670,9 +714,12 @@ test('two unresolved rounds stack with the oldest expanded below the gate', asyn
   await expect(questions.nth(1).locator('.kq-panel')).toHaveCount(0);
   const collapsed = await questions.nth(1).boundingBox();
   expect(collapsed!.height).toBeLessThan(60);
+  await mkdir(OUT, { recursive: true });
+  // Capture the default state, then the two-expanded state once its geometry settled.
+  await page.screenshot({ path: path.join(OUT, 'question-dock-stack.png') });
   await questions.nth(1).locator('.kq-header').click();
   await expect(questions.nth(1).locator('.kq-panel')).toHaveCount(1);
-  await mkdir(OUT, { recursive: true });
-  await page.screenshot({ path: path.join(OUT, 'question-dock-stack.png') });
+  await expect.poll(async () => (await questions.nth(1).boundingBox())!.height).toBeGreaterThan(80);
+  await page.screenshot({ path: path.join(OUT, 'question-dock-stack-two-expanded.png') });
 });
 

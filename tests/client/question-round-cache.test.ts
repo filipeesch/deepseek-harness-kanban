@@ -202,6 +202,36 @@ describe('QuestionRoundCache', () => {
     expect(cache.focusedRoundId).toBeUndefined();
   });
 
+  it('never lets a delayed dismissal acknowledgement overwrite newer rounds or revive an answered target', async () => {
+    const { cache, feeds, dismissal, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2'), round('a:3')] });
+    // The dismissal is in flight against the old list.
+    let resolveDismissal!: (rounds: QuestionRound[]) => void;
+    dismissal.dismiss.mockReturnValueOnce(new Promise<QuestionRound[]>(resolve => { resolveDismissal = resolve; }));
+    const dismissing = cache.dismiss('a', 'a:2');
+    // The same round is answered meanwhile, and the feed delivers a newer round.
+    answerer.answer.mockResolvedValueOnce([]);
+    await cache.answer('a', 'a:2');
+    feeds.get('a')!.frame({ kind: 'update', rounds: [round('a:1'), round('a:3'), round('a:4')] });
+    // The stale acknowledgement carries the old three-round list, without the new round.
+    resolveDismissal([round('a:1'), round('a:2'), round('a:3')]);
+    await dismissing;
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'a:3', 'a:4']);
+  });
+
+  it('never lets an answer acknowledgement replace a newer feed frame', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockResolvedValueOnce([round('a:1'), round('a:2')]);
+    const answering = cache.answer('a', 'a:1');
+    // The feed moves on while the command is in flight.
+    feeds.get('a')!.frame({ kind: 'update', rounds: [round('a:2'), round('a:3')] });
+    await answering;
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:2', 'a:3']);
+  });
+
   it('retires only the answered round and keeps the other rounds of the conversation', async () => {
     const { cache, feeds, answerer } = harness();
     cache.track('a');

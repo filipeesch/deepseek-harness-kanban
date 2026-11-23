@@ -61,9 +61,11 @@ The two triggers — a submitted round and a dismissed round — need the same d
 
 The projection therefore keeps one list of turns that are no longer answerable, reusing the existing `dismissedTurns` field and its pruning, undismiss rollback, and lane serialization. `QuestionForm`'s submit path, after the reply admission settles, calls the same host command the dismissal path uses; the host marks the turn, prunes the draft, and returns the remaining rounds. The transcript-derived `answered` rule (any human message after the first page) is removed, because it cannot tell an answer from a steering message and it would retire every other open round.
 
+Every durable question write — the debounced autosave and the explicit retirement — runs on one per-conversation write lane, and each record is serialized inside its job. The retirement job also removes the projection before it finishes, so an autosave queued behind it can only ever write the retired state; a queued autosave can no longer write the open round back. On the client, a command acknowledgement applies to its target only: the feed owns every other round, so a delayed response cannot replace a newer frame or revive an answered round.
+
 Alternative: a separate `retiredTurns` field. Rejected because the stored question record is strict: an older plugin would reject a record carrying an unknown field during a rollback, and the same durable effect would be implemented twice.
 
-A failed retirement write after an admitted reply is reported by the dock and keeps the block hidden for the session; the round may reappear after a reload, where the person can dismiss it. The reply itself is already durable, so no answer is ever lost.
+A failed retirement write after an admitted reply is reported beside the stack and retried from the same conversation; the block stays answerable, and the reply itself is already durable, so no answer is ever lost. The failure is kept in the client cache keyed by its conversation, so closing or switching the dock never loses the retry.
 
 ### Per-round dismissal
 
@@ -92,7 +94,7 @@ The content height is read from the expanded body's `scrollHeight` while the str
 - Measurement feedback loop between the budget and the measured content height → the policy is a pure function of numbers with a stable equality check already in place (`sameSeat`); the content probe reads the unclipped body, and only the strip, its layer, and the scrollport are observed.
 - A tall single strip hides the conversation → accepted: the header always stays visible and collapsing reveals the chat.
 - An ordinary chat reply no longer retires rounds → the open-round notice tells the agent the round is open, and the person can dismiss it; documented in `docs/user/conversations.md`.
-- The durable retirement write can fail after the reply was admitted → the block stays hidden for the session and the dock reports the problem; a reload can resurrect the round for dismissal, never the answer.
+- The durable retirement write can fail after the reply was admitted → the block stays answerable, the dock reports the problem with a retry kept with its conversation; a reload can resurrect the round for dismissal, never the answer.
 - A stack of many blocks may exhaust the seat → the existing fallbacks keep every block reachable; a stack-specific cap is deliberately not added. The launcher list is bounded and scrolls, and the open panel keeps the top of it.
 - A very short conversation that still fits both fixed control sets gives each body little height (the question body can be under 30px at 360x420 with a 190px composer). Reserving a usable minimum body would need either a transcript reserve or a new forced fallback the product has not chosen, so the trade-off stands: every fixed control stays reachable and the body scrolls, and collapsing one block gives the other more height.
 - Reusing the dismissal record for retirement means the stored marker cannot tell the two triggers apart → the projection never needs that distinction after the fact, because the reply in the transcript is the answer's record.

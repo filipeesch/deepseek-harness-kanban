@@ -32,6 +32,8 @@ const groupListeners = new Set<() => void>();
 export const DOCK_RAIL_ATTRIBUTE = 'data-kb-dock-rail';
 /** One launcher list per conversation layer, so every launcher stays inside the chat. */
 const launcherRails = new Map<string, HTMLElement>();
+/** The group a rail was created for, so the rail can release its own map entry. */
+const DOCK_RAIL_GROUP_ATTRIBUTE = 'data-kb-dock-rail-group';
 let nextGroup = 0;
 
 /** The bounded list one launcher group renders inside, created once per group. */
@@ -40,14 +42,16 @@ function launcherRail(group: string): HTMLElement {
   if (existing !== undefined && existing.isConnected) return existing;
   const rail = document.createElement('div');
   rail.setAttribute(DOCK_RAIL_ATTRIBUTE, '');
+  rail.setAttribute(DOCK_RAIL_GROUP_ATTRIBUTE, group);
   document.body.appendChild(rail);
   launcherRails.set(group, rail);
   return rail;
 }
 
 /** Drop a launcher list once its last strip moved out of it. */
-function releaseRail(group: string | null, rail: HTMLElement): void {
-  if (!rail.hasAttribute(DOCK_RAIL_ATTRIBUTE) || rail.childElementCount > 0) return;
+function releaseRail(rail: Element | null): void {
+  if (rail === null || !rail.hasAttribute(DOCK_RAIL_ATTRIBUTE) || rail.childElementCount > 0) return;
+  const group = rail.getAttribute(DOCK_RAIL_GROUP_ATTRIBUTE);
   rail.remove();
   if (group !== null && launcherRails.get(group) === rail) launcherRails.delete(group);
 }
@@ -429,7 +433,7 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       if (group !== null && activeByGroup.get(group) === seatId) activeByGroup.delete(group);
       const rail = box.parentElement;
       box.remove();
-      if (rail !== null) releaseRail(group, rail);
+      releaseRail(rail);
     };
   }, [box, seatId]);
   // Move the box between the seat and the document without touching the form inside it.
@@ -439,6 +443,7 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
     // Moving a box through the DOM drops focus; put it back where it was.
     const focused = document.activeElement;
     const restore = focused !== null && focused !== box && box.contains(focused) ? focused as HTMLElement : null;
+    const previousRail = box.parentElement?.hasAttribute(DOCK_RAIL_ATTRIBUTE) === true ? box.parentElement : null;
     const crampedPanel = !visible ? false : seat?.mode === 'cramped' && seat.panel !== undefined;
     const launcher = !visible ? false : seat?.mode === 'cramped' && seat.launcher === true && seat.rail !== undefined;
     if (launcher && seat?.rail !== undefined) {
@@ -456,7 +461,11 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       box.setAttribute(DOCK_LAUNCHER_ATTRIBUTE, '');
       box.setAttribute(DOCK_ACTIVE_ATTRIBUTE, seat.active === true ? 'true' : 'false');
       if (box.parentElement !== rail) rail.appendChild(box);
+      // The portaled strip sizes itself from the panel-height variable and scrolls as a
+      // whole while bounded by the list: the open panel can never grow past the chat.
+      box.setAttribute(DOCK_TIGHT_ATTRIBUTE, '');
       box.style.cssText = 'position:relative;display:flex;flex-direction:column;flex:none;width:100%;min-height:0;order:' + (seat.active === true ? '0' : '1');
+      box.style.setProperty('--kb-dock-panel-height', Math.max(0, seat.rail.height) + 'px');
       box.style.setProperty('--kb-dock-budget', Math.max(0, seat.rail.height) + 'px');
       // Opening a launcher scrolls its list back to the top, where the open panel lives.
       if (seat.active === true) rail.scrollTop = 0;
@@ -465,6 +474,7 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       box.setAttribute(DOCK_PANEL_ATTRIBUTE, seatId);
       box.removeAttribute(DOCK_LAUNCHER_ATTRIBUTE);
       box.removeAttribute(DOCK_ACTIVE_ATTRIBUTE);
+      box.removeAttribute(DOCK_TIGHT_ATTRIBUTE);
       box.style.cssText = 'position:fixed;display:flex;flex-direction:column;z-index:30;'
         + 'left:' + seat.panel.left + 'px;top:' + seat.panel.top + 'px;'
         + 'width:' + seat.panel.width + 'px;max-height:' + seat.panel.height + 'px;'
@@ -472,12 +482,8 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       if (box.parentElement !== document.body) document.body.appendChild(box);
     }
     else {
-      const previous = box.parentElement;
-      if (previous !== null && previous.hasAttribute(DOCK_RAIL_ATTRIBUTE)) {
-        box.remove();
-        releaseRail(seatRef.current?.group ?? activeGroup.current, previous);
-      }
       box.removeAttribute(DOCK_PANEL_ATTRIBUTE);
+      box.removeAttribute(DOCK_TIGHT_ATTRIBUTE);
       box.removeAttribute(DOCK_LAUNCHER_ATTRIBUTE);
       box.removeAttribute(DOCK_ACTIVE_ATTRIBUTE);
       if (visible) {
@@ -489,6 +495,8 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
         if (element !== null && box.parentElement !== element) element.appendChild(box);
       }
     }
+    // Whatever the branch, a rail the box moved out of must not stay attached empty.
+    if (previousRail !== null && box.parentElement !== previousRail) releaseRail(previousRail);
     if (restore !== null && document.activeElement !== restore) {
       try { restore.focus({ preventScroll: true }); }
       catch { restore.focus(); }

@@ -556,6 +556,8 @@ function FeedStatusScenario() {
     assertSubmissionAllowed: () => {},
     dismiss: async () => [],
     answer: async () => [],
+    noteRetirementFailure: () => {},
+    clearRetirementFailure: () => {},
     drafts: { read: () => undefined, update: () => {}, clear: () => {}, flush: () => {} },
     send: async () => {},
     files: () => undefined,

@@ -22,6 +22,8 @@ function bridge(): Parameters<typeof createQuestionDockServices>[0]['bridge'] {
     assertSubmissionAllowed: () => {},
     dismissQuestions: async () => [],
     answerQuestions: async () => [],
+    noteRetirementFailure: () => {},
+    clearRetirementFailure: () => {},
   };
 }
 
@@ -43,8 +45,11 @@ const round: QuestionRound = {
 };
 
 function services(view: QuestionRoundView, retry = vi.fn(), overrides: Partial<QuestionDockServices> = {}): QuestionDockServices {
+  // The dock keeps failed retirements in the view, so the stub view is mutable too.
+  const live = liveObservable<QuestionRoundView>(view);
+  const failuresOf = (current: QuestionRoundView) => current.retirements ?? [];
   return {
-    view: observable(view),
+    view: live.source,
     track: () => () => {},
     retry,
     isSubmitted: () => false,
@@ -55,6 +60,14 @@ function services(view: QuestionRoundView, retry = vi.fn(), overrides: Partial<Q
     assertSubmissionAllowed: () => {},
     dismiss: async () => [],
     answer: async () => [],
+    noteRetirementFailure: (sessionId, roundId, message) => {
+      const current = live.source.getSnapshot();
+      live.set({ ...current, retirements: [...failuresOf(current).filter(entry => entry.roundId !== roundId), { sessionId, roundId, message }] });
+    },
+    clearRetirementFailure: roundId => {
+      const current = live.source.getSnapshot();
+      live.set({ ...current, retirements: failuresOf(current).filter(entry => entry.roundId !== roundId) });
+    },
     drafts: { read: () => undefined, update: () => {}, clear: () => {}, flush: () => {} },
     send: async () => {},
     files: () => undefined,
@@ -246,18 +259,26 @@ describe('question dock surfaces', () => {
     expect(answer).toHaveBeenCalledTimes(2);
   });
 
-  it('drops a failed retirement when the conversation changes', async () => {
+  it('keeps a failed retirement with its conversation and retries it', async () => {
     const user = userEvent.setup();
     const round = freeRound('round 2', 'Which storage should we use?');
-    const answer = vi.fn(async () => { throw new Error('storage offline'); });
-    const { rerender } = render(<QuestionDock sessionId="session-1" services={services({ rounds: [round], errors: new Map() }, vi.fn(), { answer })} />);
+    const answer = vi.fn()
+      .mockRejectedValueOnce(new Error('storage offline'))
+      .mockResolvedValueOnce([]);
+    const shared = services({ rounds: [round], errors: new Map() }, vi.fn(), { answer });
+    const { rerender } = render(<QuestionDock sessionId="session-1" services={shared} />);
     await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'Local');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await user.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('storage offline'));
-    // Another conversation must not inherit the previous failure.
-    rerender(<QuestionDock sessionId="session-2" services={services({ rounds: [], errors: new Map() }, vi.fn(), { answer })} />);
+    // Another conversation never inherits the failure, and coming back restores its retry.
+    rerender(<QuestionDock sessionId="session-2" services={shared} />);
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    rerender(<QuestionDock sessionId="session-1" services={shared} />);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('storage offline'));
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(answer).toHaveBeenCalledTimes(2);
   });
 
   it('keeps attachments and their order through update, read, and hydrate', async () => {

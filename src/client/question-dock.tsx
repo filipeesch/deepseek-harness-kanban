@@ -29,6 +29,10 @@ export interface QuestionDockBridge {
   dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
   /** Record that a round's own answer was admitted and durably retires it. */
   answerQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+  /** Record a retirement the host rejected, so the conversation keeps its retry. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void;
+  /** Drop a retirement failure once the same round retired. */
+  clearRetirementFailure(roundId: string): void;
 }
 /** The native conversation operations the dock needs from the composition root. */
 export interface QuestionDockConversation {
@@ -67,6 +71,10 @@ export interface QuestionDockServices {
   dismiss(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
   /** Retire one round whose own answer was admitted; never affects the other rounds. */
   answer(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+  /** Keep a failed retirement with its conversation until the round retires. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void;
+  /** Drop a failed retirement once the same round retired. */
+  clearRetirementFailure(roundId: string): void;
   drafts: QuestionDraftPort;
   send(sessionId: string, text: string): Promise<void>;
   /** The draft answer-file port for one conversation, or undefined when unsupported. */
@@ -111,6 +119,8 @@ export function createQuestionDockServices(input: {
     assertSubmissionAllowed: sessionId => bridge.assertSubmissionAllowed(sessionId),
     dismiss: (sessionId, roundId) => bridge.dismissQuestions(sessionId, roundId),
     answer: (sessionId, roundId) => bridge.answerQuestions(sessionId, roundId),
+    noteRetirementFailure: (sessionId, roundId, message) => bridge.noteRetirementFailure(sessionId, roundId, message),
+    clearRetirementFailure: roundId => bridge.clearRetirementFailure(roundId),
     drafts: bridge.questionDrafts,
     send: async (sessionId, text) => {
       const conversation = conversationFor(sessionId);
@@ -175,16 +185,12 @@ export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
   const view = useSyncExternalStore(services.view.subscribe, services.view.getSnapshot, services.view.getSnapshot);
   const [attempt, setAttempt] = useState(0);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [retirementError, setRetirementError] = useState<string | null>(null);
-  const pendingRetirements = useRef<string[]>([]);
   const previousOldest = useRef<string | undefined>(undefined);
   useEffect(() => services.track(sessionId), [services, sessionId]);
-  // A retirement the dock could not record belongs to its conversation: switching or
-  // closing the conversation must not carry it into another one.
-  useEffect(() => {
-    pendingRetirements.current = [];
-    setRetirementError(null);
-  }, [sessionId]);
+  // A failed retirement belongs to its conversation in the cache, so closing or switching
+  // the dock never loses the retry and another conversation never sees it.
+  const failures = (view.retirements ?? []).filter(entry => entry.sessionId === sessionId);
+  const retirementError = failures.at(0)?.message ?? null;
   useEffect(() => { if (attempt > 0) services.retry(sessionId); }, [attempt, services, sessionId]);
   // A closing drawer must not lose the last debounce window; the bridge also flushes on pagehide.
   useEffect(() => () => services.drafts.flush(), [services]);
@@ -216,14 +222,13 @@ export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
   const recordAnswer = async (roundId: string): Promise<void> => {
     try {
       await services.answer(sessionId, roundId);
-      pendingRetirements.current = pendingRetirements.current.filter(id => id !== roundId);
-      if (pendingRetirements.current.length === 0) setRetirementError(null);
+      services.clearRetirementFailure(roundId);
     } catch (error) {
-      if (!pendingRetirements.current.includes(roundId)) pendingRetirements.current = [...pendingRetirements.current, roundId];
-      setRetirementError(errorMessage(error));
+      // The bridge already records it; recording here keeps a stubbed bridge honest too.
+      services.noteRetirementFailure(sessionId, roundId, errorMessage(error));
     }
   };
-  const retryRetirements = (): void => { for (const roundId of [...pendingRetirements.current]) void recordAnswer(roundId); };
+  const retryRetirements = (): void => { for (const failure of failures) void recordAnswer(failure.roundId); };
   if (historyError === undefined && rounds.length === 0 && retirementError === null) return null;
   return <>
     {historyError !== undefined && <DockStrip><div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div></DockStrip>}
