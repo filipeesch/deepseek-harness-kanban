@@ -126,24 +126,26 @@ test('a narrow file row can be scrolled to its last token and cleared, then the 
   await expect(page.getByTestId('question-reply')).toContainText('Local');
 });
 
-test('a growing composer keeps the fixed controls reachable through the strip itself', async ({ page }) => {
+test('a growing composer keeps the fixed controls reachable', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 420 });
   await open(page, '&long=1&question=1&composer=250');
-  // The fixed controls cannot all fit, so both strips opt into scrolling as a whole.
-  await expect(page.locator('[data-kb-dock-tight]')).toHaveCount(2);
-  const firstStrip = page.locator('.kb-decision .kq-strip');
-  const scrollToEnd = async (selector: string) => page.locator(selector).evaluate(element => { element.scrollTop = element.scrollHeight; });
-  await scrollToEnd('.kb-decision .kq-strip');
-  const strip = await box(page, '.kb-decision .kq-strip');
+  // The composer leaves only a tight strip per surface, so each one scrolls as a whole
+  // and its actions stay reachable from its pinned header.
+  const viewport = page.viewportSize()!;
+  await page.locator('.kb-decision .kq-strip').evaluate(element => { element.scrollTop = element.scrollHeight; });
   const confirm = await box(page, '.kb-decision .kq-primary');
-  expect(confirm.y).toBeGreaterThanOrEqual(strip.y - 1);
-  expect(confirm.y + confirm.height).toBeLessThanOrEqual(strip.y + strip.height + 1);
-  await expect(firstStrip).toBeVisible();
-  await scrollToEnd(QUESTION);
-  const questionStrip = await box(page, QUESTION);
+  expect(bottom(confirm)).toBeLessThanOrEqual(viewport.height + 1);
+  await page.locator(QUESTION).evaluate(element => { element.scrollTop = element.scrollHeight; });
   const next = await box(page, QUESTION + ' .kq-primary');
-  expect(next.y).toBeGreaterThanOrEqual(questionStrip.y - 1);
-  expect(next.y + next.height).toBeLessThanOrEqual(questionStrip.y + questionStrip.height + 1);
+  expect(bottom(next)).toBeLessThanOrEqual(viewport.height + 1);
+  const gate = page.locator('.kb-decision');
+  await gate.getByRole('radio', { name: 'Option 3' }).check();
+  await expect(gate.getByRole('button', { name: 'Confirm choice' })).toBeEnabled();
+  const question = page.locator(QUESTION);
+  await question.getByRole('radio', { name: 'Local' }).check();
+  await question.getByRole('button', { name: 'Next' }).click();
+  await question.getByRole('button', { name: 'Submit' }).click();
+  await expect(page.getByTestId('question-reply')).toContainText('Local');
 });
 
 test('a hidden question round leaves the whole height to the gate', async ({ page }) => {
@@ -284,7 +286,8 @@ test('crossing the presentation threshold keeps both drafts', async ({ page }) =
 
 test('an intermediate composer height still lets the question be answered', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 420 });
-  for (const composer of [270, 290, 310]) {
+  // The values account for the harness conversation header above the scrollport.
+  for (const composer of [230, 250, 270]) {
     await open(page, '&long=1&question=1&composer=' + composer);
     const question = page.locator(QUESTION);
     // The strip is tight here: select and submit without scrolling any outer surface.
@@ -356,11 +359,10 @@ test('a shallow conversation shows compact launchers with one panel open', async
   await open(page, '&long=1&question=1&composer=400&windowMs=900');
   await expect(page.locator('[data-kb-dock-launcher]')).toHaveCount(2);
   await expect(page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]')).toHaveCount(1);
-  // The open panel sits below the launchers, never over them.
+  // The open panel is the first entry of the launcher list; the inactive headers follow it.
   const launchers = await page.locator('[data-kb-dock-launcher][data-kb-dock-active="false"]').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
   const openPanel = await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]');
-  // The open panel starts below every launcher, so no launcher is covered.
-  for (const launcher of launchers) expect(openPanel.y).toBeGreaterThanOrEqual(bottom(launcher) - 1);
+  for (const launcher of launchers) expect(bottom(openPanel)).toBeLessThanOrEqual(launcher.y + 1);
   // The gate is open first: answer it.
   const gate = page.locator('.kb-decision');
   await gate.getByRole('radio', { name: 'Option 3' }).check();
@@ -389,7 +391,7 @@ test('reopening a shallow conversation opens a launcher again', async ({ page })
   await expect(page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]')).toHaveCount(1);
   const active = page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]');
   await expect(active).toContainText('Decision needed');
-  await expect(active.locator('.kq-panel')).not.toHaveAttribute('hidden');
+  await expect(active.locator('.kq-panel')).toHaveCount(1);
 });
 
 test('a collapsed launcher reports its visible state and opens on activation', async ({ page }) => {
@@ -400,16 +402,15 @@ test('a collapsed launcher reports its visible state and opens on activation', a
   // Focus alone must not open the panel.
   await questionHeader.focus();
   await expect(questionHeader).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.locator(QUESTION + ' .kq-panel')).toHaveAttribute('hidden', '');
-  await expect(page.locator(QUESTION + ' .kq-panel')).toBeHidden();
+  await expect(page.locator(QUESTION + ' .kq-panel')).toHaveCount(0);
   // Enter on the launcher opens it without toggling it shut.
   await page.keyboard.press('Enter');
   await expect(questionHeader).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.locator(QUESTION + ' .kq-panel')).not.toHaveAttribute('hidden');
   await expect(page.locator(QUESTION + ' .kq-panel')).toBeVisible();
-  // A second activation is the ordinary collapse, and the strip stays the open one.
+  // A second activation collapses the open launcher, and the strip stays the open one.
   await page.keyboard.press('Enter');
   await expect(questionHeader).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator(QUESTION + ' .kq-panel')).toHaveCount(0);
   await expect(page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]').filter({ has: page.locator(QUESTION) })).toHaveCount(1);
 });
 
@@ -433,10 +434,9 @@ test('a collapsed launcher opens again after switching and reactivating', async 
   await page.keyboard.press('Enter');
   await expect(questionHeader).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator(QUESTION + ' .kq-panel')).toBeVisible();
-  await expect(page.locator(QUESTION + ' .kq-panel')).not.toHaveAttribute('hidden');
 });
 
-test('leaving the launcher presentation keeps the form disclosure state', async ({ page }) => {
+test('leaving the launcher presentation restores the disclosure state the person chose', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 200 });
   await open(page, '&long=1&question=1&composer=400');
   // The gate is the open launcher and its body is visible.
@@ -447,6 +447,20 @@ test('leaving the launcher presentation keeps the form disclosure state', async 
   await expect(page.locator('[data-kb-dock-launcher]')).toHaveCount(0);
   await expect(page.locator('.kb-decision .kq-header')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('.kb-decision .kq-panel')).toHaveCount(1);
+  // Collapse the gate by choice, then cross the launcher presentation and back.
+  await page.locator('.kb-decision .kq-header').click();
+  await expect(page.locator('.kb-decision .kq-header')).toHaveAttribute('aria-expanded', 'false');
+  await page.setViewportSize({ width: 360, height: 200 });
+  await page.evaluate(() => (window as unknown as { __harnessSetComposer: (value: number) => void }).__harnessSetComposer(400));
+  // The launcher opens the gate for answering, without rewriting that choice.
+  await expect(page.locator('.kb-decision .kq-header')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.kb-decision .kq-panel')).toHaveCount(1);
+  await page.setViewportSize({ width: 900, height: 900 });
+  await page.evaluate(() => (window as unknown as { __harnessSetComposer: (value: number) => void }).__harnessSetComposer(150));
+  await expect(page.locator('[data-kb-dock-launcher]')).toHaveCount(0);
+  // The person's choice returns: the gate is collapsed again.
+  await expect(page.locator('.kb-decision .kq-header')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.kb-decision .kq-panel')).toHaveCount(0);
 });
 
 test('an inactive launcher still cancels its countdown by pointer and by keyboard', async ({ page }) => {
@@ -532,3 +546,180 @@ test('the gate is self-sufficient outside the Kanban page scope', async ({ page 
   expect(style.border).not.toBe('0px');
   expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
 });
+test('a stack taller than the visible chat keeps every launcher reachable and the last round answerable', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 420 });
+  await open(page, '&question=1&rounds=12&composer=400');
+  const rail = page.locator('[data-kb-dock-rail]');
+  await expect(rail).toHaveCount(1);
+  const railBox = await box(page, '[data-kb-dock-rail]');
+  // The launcher list is bounded by the visible conversation, so nothing runs off screen.
+  expect(railBox.y).toBeGreaterThanOrEqual(0);
+  expect(bottom(railBox)).toBeLessThanOrEqual(420 + 1);
+  await expect(page.locator('[data-kb-dock-launcher]')).toHaveCount(13);
+  // Activate the last question round, deep inside the scrollable list, and answer it.
+  const last = page.locator('[data-kb-dock-launcher][data-kb-dock-active="false"]').filter({ has: page.locator(QUESTION) }).last();
+  await last.locator('.kq-header').click();
+  const active = page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]');
+  await expect(active).toHaveCount(1);
+  await expect(active.locator('.kq-panel')).toHaveCount(1);
+  // The open one is the round that was activated, not just any active launcher.
+  await expect(active).toContainText('Follow-up question 12');
+  // The open panel settles at the top of the list, inside the same visible rectangle.
+  await expect.poll(async () => (await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]')).y).toBeGreaterThanOrEqual(0);
+  const activeBox = await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]');
+  expect(bottom(activeBox)).toBeLessThanOrEqual(420 + 1);
+  await active.getByRole('radio', { name: 'Local' }).check();
+  await active.getByRole('button', { name: 'Next' }).click();
+  await active.getByRole('button', { name: 'Submit' }).click();
+  await expect(page.getByTestId('question-reply')).toContainText('Local');
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'question-dock-long-stack.png') });
+});
+
+test('closing a shallow conversation removes its launcher list too', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 200 });
+  await open(page, '&long=1&question=1&composer=400');
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(1);
+  await page.evaluate(() => (window as unknown as { __harnessToggleDock: (open: boolean) => void }).__harnessToggleDock(false));
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(0);
+  await expect(page.locator('[data-kb-dock-panel]')).toHaveCount(0);
+});
+
+test('a launcher panel stays inside a very shallow conversation', async ({ page }) => {
+  // The visible conversation is barely taller than one header row.
+  await page.setViewportSize({ width: 360, height: 120 });
+  await open(page, '&long=1&question=1&composer=400');
+  const rail = await box(page, '[data-kb-dock-rail]');
+  expect(rail.height).toBeLessThanOrEqual(100);
+  const active = page.locator('[data-kb-dock-launcher][data-kb-dock-active="true"]');
+  await expect(active.locator('.kq-panel')).toHaveCount(1);
+  // The open strip is bounded by the list instead of growing past the chat.
+  const activeBox = await box(page, '[data-kb-dock-launcher][data-kb-dock-active="true"]');
+  expect(activeBox.height).toBeLessThanOrEqual(rail.height + 1);
+  expect(bottom(activeBox)).toBeLessThanOrEqual(bottom(rail) + 1);
+  // It scrolls as a whole, so every control stays reachable inside the same rectangle.
+  const strip = active.locator('.kq-strip');
+  expect(await strip.evaluate(element => getComputedStyle(element).overflowY)).toBe('auto');
+  expect(await strip.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await strip.evaluate(element => { element.scrollTop = element.scrollHeight; });
+  // The open launcher's own last action is reachable inside the same rectangle.
+  const action = active.locator('.kq-footer .kq-primary').last();
+  const actionBox = await action.boundingBox();
+  expect(actionBox).not.toBeNull();
+  expect(actionBox!.y).toBeGreaterThanOrEqual(rail.y - 1);
+  expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(bottom(rail) + 1);
+});
+
+test('a launcher list is released on every presentation change', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 200 });
+  await open(page, '&long=1&question=1&composer=400');
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(1);
+  // Grow into disjoint cramped panels: the list must not stay attached empty.
+  await page.setViewportSize({ width: 360, height: 900 });
+  await page.evaluate(() => (window as unknown as { __harnessSetComposer: (value: number) => void }).__harnessSetComposer(800));
+  await expect(page.locator('[data-kb-dock-cramped]')).toHaveCount(2);
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(0);
+  // Back to the launchers, then close the conversation: no list remains either.
+  await page.setViewportSize({ width: 360, height: 200 });
+  await page.evaluate(() => (window as unknown as { __harnessSetComposer: (value: number) => void }).__harnessSetComposer(400));
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(1);
+  await page.evaluate(() => (window as unknown as { __harnessToggleDock: (open: boolean) => void }).__harnessToggleDock(false));
+  await expect(page.locator('[data-kb-dock-rail]')).toHaveCount(0);
+});
+
+test('a short decision grows to its content instead of a fixed cap', async ({ page }) => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 2560, height: 1440 }]) {
+    await page.setViewportSize(viewport);
+    await open(page, '');
+    const gate = await box(page, '.kb-decision .kq-strip');
+    expect(gate.height).toBeGreaterThan(400);
+    expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  }
+});
+
+test('re-measures when the body content grows without any watched control resizing', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '');
+  const before = await box(page, '.kb-decision .kq-strip');
+  await page.locator('.kb-decision .kq-input').first().evaluate(element => { (element as HTMLElement).style.height = '240px'; });
+  await expect.poll(async () => (await box(page, '.kb-decision .kq-strip')).height).toBeGreaterThan(before.height + 40);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+});
+
+test('a long decision passes the old fixed cap on a large conversation', async ({ page }) => {
+  await page.setViewportSize({ width: 2560, height: 1440 });
+  await open(page, '&long=1');
+  const gate = await box(page, '.kb-decision .kq-strip');
+  expect(gate.height).toBeGreaterThan(460);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'decision-dock-large-conversation.png') });
+});
+
+test('a long decision scrolls only when the seat cannot hold it', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '&long=1');
+  const budget = await page.locator('[data-kb-dock-strip]').first().evaluate(element => Number.parseFloat(getComputedStyle(element).getPropertyValue('--kb-dock-budget')));
+  expect(budget).toBeGreaterThan(0);
+  expect(budget).toBeLessThan(900);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(true);
+});
+
+test('the strips never start above the chat scrollport', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await open(page, '&question=1&rounds=2&offset=40');
+  const header = await box(page, '[data-header]');
+  const port = await box(page, '[data-scroll-body]');
+  // The scrollport itself starts below the conversation header and its tabs.
+  expect(port.y).toBeGreaterThanOrEqual(bottom(header) - 1);
+  const strips = page.locator('.kq-strip');
+  const count = await strips.count();
+  expect(count).toBeGreaterThanOrEqual(3);
+  for (let index = 0; index < count; index += 1) {
+    const strip = await strips.nth(index).boundingBox();
+    expect(strip!.y).toBeGreaterThanOrEqual(port.y - 1);
+  }
+  await mkdir(OUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUT, 'decision-dock-offset.png') });
+});
+
+test('a short strip keeps its whole body while both strips share the seat', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await open(page, '&question=1');
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  expect(await page.locator(QUESTION + ' .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+});
+
+test('the seat gives the short strip what it needs and the rest to the long one', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await open(page, '&long=1&question=1');
+  const gateBudget = await page.locator('[data-kb-dock-strip]').first().evaluate(element => Number.parseFloat(getComputedStyle(element).getPropertyValue('--kb-dock-budget')));
+  const questionBudget = await page.locator('[data-kb-dock-strip]').nth(1).evaluate(element => Number.parseFloat(getComputedStyle(element).getPropertyValue('--kb-dock-budget')));
+  expect(gateBudget).toBeGreaterThan(questionBudget);
+  expect(await page.locator(QUESTION + ' .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(false);
+  expect(await page.locator('.kb-decision .kq-scroll').evaluate(element => element.scrollHeight > element.clientHeight + 1)).toBe(true);
+});
+
+test('two unresolved rounds stack with the oldest expanded below the gate', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '&question=1&rounds=2');
+  const questions = page.locator(QUESTION);
+  await expect(questions).toHaveCount(2);
+  const gate = await box(page, '.kb-decision .kq-strip');
+  const forms = page.getByRole('form', { name: 'Questions from the agent' });
+  await expect(forms).toHaveCount(2);
+  const first = await questions.nth(0).boundingBox();
+  expect(first!.y).toBeGreaterThanOrEqual(gate.y + gate.height - 1);
+  await expect(questions.nth(0).locator('.kq-panel')).toHaveCount(1);
+  await expect(questions.nth(1).locator('.kq-panel')).toHaveCount(0);
+  const collapsed = await questions.nth(1).boundingBox();
+  expect(collapsed!.height).toBeLessThan(60);
+  await mkdir(OUT, { recursive: true });
+  // Capture the default state, then the two-expanded state once its geometry settled.
+  await page.screenshot({ path: path.join(OUT, 'question-dock-stack.png') });
+  await questions.nth(1).locator('.kq-header').click();
+  await expect(questions.nth(1).locator('.kq-panel')).toHaveCount(1);
+  await expect.poll(async () => (await questions.nth(1).boundingBox())!.height).toBeGreaterThan(80);
+  await page.screenshot({ path: path.join(OUT, 'question-dock-stack-two-expanded.png') });
+});
+

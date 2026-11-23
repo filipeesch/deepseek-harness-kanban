@@ -1,5 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { HEADER_FALLBACK, seatPlan, type StripMetrics } from './seat-budget.js';
+import { DockLauncherContext } from '../questions/launcher-state.js';
 
 /** Marks a docked strip's box, so the seat can tell the strips apart from the composer. */
 export const DOCK_STRIP_ATTRIBUTE = 'data-kb-dock-strip';
@@ -15,18 +17,10 @@ export const DOCK_PANEL_ATTRIBUTE = 'data-kb-dock-panel';
 export const DOCK_LAUNCHER_ATTRIBUTE = 'data-kb-dock-launcher';
 /** Whether this launcher box is the open one. */
 export const DOCK_ACTIVE_ATTRIBUTE = 'data-kb-dock-active';
-/** The largest height a docked strip may use, whatever the conversation offers. */
-const CEILING = 460;
 /** The host seat's gap, used when the computed gap is unreadable. */
 const GAP_FALLBACK = 6;
-/** The narrowest body worth presenting under a strip's fixed header and footer. */
-const MIN_BODY = 24;
-/** The smallest panel worth presenting above the conversation in the cramped fallback. */
-const MIN_PANEL = 96;
 /** The padding the cramped panel keeps from the conversation it floats over. */
 const PANEL_INSET = 8;
-/** A readable fallback header height when a strip is portaled and not yet measurable. */
-const HEADER_FALLBACK = 34;
 
 let nextSeat = 0;
 
@@ -34,7 +28,33 @@ let nextSeat = 0;
 const groups = new WeakMap<Element, string>();
 const activeByGroup = new Map<string, string>();
 const groupListeners = new Set<() => void>();
+/** Marks the one bounded scroll list that holds a launcher group's strips. */
+export const DOCK_RAIL_ATTRIBUTE = 'data-kb-dock-rail';
+/** One launcher list per conversation layer, so every launcher stays inside the chat. */
+const launcherRails = new Map<string, HTMLElement>();
+/** The group a rail was created for, so the rail can release its own map entry. */
+const DOCK_RAIL_GROUP_ATTRIBUTE = 'data-kb-dock-rail-group';
 let nextGroup = 0;
+
+/** The bounded list one launcher group renders inside, created once per group. */
+function launcherRail(group: string): HTMLElement {
+  const existing = launcherRails.get(group);
+  if (existing !== undefined && existing.isConnected) return existing;
+  const rail = document.createElement('div');
+  rail.setAttribute(DOCK_RAIL_ATTRIBUTE, '');
+  rail.setAttribute(DOCK_RAIL_GROUP_ATTRIBUTE, group);
+  document.body.appendChild(rail);
+  launcherRails.set(group, rail);
+  return rail;
+}
+
+/** Drop a launcher list once its last strip moved out of it. */
+function releaseRail(rail: Element | null): void {
+  if (rail === null || !rail.hasAttribute(DOCK_RAIL_ATTRIBUTE) || rail.childElementCount > 0) return;
+  const group = rail.getAttribute(DOCK_RAIL_GROUP_ATTRIBUTE);
+  rail.remove();
+  if (group !== null && launcherRails.get(group) === rail) launcherRails.delete(group);
+}
 
 function groupOf(layer: Element): string {
   let key = groups.get(layer);
@@ -62,6 +82,12 @@ export interface SeatBudget {
   readonly tight: boolean;
   /** Placement of the cramped panel, in viewport coordinates. */
   readonly panel?: Readonly<{ left: number; top: number; width: number; height: number }>;
+  /**
+   * Placement of the launcher list, in viewport coordinates. Every launcher lives inside
+   * it, so a stack taller than the visible conversation scrolls instead of running off
+   * screen, and the open panel keeps a usable height inside the same rectangle.
+   */
+  readonly rail?: Readonly<{ left: number; top: number; width: number; height: number; gap?: number }>;
   /** Whether the strips are shown as compact launchers with one panel open at a time. */
   readonly launcher?: boolean;
   /** Whether this strip is the open one of a launcher group. */
@@ -110,10 +136,29 @@ function headerHeightOf(strip: HTMLElement | undefined): number {
   return header === null || header === undefined ? HEADER_FALLBACK : heightOf(header);
 }
 
-/** The fixed part of one strip: its header bar and its action footer, which never shrink. */
-function fixedHeightOf(strip: HTMLElement | undefined): number {
-  const footer = strip?.querySelector<HTMLElement>('.kq-footer');
-  return headerHeightOf(strip) + (footer === null || footer === undefined ? 0 : heightOf(footer));
+/**
+ * The measured geometry of one strip, as the height policy takes it.
+ *
+ * A strip whose body is hidden costs only its header. An expanded strip reports the
+ * height its body content needs, read from the unclipped scroll body, so a strip that is
+ * currently squeezed still reports the height it would like.
+ */
+function stripMetricsOf(strip: HTMLElement | undefined): StripMetrics {
+  const bar = Math.ceil(headerHeightOf(strip));
+  if (strip === null || strip === undefined) return { header: bar, fixed: bar, content: 0, expanded: false };
+  // The budget bounds the strip's border box, so its own border and the panel's rule
+  // belong to what the strip needs; leaving them out would clip the body by a pixel or
+  // two and keep a scrollbar on content that actually fits. The header floor is the
+  // header's border box too, so the tight presentation never clips its own controls.
+  const borders = Math.max(0, strip.offsetHeight - strip.clientHeight);
+  const header = bar + borders;
+  const panel = strip.querySelector<HTMLElement>('.kq-panel');
+  if (panel === null) return { header, fixed: header, content: 0, expanded: false };
+  const footer = strip.querySelector<HTMLElement>('.kq-footer');
+  const panelRule = Number.parseFloat(getComputedStyle(panel).borderTopWidth) || 0;
+  const fixed = Math.ceil(bar + (footer === null ? 0 : heightOf(footer)) + borders + panelRule);
+  const content = Math.ceil(strip.querySelector<HTMLElement>('.kq-scroll')?.scrollHeight ?? 0);
+  return { header, fixed, content, expanded: true };
 }
 
 /**
@@ -171,10 +216,11 @@ function visibleConversation(port: HTMLElement): { left: number; top: number; ri
  * strips, the composer, and any other seat entry must share the scrollport's height
  * instead of each taking a share of the browser viewport. Every non-strip child of the
  * layer that holds the strips — the composer card above all — and every element the seat
- * adds above that layer is reserved first. Each strip's fixed header and footer are then
- * reserved, and only the remainder is split between the strip bodies. When the fixed
- * controls cannot share the seat with the composer at all, the strip is presented above
- * the visible conversation in a portaled panel, so it stays answerable.
+ * adds above that layer is reserved first. Each strip then grows with its own content up
+ * to what the seat can spare, never past the conversation's chat scrollport, and the
+ * spare height is shared by need (see `seat-budget`). When the fixed controls cannot
+ * share the seat with the composer at all, the strip is presented above the visible
+ * conversation in a portaled panel, so it stays answerable.
  * @param anchor - the strip's box in the seat.
  * @returns how that strip may be presented, or undefined when the host gives no scrollport.
  */
@@ -207,36 +253,25 @@ export function seatStripBudget(anchor: HTMLElement | null): SeatBudget | undefi
   }
 
   const count = boxes.length;
-  const spare = port.clientHeight - reserved - gaps;
-  const needs = strips.map(strip => fixedHeightOf(strip) + MIN_BODY);
-  const total = needs.reduce((left, right) => left + right, 0);
-  if (spare >= total) {
-    const extra = Math.floor((spare - total) / count);
-    return { mode: 'dock', budget: Math.min(CEILING, needs[index]! + extra), tight: false };
-  }
-
-  const headers = strips.map(strip => headerHeightOf(strip));
-  const seatsForHeaders = headers.reduce((left, right) => left + right, 0) + gaps;
-  if (spare >= seatsForHeaders) {
-    // The fixed controls cannot all fit: every strip keeps its header and scrolls as a
-    // whole from it, so its controls stay reachable without a band covering them.
-    const extra = Math.floor((spare - seatsForHeaders) / count);
-    return { mode: 'dock', budget: Math.min(CEILING, Math.max(headers[index]!, headers[index]! + extra)), tight: true };
+  const view = visibleConversation(port);
+  const panelGap = rowGapOf(layer);
+  const top = Math.round(view.top + PANEL_INSET);
+  const crampedSpace = Math.max(0, Math.round(view.bottom - top - PANEL_INSET));
+  const plan = seatPlan(strips.map(stripMetricsOf), { dockSpace: port.clientHeight - reserved - gaps, crampedSpace, gap: panelGap });
+  if (plan.mode === 'dock') {
+    // The strips live in the seat: each keeps its fixed controls, and its body scrolls
+    // only when the content is taller than the height the seat can spare.
+    return { mode: 'dock', budget: plan.budgets[index]!, tight: plan.tight };
   }
 
   // Not even the headers fit beside the composer: present each strip above the visible
   // part of the conversation, in a portaled panel that scrolls as a whole.
-  const view = visibleConversation(port);
-  const panelGap = rowGapOf(layer);
-  const top = Math.round(view.top + PANEL_INSET);
-  const available = Math.max(0, Math.round(view.bottom - top - PANEL_INSET));
   const width = Math.min(688, Math.max(160, Math.round(view.right - view.left - 32)));
   const group = groupOf(layer);
   const seatIds = boxes.map(box => box.getAttribute(DOCK_SEAT_ATTRIBUTE) ?? '');
-  const share = Math.floor(Math.max(0, available - panelGap * Math.max(0, count - 1)) / count);
-  if (share >= MIN_PANEL) {
+  if (!plan.launcher) {
     // Every strip gets a disjoint slot, so expanded panels never cover each other.
-    const panelHeight = Math.min(share, 560);
+    const panelHeight = plan.panelHeight;
     const slot = panelHeight + panelGap;
     return {
       mode: 'cramped',
@@ -246,25 +281,23 @@ export function seatStripBudget(anchor: HTMLElement | null): SeatBudget | undefi
       panel: { left: Math.round(view.left + 16), top: top + index * slot, width, height: panelHeight },
     };
   }
-  // Too shallow for two usable panels: compact launchers, one open panel at a time.
+  // Too shallow for two usable panels: compact launchers in one bounded list, so a stack
+  // taller than the visible conversation scrolls instead of running off screen.
   const stored = activeSeatOf(group);
   // A reopened conversation may reuse the layer: a stored strip that is gone cannot open
   // anything, so the first visible strip opens instead.
   const active = stored !== undefined && seatIds.includes(stored) ? stored : seatIds[0] ?? '';
   if (stored !== active) activeByGroup.set(group, active);
   const isActive = seatIds[index] === active;
-  const pitch = HEADER_FALLBACK + panelGap;
-  const openHeight = Math.max(0, available - count * pitch);
+  const rail = { left: Math.round(view.left + 16), top, width, height: crampedSpace, gap: panelGap };
   return {
     mode: 'cramped',
-    budget: openHeight,
+    budget: Math.max(0, crampedSpace - panelGap),
     tight: true,
     launcher: true,
     active: isActive,
     group,
-    panel: isActive
-      ? { left: Math.round(view.left + 16), top: top + count * pitch, width, height: openHeight }
-      : { left: Math.round(view.left + 16), top: top + index * pitch, width, height: HEADER_FALLBACK },
+    rail,
   };
 }
 
@@ -273,9 +306,14 @@ function sameSeat(left: SeatBudget | undefined, right: SeatBudget | undefined): 
   if (left === undefined || right === undefined) return left === right;
   if (left.mode !== right.mode || left.budget !== right.budget || left.tight !== right.tight) return false;
   if (left.launcher !== right.launcher || left.active !== right.active || left.group !== right.group) return false;
-  if (left.panel === undefined || right.panel === undefined) return left.panel === right.panel;
-  return left.panel.left === right.panel.left && left.panel.top === right.panel.top
-    && left.panel.width === right.panel.width && left.panel.height === right.panel.height;
+  if (left.panel === undefined || right.panel === undefined) {
+    if (left.panel !== right.panel) return false;
+  } else if (left.panel.left !== right.panel.left || left.panel.top !== right.panel.top
+    || left.panel.width !== right.panel.width || left.panel.height !== right.panel.height) return false;
+  if (left.rail === undefined || right.rail === undefined) return left.rail === right.rail;
+  return left.rail.left === right.rail.left && left.rail.top === right.rail.top
+    && left.rail.width === right.rail.width && left.rail.height === right.rail.height
+    && left.rail.gap === right.rail.gap;
 }
 
 /**
@@ -300,7 +338,6 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
   const activeGroup = useRef<string | null>(null);
   const seatRef = useRef<SeatBudget>();
   seatRef.current = seat;
-  const wasActive = useRef<boolean | undefined>(undefined);
   useLayoutEffect(() => {
     const element = ref.current;
     if (element === null || box === null) return undefined;
@@ -333,6 +370,12 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       watch(dockScrollport(element));
       watch(box);
       for (const node of box.querySelectorAll('.kq-header, .kq-footer, .kq-collapsed-status, .kq-error')) watch(node);
+      // The body can grow without the constrained scroll box changing size (a resized
+      // textarea, for example), so every child of the scroll body is watched for its
+      // intrinsic height; a slide change re-runs this refresh through the child observer.
+      const scroll = box.querySelector('.kq-scroll');
+      watch(scroll);
+      for (const child of scroll?.children ?? []) watch(child);
       measure();
     };
     // Only the strip's own box is watched for mounted or removed controls; the rest of
@@ -361,48 +404,6 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       window.removeEventListener('scroll', measure);
     };
   }, [visible, box]);
-  useLayoutEffect(() => {
-    if (box === null) return undefined;
-  // In launcher mode the strip's own collapse toggle must agree with what is on screen:
-  // an inactive launcher is collapsed, and only the open one reports itself expanded.
-  const applyLauncherState = (): void => {
-    const current = seatRef.current;
-    const header = box.querySelector<HTMLElement>('.kq-header');
-    const panel = box.querySelector('.kq-panel');
-    if (current?.launcher !== true) {
-      // Leaving the launcher presentation restores the form's own disclosure state:
-      // whether its body is on screen right now.
-      if (header !== null && header.hasAttribute('data-kb-dock-override')) {
-        const expanded = box.querySelector('.kq-panel') !== null;
-        header.removeAttribute('data-kb-dock-override');
-        header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      }
-      panel?.removeAttribute('hidden');
-      wasActive.current = undefined;
-      return;
-    }
-    const open = current.active === true;
-    // Selecting a launcher opens it, even when the person had collapsed it before.
-    if (open && wasActive.current === false && header !== null && panel === null) header.click();
-    wasActive.current = open;
-    // An inactive launcher is collapsed; the open one follows its own body, which is absent
-    // while the person has collapsed it.
-    const expanded = open && box.querySelector('.kq-panel') !== null;
-    if (header !== null) {
-      header.setAttribute('data-kb-dock-override', '');
-      if (header.getAttribute('aria-expanded') !== (expanded ? 'true' : 'false')) header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    }
-    if (panel !== null) {
-      if (open) panel.removeAttribute('hidden');
-      else if (!panel.hasAttribute('hidden')) panel.setAttribute('hidden', '');
-    }
-  };
-  applyLauncherState();
-  const launcherObserver = typeof MutationObserver === 'undefined' ? undefined : new MutationObserver(() => applyLauncherState());
-  launcherObserver?.observe(box, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-expanded', 'hidden'] });
-    return () => launcherObserver?.disconnect();
-  }, [box, seat]);
-
   // A strip that is opened becomes the open one of its launcher group, and unmounting takes
   // the box with it: React removes the portal children, not the element we appended.
   useEffect(() => {
@@ -430,7 +431,9 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
       // A closed conversation must not leave a stale open launcher behind.
       const group = activeGroup.current;
       if (group !== null && activeByGroup.get(group) === seatId) activeByGroup.delete(group);
+      const rail = box.parentElement;
       box.remove();
+      releaseRail(rail);
     };
   }, [box, seatId]);
   // Move the box between the seat and the document without touching the form inside it.
@@ -440,16 +443,38 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
     // Moving a box through the DOM drops focus; put it back where it was.
     const focused = document.activeElement;
     const restore = focused !== null && focused !== box && box.contains(focused) ? focused as HTMLElement : null;
-    const cramped = !visible ? false : seat?.mode === 'cramped' && seat.panel !== undefined;
-    if (cramped && seat?.panel !== undefined) {
+    const previousRail = box.parentElement?.hasAttribute(DOCK_RAIL_ATTRIBUTE) === true ? box.parentElement : null;
+    const crampedPanel = !visible ? false : seat?.mode === 'cramped' && seat.panel !== undefined;
+    const launcher = !visible ? false : seat?.mode === 'cramped' && seat.launcher === true && seat.rail !== undefined;
+    if (launcher && seat?.rail !== undefined) {
+      // One bounded, keyboard-scrollable list holds every launcher, so a stack taller than
+      // the visible conversation scrolls instead of running off screen, and the open panel
+      // keeps a usable height inside the same rectangle. The open strip comes first; the
+      // inactive launcher headers follow and stay reachable by scrolling.
+      const rail = launcherRail(seat.group ?? 'launcher');
+      rail.style.cssText = 'position:fixed;display:flex;flex-direction:column;box-sizing:border-box;z-index:30;'
+        + 'overflow-y:auto;overscroll-behavior:contain;'
+        + 'left:' + seat.rail.left + 'px;top:' + seat.rail.top + 'px;'
+        + 'width:' + seat.rail.width + 'px;max-height:' + seat.rail.height + 'px;'
+        + 'gap:' + (seat.rail.gap ?? GAP_FALLBACK) + 'px';
       box.setAttribute(DOCK_PANEL_ATTRIBUTE, seatId);
-      if (seat.launcher === true) {
-        box.setAttribute(DOCK_LAUNCHER_ATTRIBUTE, '');
-        box.setAttribute(DOCK_ACTIVE_ATTRIBUTE, seat.active === true ? 'true' : 'false');
-      } else {
-        box.removeAttribute(DOCK_LAUNCHER_ATTRIBUTE);
-        box.removeAttribute(DOCK_ACTIVE_ATTRIBUTE);
-      }
+      box.setAttribute(DOCK_LAUNCHER_ATTRIBUTE, '');
+      box.setAttribute(DOCK_ACTIVE_ATTRIBUTE, seat.active === true ? 'true' : 'false');
+      if (box.parentElement !== rail) rail.appendChild(box);
+      // The portaled strip sizes itself from the panel-height variable and scrolls as a
+      // whole while bounded by the list: the open panel can never grow past the chat.
+      box.setAttribute(DOCK_TIGHT_ATTRIBUTE, '');
+      box.style.cssText = 'position:relative;display:flex;flex-direction:column;flex:none;width:100%;min-height:0;order:' + (seat.active === true ? '0' : '1');
+      box.style.setProperty('--kb-dock-panel-height', Math.max(0, seat.rail.height) + 'px');
+      box.style.setProperty('--kb-dock-budget', Math.max(0, seat.rail.height) + 'px');
+      // Opening a launcher scrolls its list back to the top, where the open panel lives.
+      if (seat.active === true) rail.scrollTop = 0;
+    }
+    else if (crampedPanel && seat?.panel !== undefined) {
+      box.setAttribute(DOCK_PANEL_ATTRIBUTE, seatId);
+      box.removeAttribute(DOCK_LAUNCHER_ATTRIBUTE);
+      box.removeAttribute(DOCK_ACTIVE_ATTRIBUTE);
+      box.removeAttribute(DOCK_TIGHT_ATTRIBUTE);
       box.style.cssText = 'position:fixed;display:flex;flex-direction:column;z-index:30;'
         + 'left:' + seat.panel.left + 'px;top:' + seat.panel.top + 'px;'
         + 'width:' + seat.panel.width + 'px;max-height:' + seat.panel.height + 'px;'
@@ -458,6 +483,7 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
     }
     else {
       box.removeAttribute(DOCK_PANEL_ATTRIBUTE);
+      box.removeAttribute(DOCK_TIGHT_ATTRIBUTE);
       box.removeAttribute(DOCK_LAUNCHER_ATTRIBUTE);
       box.removeAttribute(DOCK_ACTIVE_ATTRIBUTE);
       if (visible) {
@@ -469,6 +495,8 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
         if (element !== null && box.parentElement !== element) element.appendChild(box);
       }
     }
+    // Whatever the branch, a rail the box moved out of must not stay attached empty.
+    if (previousRail !== null && box.parentElement !== previousRail) releaseRail(previousRail);
     if (restore !== null && document.activeElement !== restore) {
       try { restore.focus({ preventScroll: true }); }
       catch { restore.focus(); }
@@ -488,8 +516,14 @@ export function DockStrip({ children, visible = true }: { readonly children: Rea
     : cramped
       ? { display: 'contents' }
       : { flex: 'none', minHeight: 0, display: 'flex', flexDirection: 'column', width: '100%', ...(seat === undefined ? {} : { '--kb-dock-budget': seat.budget + 'px' } as CSSProperties) };
+  // The strip reads the launcher presentation instead of having its toggle clicked from the
+  // DOM: opening the launcher on screen must never rewrite the person's disclosure choice.
+  const launcherState = useMemo(
+    () => ({ launcher: seat?.launcher === true, active: seat?.active === true }),
+    [seat?.launcher, seat?.active],
+  );
   return <>
     <div ref={ref} {...attributes} style={anchorStyle} />
-    {box === null ? null : createPortal(children, box)}
+    {box === null ? null : createPortal(<DockLauncherContext.Provider value={launcherState}>{children}</DockLauncherContext.Provider>, box)}
   </>;
 }

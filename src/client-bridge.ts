@@ -69,6 +69,7 @@ export class ClientBridge {
     this.questions = new QuestionRoundCache({
       feed: { open: (sessionId, onFrame, onError) => this.openQuestionFeed(sessionId, onFrame, onError) },
       dismissal: { dismiss: async (sessionId, roundId) => unwrap(await this.remote.kanban.dismissQuestions({ sessionId, roundId })) },
+      answerer: { answer: async (sessionId, roundId) => unwrap(await this.remote.kanban.answerQuestionRound({ sessionId, roundId })) },
     });
     this.questionsView = this.questions.view;
     this.control = this.makeControl();
@@ -262,15 +263,38 @@ export class ClientBridge {
   settleSubmission(id: string): void {
     if (!this.disposed) this.questions.settle(id);
   }
-  /** Dismiss the displayed round and every other unresolved round in that conversation. */
+  /** Record that a round's own answer was admitted, so it leaves the stack for good. */
+  async answerQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
+    if (this.disposed) return [];
+    let remaining: readonly QuestionRound[];
+    try {
+      remaining = await this.questions.answer(sessionId, roundId);
+    } catch (error) {
+      // The reply is already admitted; keep the retry with the conversation even if the
+      // dock unmounts before the rejection reaches it.
+      this.questions.noteRetirementFailure(sessionId, roundId, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    this.questions.clearRetirementFailure(roundId);
+    // The round is retired, so its draft can never be restored or submitted again.
+    this.draftState.retire([roundId]);
+    return remaining;
+  }
+  /** Record a failed retirement with the conversation, so its dock can offer a retry. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void {
+    if (!this.disposed) this.questions.noteRetirementFailure(sessionId, roundId, message);
+  }
+  /** Drop a failed retirement once the same round retired. */
+  clearRetirementFailure(roundId: string): void {
+    if (!this.disposed) this.questions.clearRetirementFailure(roundId);
+  }
+  /** Dismiss the displayed round and leave every other unresolved round in the stack. */
   async dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
     const remaining = await this.questions.dismiss(sessionId, roundId);
-    // A successful dismissal retires every unresolved round, but a stale target only
-    // retires the displayed one; keep exactly the rounds the cache still presents so a
-    // newer round's draft survives.
-    const live = this.questions.view.getSnapshot().rounds.filter(round => round.sessionId === sessionId).map(round => round.id);
-    this.draftState.retainSession(sessionId, live);
+    // Only the dismissed round's draft retires; every other round keeps its draft, even
+    // one the feed delivered while the command was in flight.
+    this.draftState.retire([roundId]);
     return remaining;
   }
 

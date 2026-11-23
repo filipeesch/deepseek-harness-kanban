@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots';
 import type { QuestionRound } from '../shared/types.js';
 import type { QuestionDraftPort } from './question-draft-state.js';
 import type { QuestionRoundView } from './question-round-cache.js';
-import { selectActiveRound } from '../questions/submission.js';
+import { selectVisibleRounds } from '../questions/submission.js';
 import { QuestionForm, type QuestionAttachmentPort } from '../questions/QuestionForm.js';
 import type { ClientApi } from '../shared/types.js';
 import { DockStrip } from './dock-seat.js';
@@ -27,6 +27,12 @@ export interface QuestionDockBridge {
   retryQuestions(sessionId: string): void;
   assertSubmissionAllowed(sessionId: string): void;
   dismissQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+  /** Record that a round's own answer was admitted and durably retires it. */
+  answerQuestions(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+  /** Record a retirement the host rejected, so the conversation keeps its retry. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void;
+  /** Drop a retirement failure once the same round retired. */
+  clearRetirementFailure(roundId: string): void;
 }
 /** The native conversation operations the dock needs from the composition root. */
 export interface QuestionDockConversation {
@@ -63,6 +69,12 @@ export interface QuestionDockServices {
   rollback(roundId: string): void;
   assertSubmissionAllowed(sessionId: string): void;
   dismiss(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+  /** Retire one round whose own answer was admitted; never affects the other rounds. */
+  answer(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+  /** Keep a failed retirement with its conversation until the round retires. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void;
+  /** Drop a failed retirement once the same round retired. */
+  clearRetirementFailure(roundId: string): void;
   drafts: QuestionDraftPort;
   send(sessionId: string, text: string): Promise<void>;
   /** The draft answer-file port for one conversation, or undefined when unsupported. */
@@ -74,6 +86,13 @@ export interface QuestionDockServices {
   focusComposer(sessionId: string): void;
 }
 export interface QuestionDockProps { sessionId: string; services: QuestionDockServices; api?: ClientApi }
+
+/** Human-readable text for a failed retirement, which must not un-answer the reply. */
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') return (error as { message: string }).message;
+  return String(error);
+}
 
 /**
  * Build the dock's services from the bridge and the native session registry. The
@@ -99,6 +118,9 @@ export function createQuestionDockServices(input: {
     rollback: roundId => bridge.questions.rollback(roundId),
     assertSubmissionAllowed: sessionId => bridge.assertSubmissionAllowed(sessionId),
     dismiss: (sessionId, roundId) => bridge.dismissQuestions(sessionId, roundId),
+    answer: (sessionId, roundId) => bridge.answerQuestions(sessionId, roundId),
+    noteRetirementFailure: (sessionId, roundId, message) => bridge.noteRetirementFailure(sessionId, roundId, message),
+    clearRetirementFailure: roundId => bridge.clearRetirementFailure(roundId),
     drafts: bridge.questionDrafts,
     send: async (sessionId, text) => {
       const conversation = conversationFor(sessionId);
@@ -137,7 +159,7 @@ export function createQuestionDockServices(input: {
       for (const file of files) receipts.push(await fileDelivery.upload(sessionId, { name: file.name, data: file.data }));
       await fileDelivery.submit(sessionId, text, receipts);
     },
-    /** Delete one stored draft copy after its answer was delivered. */
+    /** Delete a stored draft copy after its answer was delivered. */
     discardFile: async (sessionId: string, id: string, api: ClientApi | undefined) => {
       await api?.removeQuestionAttachment?.({ sessionId, id });
     },
@@ -150,46 +172,102 @@ export function createQuestionDockServices(input: {
   };
 }
 
-/** The question strip docked above one conversation's composer. */
+/**
+ * The question rounds docked above one conversation's composer.
+ *
+ * Every unresolved round is presented as its own block, oldest first, so a new round
+ * never hides the questions the person has not answered yet. The oldest block is
+ * expanded and a round that arrives while another waits starts collapsed; the person
+ * may open several. A round leaves only for its own submission or dismissal, and the
+ * next oldest block takes its place.
+ */
 export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
   const view = useSyncExternalStore(services.view.subscribe, services.view.getSnapshot, services.view.getSnapshot);
   const [attempt, setAttempt] = useState(0);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const previousOldest = useRef<string | undefined>(undefined);
   useEffect(() => services.track(sessionId), [services, sessionId]);
+  // A failed retirement belongs to its conversation in the cache, so closing or switching
+  // the dock never loses the retry and another conversation never sees it.
+  const failures = (view.retirements ?? []).filter(entry => entry.sessionId === sessionId);
+  const retirementError = failures.at(0)?.message ?? null;
   useEffect(() => { if (attempt > 0) services.retry(sessionId); }, [attempt, services, sessionId]);
   // A closing drawer must not lose the last debounce window; the bridge also flushes on pagehide.
   useEffect(() => () => services.drafts.flush(), [services]);
   const historyError = view.errors.get(sessionId)?.message;
-  const round = selectActiveRound(view.rounds, sessionId, id => services.isSubmitted(id), services.focusedRoundId());
-  const storedDraft = round === undefined ? undefined : services.drafts.read(round.id);
-  const files = api === undefined ? undefined : services.files(sessionId, api);
-  if (historyError === undefined && round === undefined) return null;
-  // A submitted round keeps its form mounted for the draft, but its box takes no space.
-  const visible = historyError !== undefined || (round !== undefined && !services.isSubmitted(round.id));
-  return <DockStrip visible={visible}>{historyError && <div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div>}{round && <QuestionForm key={round.id} round={round} {...(storedDraft === undefined ? {} : { storedDraft })} {...(files === undefined ? {} : { files })} hidden={services.isSubmitted(round.id)} onHide={() => services.focusComposer(sessionId)} onDraftChange={draft => services.drafts.update(sessionId, round.id, draft)} onSubmit={async (text, attached) => {
-    // This is ordinary native human text. It does not settle native approvals or userQuestions.
-    services.assertSubmissionAllowed(sessionId);
-    // The dock hides the round before admission settles; a failure restores it with the draft.
-    services.submit(round.id);
+  const rounds = selectVisibleRounds(view.rounds, sessionId);
+  const focused = services.focusedRoundId();
+  // A submitted block keeps its mounted form for a rollback, so it does not count as
+  // the round the person is working on.
+  const oldest = rounds.find(round => !services.isSubmitted(round.id))?.id ?? rounds.at(0)?.id;
+  const isExpanded = (roundId: string): boolean => expanded[roundId] ?? (roundId === oldest || roundId === focused);
+  const toggle = (roundId: string): void => { setExpanded(previous => ({ ...previous, [roundId]: !isExpanded(roundId) })); };
+  // The oldest unresolved round is open. When one leaves the stack, the round that
+  // becomes the oldest opens even if the person had collapsed it while it was newer.
+  useEffect(() => {
+    const previous = previousOldest.current;
+    previousOldest.current = oldest;
+    if (previous === undefined || oldest === undefined || previous === oldest) return;
+    setExpanded(current => {
+      if (!(oldest in current)) return current;
+      const next = { ...current };
+      delete next[oldest];
+      return next;
+    });
+  }, [oldest]);
+  /**
+   * Record an admitted answer. The reply is already durable, so a failed retirement is
+   * reported beside the stack and retried rather than un-answering anything.
+   */
+  const recordAnswer = async (roundId: string): Promise<void> => {
     try {
-      await services.submitWithFiles(sessionId, text, attached);
-      services.settle(round.id);
-      services.drafts.clear(sessionId, round.id);
-      // The answer keeps its own copy inside the conversation, so the draft copies are
-      // deleted now; otherwise a submission that beats the debounced draft write would
-      // leave bytes no record ever names.
-      //
-      // The reply is already admitted, so cleanup is best effort: a copy the host already
-      // reclaimed, or a cleanup call that fails, must never roll back a delivered answer or
-      // abandon the remaining copies.
-      for (const file of attached) {
-        await services.discardFile(sessionId, file.id, api).catch(() => undefined);
-      }
+      await services.answer(sessionId, roundId);
+      services.clearRetirementFailure(roundId);
+    } catch (error) {
+      // The bridge already records it; recording here keeps a stubbed bridge honest too.
+      services.noteRetirementFailure(sessionId, roundId, errorMessage(error));
     }
-    catch (error) { services.rollback(round.id); throw error; }
-  }} onDismiss={async draft => {
-    // The form reports the files the draft actually holds, after any pick settled, so a
-    // draft still inside its debounce window cannot leave bytes behind.
-    await services.dismiss(sessionId, round.id);
-    for (const file of draft) await services.discardFile(sessionId, file.id, api).catch(() => undefined);
-  }} />}</DockStrip>;
+  };
+  const retryRetirements = (): void => { for (const failure of failures) void recordAnswer(failure.roundId); };
+  if (historyError === undefined && rounds.length === 0 && retirementError === null) return null;
+  return <>
+    {historyError !== undefined && <DockStrip><div role="alert">Question rounds are unavailable: {historyError} <button type="button" onClick={() => setAttempt(value => value + 1)}>Retry questions</button></div></DockStrip>}
+    {retirementError !== null && <p role="alert">The answered question round could not be recorded: {retirementError} <button type="button" onClick={retryRetirements}>Retry</button></p>}
+    {rounds.map(round => {
+      const storedDraft = services.drafts.read(round.id);
+      const files = api === undefined ? undefined : services.files(sessionId, api);
+      const submitted = services.isSubmitted(round.id);
+      return <DockStrip key={round.id} visible={!submitted}>
+        <QuestionForm key={round.id} round={round} hidden={submitted} collapsed={!isExpanded(round.id)} onToggleCollapsed={() => toggle(round.id)} {...(storedDraft === undefined ? {} : { storedDraft })} {...(files === undefined ? {} : { files })} onHide={() => services.focusComposer(sessionId)} onDraftChange={draft => services.drafts.update(sessionId, round.id, draft)} onSubmit={async (text, attached) => {
+          // This is ordinary native human text. It does not settle native approvals or userQuestions.
+          services.assertSubmissionAllowed(sessionId);
+          // The dock hides the round before admission settles; a failure restores it with the draft.
+          services.submit(round.id);
+          try {
+            await services.submitWithFiles(sessionId, text, attached);
+            services.settle(round.id);
+            services.drafts.clear(sessionId, round.id);
+            // The answer keeps its own copy inside the conversation, so the draft copies are
+            // deleted now; otherwise a submission that beats the debounced draft write would
+            // leave bytes no record ever names.
+            //
+            // The reply is already admitted, so cleanup is best effort: a copy the host already
+            // reclaimed, or a cleanup call that fails, must never roll back a delivered answer or
+            // abandon the remaining copies.
+            for (const file of attached) {
+              await services.discardFile(sessionId, file.id, api).catch(() => undefined);
+            }
+            // Only this round retires; the other blocks keep their pages, drafts, and disclosure.
+            void recordAnswer(round.id);
+          }
+          catch (error) { services.rollback(round.id); throw error; }
+        }} onDismiss={async draft => {
+          // The form reports the files the draft actually holds, after any pick settled, so a
+          // draft still inside its debounce window cannot leave bytes behind.
+          await services.dismiss(sessionId, round.id);
+          for (const file of draft) await services.discardFile(sessionId, file.id, api).catch(() => undefined);
+        }} />
+      </DockStrip>;
+    })}
+  </>;
 }

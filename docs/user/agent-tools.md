@@ -97,7 +97,7 @@ Team file tools are available in task conversations and ordinary chats and resol
 
 ## Questions and cross-card messages
 
-`decision_request` adds one structured question page to the current round; the agent sends every page the round needs and ends its turn after the last one. The per-call result repeats that short rule. [Conversations](conversations.md) describes the surface the person sees.
+`decision_request` adds one structured question page to the current round; the agent sends every page the round needs and ends its turn after the last one. Each page is a self-contained question: the agent never announces or previews the pages that follow, never uses a page to ask whether it may ask, and never asks again what the conversation already settled unless you ask to revisit it. The form already shows the round's progress, and the host tells the agent which rounds are still open before each step. The per-call result repeats the short turn-ending rule. [Conversations](conversations.md) describes the surface the person sees.
 
 `send_task_message` is available only inside a task conversation and requires the user's explicit request there or an explicit direction in that conversation's stage instruction; it is not an internal progress-tracking channel.
 

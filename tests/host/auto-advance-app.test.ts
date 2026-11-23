@@ -720,8 +720,15 @@ describe('automatic advance gates', () => {
     await endTurn(f.app, sessionId, 3);
     await delay(100);
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
-    // Consuming the round without a completed turn does not move the card.
+    // A chat message is not an answer, so the round keeps holding the card.
     f.app.observe(sessionId, human(4));
+    expect(f.app.questions.pending(sessionId)).toBe(true);
+    await delay(100);
+    expect(f.store.requireTask(task.id).columnId).toBe('backlog');
+    // Consuming the round without a completed turn does not move the card.
+    const round = (await f.app.rounds(sessionId))[0]!;
+    await f.app.dismissQuestions(sessionId, round.id);
+    expect(f.app.questions.pending(sessionId)).toBe(false);
     await delay(100);
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
     await endTurn(f.app, sessionId, 5);

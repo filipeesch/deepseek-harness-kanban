@@ -173,6 +173,8 @@ export class KanbanApp {
  /** One lane per task for first-execution preparations, separate from the command lane. */
  private firstExecutionTails=new Map<string,Promise<void>>();
  private readonly saveTimers=new Map<string,ReturnType<typeof setTimeout>>();
+ /** One durable-write lane per conversation, so no autosave can overwrite a retirement. */
+ private readonly persistLanes=new Map<string,Promise<void>>();
  private readonly draftWrites=new Map<string,Promise<void>>();
  /** Lanes a retention pass skipped because they were busy; retried in the same pass. */
 
@@ -655,16 +657,30 @@ export class KanbanApp {
   const existing=this.saveTimers.get(sessionId);if(existing!==undefined)clearTimeout(existing);
   this.saveTimers.set(sessionId,setTimeout(()=>{this.saveTimers.delete(sessionId);void this.persistSession(sessionId);},250));
  }
+ /**
+  * Run one durable-write job after every job already queued for the conversation.
+  *
+  * Autosaves and retirements share this lane. The record is serialized inside the job,
+  * not when it is queued, so a job that runs after a successful retirement already sees
+  * the retired round and can never write the older state back.
+  */
+ private enqueuePersist<T>(sessionId:string,work:()=>Promise<T>):Promise<T>{
+  const previous=this.persistLanes.get(sessionId)??Promise.resolve();
+  const next=previous.then(work,work);
+  // The lane must survive a failed job without rejecting the next one.
+  const settled=next.then(()=>undefined,()=>undefined);
+  this.persistLanes.set(sessionId,settled);
+  // A settled empty lane is not needed; drop it only when no newer job replaced it.
+  void settled.then(()=>{if(this.persistLanes.get(sessionId)===settled)this.persistLanes.delete(sessionId);});
+  return next;
+ }
  private async persistSession(sessionId:string):Promise<void>{
   const store=this.options.questionStore;if(!store||this.forgottenSessions.has(sessionId))return;
-  const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
-  try{await store.save(sessionId,record);}catch(error){this.options.report?.(error);}
- }
- private async persistSessionStrict(sessionId:string):Promise<void>{
-  const store=this.options.questionStore;if(!store)return;
-  if(this.forgottenSessions.has(sessionId))throw new KanbanError('QUESTION_CONVERSATION_GONE','The conversation no longer exists.');
-  const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
-  await store.save(sessionId,record);
+  await this.enqueuePersist(sessionId,async()=>{
+   if(this.forgottenSessions.has(sessionId))return;
+   const record=this.questions.serializeSession(sessionId);if(record===undefined)return;
+   try{await store.save(sessionId,record);}catch(error){this.options.report?.(error);}
+  });
  }
  private async flushQuestions():Promise<void>{
   const ids=[...this.saveTimers.keys()];
@@ -673,31 +689,70 @@ export class KanbanApp {
   await Promise.allSettled(ids.map(sessionId=>this.persistSession(sessionId)));
  }
  async rounds(sessionId:string):Promise<QuestionRound[]>{await this.prepareQuestions(sessionId);return structuredClone([...this.questions.getRounds(sessionId)]);}
+ /**
+  * Retire one round because the person dismissed it. Only that round's block leaves the
+  * stack: the other unresolved rounds keep their pages and drafts.
+  */
  async dismissQuestions(sessionId:string,roundId:string):Promise<QuestionRound[]>{
-  // Dismissal and its persistence/rollback share the session's draft lane: a
-  // concurrent draft write must not observe the provisional dismissal and prune a
-  // draft that a failed projection write would bring back.
+  return this.retireQuestionRound(sessionId,roundId,'dismissed');
+ }
+ /**
+  * Retire one round because its own answer was submitted and admitted. The durable fact
+  * is the same as a dismissal, so the block never reappears after a reload; the reply
+  * itself is the answer's record in the transcript.
+  */
+ async answerQuestionRound(sessionId:string,roundId:string):Promise<QuestionRound[]>{
+  return this.retireQuestionRound(sessionId,roundId,'answered');
+ }
+ /**
+  * Mark one round no longer answerable, durably, before anyone can observe it.
+  *
+  * The durable write comes first: the record is serialized with the round previewed as
+  * retired, saved, and only then applied to the live projection. The feed and the
+  * attention snapshot therefore never expose a retirement that the store rejected, and a
+  * failed write needs no rollback. The draft lane keeps a concurrent draft write from
+  * observing the change half-way. The durable list is the one dismissal has always used,
+  * so an older plugin can still read the stored record.
+  */
+ private async retireQuestionRound(sessionId:string,roundId:string,trigger:'answered'|'dismissed'):Promise<QuestionRound[]>{
+  const failure=trigger==='answered'
+   ? 'The answered question round could not be recorded.'
+   : 'The question dismissal could not be saved.';
   return this.enqueueDraftWrite(sessionId,async()=>{
    await this.prepareQuestions(sessionId);
    const rounds=this.questions.getRounds(sessionId);
    const target=rounds.find(round=>round.id===roundId);
-   if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for dismissal.');
-   const unresolved=rounds.filter(round=>!round.answered);
-   const turns=unresolved.map(round=>Number(round.turnId));
-   this.questions.dismiss(sessionId,unresolved.map(round=>round.id));
-   // Dismissal consumes pending user work without a conversation event, so the derived
-   // hold must be re-projected even when the task has no activity left to reconcile.
-   this.rederiveAttention(sessionId,true);
+   if(!target||target.answered)throw new KanbanError('QUESTION_ROUND_NOT_FOUND','The question round is not available for retirement.');
+   const turn=Number(target.turnId);
    const existing=this.saveTimers.get(sessionId);
    if(existing!==undefined){clearTimeout(existing);this.saveTimers.delete(sessionId);}
-   try{await this.persistSessionStrict(sessionId);}
-   catch(error){
-    this.questions.undismiss(sessionId,turns);
-    this.rederiveAttention(sessionId,true);
-    this.schedulePersist(sessionId);
-    this.options.report?.(error);
-    throw new KanbanError('STORAGE_SAVE_FAILED','The question dismissal could not be saved.');
+   const store=this.options.questionStore;
+   if(store){
+    if(this.forgottenSessions.has(sessionId))throw new KanbanError('QUESTION_CONVERSATION_GONE','The conversation no longer exists.');
+    try{
+     await this.enqueuePersist(sessionId,async()=>{
+      if(this.forgottenSessions.has(sessionId))throw new KanbanError('QUESTION_CONVERSATION_GONE','The conversation no longer exists.');
+      const record=this.questions.serializeSession(sessionId,[turn]);
+      if(record!==undefined)await store.save(sessionId,record);
+      // Applying the retirement inside the lane job means every job queued behind it
+      // serializes the retired state; no autosave can write the open round back.
+      this.questions.dismiss(sessionId,[roundId]);
+     });
+    }
+    catch(error){
+     this.schedulePersist(sessionId);
+     this.options.report?.(error);
+     throw new KanbanError('STORAGE_SAVE_FAILED',failure);
+    }
    }
+   else{
+    // The write holds (or is not durable here): now the live projection, the feed, and
+    // the derived hold may change.
+    this.questions.dismiss(sessionId,[roundId]);
+   }
+   // A retirement consumes pending user work without a conversation event, so the derived
+   // hold must be re-projected even when the task has no activity left to reconcile.
+   this.rederiveAttention(sessionId,true);
    this.cancelDraftPrune(sessionId);
    await this.pruneAnsweredDrafts(sessionId);
    return structuredClone([...this.questions.getRounds(sessionId)]);

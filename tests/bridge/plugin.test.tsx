@@ -346,17 +346,19 @@ describe('public SDK plugin binding contracts', () => {
     view.unmount();
     await waitFor(() => expect(dispose).toHaveBeenCalled());
   });
-  it('shows only the most recent unresolved round and no strip once the round is answered', async () => {
+  it('stacks every unresolved round and shows no strip once all rounds are answered', async () => {
     const older: QuestionRound = { ...question, id: 'older', turnId: '1', pages: [{ callId: 'call-a', sequence: 1, page: { question: 'Older question', type: 'freetext' } }] };
     const newer: QuestionRound = { ...question, id: 'newer', turnId: '2', pages: [{ callId: 'call-b', sequence: 2, page: { question: 'Newest question', type: 'freetext' } }] };
     const f = await installed([older, newer]);
     const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
     const first = render(<Dock sessionId="a" />);
-    await screen.findByRole('form', { name: 'Questions from the agent' });
-    expect(screen.getByRole('heading', { name: 'Newest question' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Older question' })).toBeNull();
+    const forms = await screen.findAllByRole('form', { name: 'Questions from the agent' });
+    expect(forms).toHaveLength(2);
+    // The oldest block is expanded; the newer round starts collapsed below it.
+    expect(screen.getByRole('heading', { name: 'Older question' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Newest question' })).toBeNull();
     first.unmount();
-    const g = await installed([{ ...newer, answered: true }]);
+    const g = await installed([{ ...older, answered: true }, { ...newer, answered: true }]);
     const AnsweredDock = g.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
     const empty = render(<AnsweredDock sessionId="a" />);
     await waitFor(() => expect(g.remote.questionsFollow).toHaveBeenCalled());
@@ -413,11 +415,50 @@ describe('public SDK plugin binding contracts', () => {
     const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
     vi.mocked(f.remote.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: false, error: { code: 'QUESTION_ROUND_NOT_FOUND', message: 'The round is gone.' } } });
     render(<Dock sessionId="a" />);
-    await screen.findByRole('form', { name: 'Questions from the agent' });
-    expect(screen.getByRole('heading', { name: 'Choose the implementation' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Older question' })).toBeTruthy());
+    const forms = await screen.findAllByRole('form', { name: 'Questions from the agent' });
+    expect(forms).toHaveLength(2);
+    // The older block owns the stored draft; open the newer one so its footer is reachable.
     expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Older draft.');
+    fireEvent.click(forms[1]!.querySelector('.kq-header') as HTMLElement);
+    const dismissButtons = await screen.findAllByRole('button', { name: 'Dismiss' });
+    fireEvent.click(dismissButtons.at(-1)!);
+    await waitFor(() => expect(screen.getAllByRole('form', { name: 'Questions from the agent' })).toHaveLength(1));
+    expect(screen.getByRole('heading', { name: 'Older question' })).toBeTruthy();
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Older draft.');
+    expect(f.remote.saveQuestionDraft).not.toHaveBeenCalledWith(expect.objectContaining({ draft: null }));
+  });
+
+  it('keeps the surviving round and its draft after a successful dismissal', async () => {
+    const older: QuestionRound = { ...question, id: 'older', turnId: '1', pages: [{ callId: 'call-older', sequence: 1, page: { question: 'Older question', type: 'freetext' } }] };
+    const stored: StoredQuestionDraft = {
+      answers: { 'call-a': { choices: [], text: 'Surviving draft.', other: '', notes: '' } },
+      generalNotes: '',
+      active: { kind: 'page', callId: 'call-a' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    // Numeric turns keep the stack order deterministic, as the host's ids always are.
+    const subject: QuestionRound = { ...question, turnId: '2' };
+    const f = await installed([older, subject], { [subject.id]: stored });
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    // The host dismisses only the older round and keeps the one that still owes an answer.
+    vi.mocked(f.remote.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [question] } });
+    render(<Dock sessionId="a" />);
+    const forms = await screen.findAllByRole('form', { name: 'Questions from the agent' });
+    expect(forms).toHaveLength(2);
+    // A newer round reaches the client through the feed before the command answers.
+    // A later turn than the question round, so it sorts after it once the older round leaves.
+    const newer: QuestionRound = { ...subject, id: 'newer', turnId: '3', pages: [{ callId: 'call-c', sequence: 1, page: { question: 'Newer question', type: 'freetext' } }] };
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [older, subject, newer] });
+    const formsNow = () => screen.getAllByRole('form', { name: 'Questions from the agent' });
+    await waitFor(() => expect(formsNow()).toHaveLength(3));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    // The acknowledgement names only the dismissal's target, so the newer round survives
+    // even though the host's response list predates it.
+    await waitFor(() => expect(formsNow()).toHaveLength(2));
+    // The surviving round becomes the oldest, opens, and keeps its draft.
+    expect(screen.getByRole('heading', { name: 'Choose the implementation' })).toBeTruthy();
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Surviving draft.');
+    expect(document.querySelectorAll('.kq-panel')).toHaveLength(1);
     expect(f.remote.saveQuestionDraft).not.toHaveBeenCalledWith(expect.objectContaining({ draft: null }));
   });
 

@@ -26,8 +26,9 @@ function harness(initialDismissal: readonly QuestionRound[] = []) {
     },
   };
   const dismissal = { dismiss: vi.fn().mockResolvedValue(initialDismissal) };
-  const cache = new QuestionRoundCache({ feed, dismissal });
-  return { cache, feeds, dismissal, opens: () => opens };
+  const answerer = { answer: vi.fn().mockResolvedValue([]) };
+  const cache = new QuestionRoundCache({ feed, dismissal, answerer });
+  return { cache, feeds, dismissal, answerer, opens: () => opens };
 }
 
 describe('QuestionRoundCache', () => {
@@ -83,17 +84,19 @@ describe('QuestionRoundCache', () => {
     expect(feeds.has('c')).toBe(false);
   });
 
-  it('dismisses every unresolved round in the conversation and keeps other rounds', async () => {
+  it('dismisses only the chosen round and keeps every other round in the conversation', async () => {
     const { cache, feeds, dismissal } = harness();
     cache.track('a');
     feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2'), round('b:1', 'b')] });
-    dismissal.dismiss.mockResolvedValueOnce([]);
+    // The host keeps a:1 and returns it; only a:2 is dismissed.
+    dismissal.dismiss.mockResolvedValueOnce([round('a:1')]);
     await cache.dismiss('a', 'a:2');
     expect(dismissal.dismiss).toHaveBeenCalledWith('a', 'a:2');
-    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['b:1']);
-    // A later baseline for the dismissed conversation must not resurrect it.
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'b:1']);
+    // A later baseline must not resurrect the dismissed round, and must not lose the
+    // round the host kept because of a stale all-rounds tombstone.
     feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
-    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['b:1']);
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'b:1']);
   });
 
   it('does not hide unrelated rounds when the host reports the round already settled', async () => {
@@ -197,6 +200,82 @@ describe('QuestionRoundCache', () => {
     expect(cache.focusedRoundId).toBe('a:1');
     cache.submit('a:1');
     expect(cache.focusedRoundId).toBeUndefined();
+  });
+
+  it('never lets a delayed dismissal acknowledgement overwrite newer rounds or revive an answered target', async () => {
+    const { cache, feeds, dismissal, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2'), round('a:3')] });
+    // The dismissal is in flight against the old list.
+    let resolveDismissal!: (rounds: QuestionRound[]) => void;
+    dismissal.dismiss.mockReturnValueOnce(new Promise<QuestionRound[]>(resolve => { resolveDismissal = resolve; }));
+    const dismissing = cache.dismiss('a', 'a:2');
+    // The same round is answered meanwhile, and the feed delivers a newer round.
+    answerer.answer.mockResolvedValueOnce([]);
+    await cache.answer('a', 'a:2');
+    feeds.get('a')!.frame({ kind: 'update', rounds: [round('a:1'), round('a:3'), round('a:4')] });
+    // The stale acknowledgement carries the old three-round list, without the new round.
+    resolveDismissal([round('a:1'), round('a:2'), round('a:3')]);
+    await dismissing;
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:1', 'a:3', 'a:4']);
+  });
+
+  it('never lets an answer acknowledgement replace a newer feed frame', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockResolvedValueOnce([round('a:1'), round('a:2')]);
+    const answering = cache.answer('a', 'a:1');
+    // The feed moves on while the command is in flight.
+    feeds.get('a')!.frame({ kind: 'update', rounds: [round('a:2'), round('a:3')] });
+    await answering;
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:2', 'a:3']);
+  });
+
+  it('retires only the answered round and keeps the other rounds of the conversation', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockResolvedValueOnce([{ ...round('a:1'), answered: true }, round('a:2')]);
+    const remaining = await cache.answer('a', 'a:1');
+    expect(answerer.answer).toHaveBeenCalledWith('a', 'a:1');
+    // The answered round leaves the stack locally at once; the other round stays answerable.
+    expect(remaining.map(value => value.id)).toEqual(['a:2']);
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:2']);
+  });
+
+  it('drops a round the host already retired without failing the caller', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'QUESTION_ROUND_NOT_FOUND' }));
+    const remaining = await cache.answer('a', 'a:1');
+    expect(remaining.map(value => value.id)).toEqual(['a:2']);
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:2']);
+  });
+
+  it('never duplicates another session when a stale answer falls back to the local view', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    cache.track('b');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    feeds.get('b')!.frame({ kind: 'baseline', rounds: [round('b:1', 'b')] });
+    answerer.answer.mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'QUESTION_ROUND_NOT_FOUND' }));
+    await cache.answer('a', 'a:1');
+    expect(cache.view.getSnapshot().rounds.map(value => value.id).sort()).toEqual(['a:2', 'b:1']);
+    // A delayed unresolved frame for the answered round must not revive it.
+    feeds.get('a')!.frame({ kind: 'update', rounds: [round('a:1'), round('a:2')] });
+    expect(cache.view.getSnapshot().rounds.map(value => value.id).sort()).toEqual(['a:2', 'b:1']);
+  });
+
+  it('keeps unrelated rounds of the same conversation when an answer succeeds', async () => {
+    const { cache, feeds, answerer } = harness();
+    cache.track('a');
+    feeds.get('a')!.frame({ kind: 'baseline', rounds: [round('a:1'), round('a:2')] });
+    answerer.answer.mockResolvedValueOnce([{ ...round('a:1'), answered: true }, round('a:2')]);
+    const remaining = await cache.answer('a', 'a:1');
+    expect(remaining.map(value => value.id)).toEqual(['a:2']);
+    expect(cache.view.getSnapshot().rounds.map(value => value.id)).toEqual(['a:2']);
   });
 
   it('ignores a submission for a round the cache does not know', () => {

@@ -9,16 +9,33 @@ export interface QuestionFeedPort {
 export interface QuestionDismissPort {
   dismiss(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
 }
+/** The host-owned retirement command: the round's own answer was submitted and admitted. */
+export interface QuestionAnswerPort {
+  answer(sessionId: string, roundId: string): Promise<readonly QuestionRound[]>;
+}
+/** A retirement the host rejected, kept until the same round is retried successfully. */
+export interface QuestionRetirementFailure {
+  readonly sessionId: string;
+  readonly roundId: string;
+  readonly message: string;
+}
+
 export interface QuestionRoundView {
   rounds: readonly QuestionRound[];
   errors: ReadonlyMap<string, Problem>;
+  /**
+   * Failed retirements, keyed to their conversation. They outlive any one dock view, so
+   * closing or switching the conversation never loses the retry.
+   */
+  retirements?: readonly QuestionRetirementFailure[];
 }
 export interface QuestionRoundCacheOptions {
   feed: QuestionFeedPort;
   dismissal: QuestionDismissPort;
+  answerer: QuestionAnswerPort;
 }
 
-const EMPTY_VIEW: QuestionRoundView = Object.freeze({ rounds: Object.freeze([]), errors: new Map() });
+const EMPTY_VIEW: QuestionRoundView = Object.freeze({ rounds: Object.freeze([]), errors: new Map(), retirements: Object.freeze([]) });
 
 function observable<T>(initial: T) {
   let value = initial;
@@ -65,7 +82,10 @@ export class QuestionRoundCache {
   private readonly closers = new Map<string, () => void>();
   private readonly generations = new Map<string, number>();
   private readonly dismissed = new Set<string>();
+  /** Rounds this client retired itself, so an older or delayed frame cannot revive them. */
+  private readonly retired = new Set<string>();
   private readonly submitted = new Map<string, Submission>();
+  private readonly retirementFailures = new Map<string, QuestionRetirementFailure>();
   private focused: string | undefined;
   private disposed = false;
 
@@ -133,37 +153,74 @@ export class QuestionRoundCache {
     this.publish();
   }
 
-  /** Dismiss the displayed round and every unresolved round in that conversation. */
+  /** Dismiss the displayed round; every other unresolved round stays in the stack. */
   async dismiss(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
     if (this.disposed) return [];
-    const unresolved = this.rounds.filter(round => round.sessionId === sessionId && !round.answered).map(round => round.id);
-    let remaining: readonly QuestionRound[];
-    let missing = false;
     try {
-      remaining = await this.options.dismissal.dismiss(sessionId, roundId);
+      await this.options.dismissal.dismiss(sessionId, roundId);
     } catch (error) {
+      // The displayed round was already answered or dismissed elsewhere; the target's
+      // retirement still stands, so the response body is irrelevant.
       if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
-      // The displayed round was already answered or dismissed elsewhere. Do not hide
-      // unrelated unresolved rounds that the host did not actually dismiss.
-      missing = true;
-      remaining = this.rounds.filter(round => round.sessionId === sessionId && round.id !== roundId);
     }
     if (this.disposed) return [];
-    if (!missing) for (const id of unresolved) { this.dismissed.add(id); this.submitted.delete(id); }
+    // A command answers for its target only. Replacing the session with the response
+    // would let a delayed acknowledgement overwrite newer rounds, so only the target
+    // leaves; the feed owns every other round from then on.
     this.dismissed.add(roundId);
     this.submitted.delete(roundId);
+    this.retirementFailures.delete(roundId);
     if (this.focused === roundId) this.focused = undefined;
-    this.rounds = ordered([...this.rounds.filter(round => round.sessionId !== sessionId), ...remaining.filter(round => !this.dismissed.has(round.id))]);
+    this.rounds = ordered(this.rounds.filter(round => round.id !== roundId));
     this.errors.delete(sessionId);
     this.publish();
     return this.rounds.filter(round => round.sessionId === sessionId);
+  }
+
+  /**
+   * Record a round whose own answer was submitted and admitted. Only that round leaves
+   * the stack; a round the host already retired is dropped without failing the caller.
+   */
+  async answer(sessionId: string, roundId: string): Promise<readonly QuestionRound[]> {
+    if (this.disposed) return [];
+    try {
+      await this.options.answerer.answer(sessionId, roundId);
+    } catch (error) {
+      // The host already retired it; it still leaves the stack here.
+      if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
+    }
+    if (this.disposed) return [];
+    // Retire it locally as well: the answer is admitted, so a delayed unresolved frame
+    // for the same round must not bring it back while the host catches up. As with a
+    // dismissal, only the target is touched; any other round comes from the feed.
+    this.retired.add(roundId);
+    this.submitted.delete(roundId);
+    this.retirementFailures.delete(roundId);
+    if (this.focused === roundId) this.focused = undefined;
+    this.rounds = ordered(this.rounds.filter(round => round.id !== roundId));
+    this.errors.delete(sessionId);
+    this.publish();
+    return this.rounds.filter(round => round.sessionId === sessionId);
+  }
+
+  /** Record a retirement the host rejected, so the conversation keeps its retry. */
+  noteRetirementFailure(sessionId: string, roundId: string, message: string): void {
+    if (this.disposed) return;
+    this.retirementFailures.set(roundId, { sessionId, roundId, message });
+    this.publish();
+  }
+
+  /** Drop a retirement failure once the same round retired successfully. */
+  clearRetirementFailure(roundId: string): void {
+    if (this.disposed) return;
+    if (this.retirementFailures.delete(roundId)) this.publish();
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     for (const close of this.closers.values()) close();
-    this.closers.clear(); this.refs.clear(); this.generations.clear(); this.dismissed.clear(); this.submitted.clear();
+    this.closers.clear(); this.refs.clear(); this.generations.clear(); this.dismissed.clear(); this.retired.clear(); this.submitted.clear(); this.retirementFailures.clear();
     this.focused = undefined; this.rounds = []; this.errors = new Map();
     this.state.set(EMPTY_VIEW); this.state.clear();
   }
@@ -208,8 +265,9 @@ export class QuestionRoundCache {
     const kept = this.rounds.filter(round => round.sessionId === sessionId
       && this.submitted.has(round.id)
       && !this.dismissed.has(round.id)
+      && !this.retired.has(round.id)
       && !incoming.some(candidate => candidate.id === round.id));
-    const next = ordered([...this.rounds.filter(round => round.sessionId !== sessionId), ...incoming.filter(round => !this.dismissed.has(round.id)), ...kept]);
+    const next = ordered([...this.rounds.filter(round => round.sessionId !== sessionId), ...incoming.filter(round => !this.dismissed.has(round.id) && !this.retired.has(round.id)), ...kept]);
     this.rounds = next;
     this.errors.delete(sessionId);
     this.publish();
@@ -222,6 +280,6 @@ export class QuestionRoundCache {
   }
 
   private publish(): void {
-    this.state.set({ rounds: this.rounds, errors: this.errors });
+    this.state.set({ rounds: this.rounds, errors: this.errors, retirements: [...this.retirementFailures.values()] });
   }
 }

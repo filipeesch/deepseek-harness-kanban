@@ -35,18 +35,15 @@ function compareRounds(left: QuestionRound, right: QuestionRound): number {
 }
 
 /**
- * The one round the composer dock shows. A rolled-back round wins so its retry is
- * visible, then an in-flight submitted round so its mounted form keeps the draft;
- * otherwise the newest unresolved round wins.
+ * Every round the composer dock must present, oldest first.
+ *
+ * The dock stacks all of them, so a round that arrives while another waits can never
+ * hide the earlier one. An in-flight submitted round is still returned until the feed
+ * confirms its retirement, which is what keeps its mounted form and draft alive for a
+ * rollback. A retired round stays out of the stack.
  */
-export function selectActiveRound(
-  rounds: readonly QuestionRound[],
-  sessionId: string,
-  isSubmitted: (roundId: string) => boolean,
-  focusedRoundId?: string,
-): QuestionRound | undefined {
-  const candidates = rounds.filter(round => round.sessionId === sessionId && !round.answered && round.pages.length > 0).sort(compareRounds);
-  const focused = focusedRoundId === undefined ? undefined : candidates.find(round => round.id === focusedRoundId);
-  if (focused) return focused;
-  return candidates.findLast(round => isSubmitted(round.id)) ?? candidates.at(-1);
+export function selectVisibleRounds(rounds: readonly QuestionRound[], sessionId: string): readonly QuestionRound[] {
+  return rounds
+    .filter(round => round.sessionId === sessionId && !round.answered && round.pages.length > 0)
+    .sort(compareRounds);
 }

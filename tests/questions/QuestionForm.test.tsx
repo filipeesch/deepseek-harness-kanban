@@ -129,18 +129,29 @@ describe('QuestionForm strip', () => {
     expect(screen.getByRole('heading', { name: 'Choose storage' })).toBeTruthy();
   });
 
-  it('reports an answered round and cannot submit it', async () => {
+  it('reports a retired round and cannot submit it', async () => {
     const user = userEvent.setup();
     const index = new QuestionIndex();
     for (const event of [call(1, 3, 'root', 'run_code'), ptcStart(2, 'root', 'page'), ptcResult(3, 'root', 'page'), end(4, 3)]) index.apply('a', event);
     const restored = new QuestionIndex(JSON.parse(JSON.stringify(index.serialize())));
-    restored.apply('a', human(5));
+    restored.dismiss('a', [restored.getRounds('a')[0]!.id]);
     const view = render(<QuestionForm round={restored.getRounds('a')[0]!} onSubmit={vi.fn()} />);
     expect(screen.getByText('This round has been answered in the conversation.')).toBeTruthy();
     expect(nextButton().disabled).toBe(true);
     expect(screen.queryByRole('button', { name: 'Close question form' })).toBeNull();
     view.rerender(<QuestionForm round={restored.getRounds('a')[0]!} onSubmit={vi.fn()} />);
     expect(restored.pending('a')).toBe(false);
+  });
+
+  it('keeps a round answerable after an ordinary chat reply retires nothing', async () => {
+    const index = new QuestionIndex();
+    for (const event of [call(1, 3, 'root', 'run_code'), ptcStart(2, 'root', 'page'), ptcResult(3, 'root', 'page'), end(4, 3), human(5)]) index.apply('a', event);
+    const round = index.getRounds('a')[0]!;
+    expect(round.answered).toBe(false);
+    render(<QuestionForm round={round} onSubmit={vi.fn()} />);
+    // The form keeps presenting the round instead of reporting it as answered.
+    expect(screen.queryByText('This round has been answered in the conversation.')).toBeNull();
+    expect(index.pending('a')).toBe(true);
   });
 
   it('restores a stored draft on the recorded page without submitting it', async () => {

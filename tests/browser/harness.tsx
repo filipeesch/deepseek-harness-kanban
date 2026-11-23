@@ -555,6 +555,9 @@ function FeedStatusScenario() {
     rollback: () => {},
     assertSubmissionAllowed: () => {},
     dismiss: async () => [],
+    answer: async () => [],
+    noteRetirementFailure: () => {},
+    clearRetirementFailure: () => {},
     drafts: { read: () => undefined, update: () => {}, clear: () => {}, flush: () => {} },
     send: async () => {},
     files: () => undefined,
@@ -654,12 +657,16 @@ function DecisionScenario() {
   });
   const [autoRun] = useState(() => new AutoRunController({ run: async () => harness.snapshot() }));
   const [reply, setReply] = useState<{ text: string; files: string[] } | null>(null);
-  const questionRound = useMemo<QuestionRound>(() => ({
+  // One question round by default; ?rounds=N stacks N rounds so the dock and the seat
+  // can be exercised with more than one block waiting above the composer.
+  const questionRounds = useMemo<QuestionRound[]>(() => Array.from({ length: Math.max(1, Number(query.get('rounds') ?? '1')) }, (_value, index) => ({
     ...round,
-    id: 'round-dock',
+    id: 'round-dock-' + index,
+    turnId: String(index + 1),
     sessionId: 's-decision',
-    pages: [{ ...round.pages[0]!, page: { ...round.pages[0]!.page, question: 'Which **storage** should we use?' } }],
-  }), []);
+    pages: [{ ...round.pages[0]!, callId: index === 0 ? 'call-1' : 'call-' + (index + 1), page: { ...round.pages[0]!.page, question: index === 0 ? 'Which **storage** should we use?' : 'Follow-up question ' + (index + 1) } }],
+  })), []);
+  const [openRounds, setOpenRounds] = useState<Record<string, boolean>>({});
   const questionDraft = fileCount === 0 ? undefined : {
     answers: { 'call-1': { choices: [], text: '', other: '', notes: '' } },
     generalNotes: '',
@@ -695,7 +702,13 @@ function DecisionScenario() {
       {/* The host nests the entries and the composer card in one stack inside the sticky seat. */}
       <div data-composer-stack="" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {dockOpen && <DecisionDock sessionId="s-decision" api={api} controller={controller} />}
-      {dockOpen && withQuestion && <DockStrip visible={query.get('submitted') !== '1'}><QuestionForm round={questionRound} {...(questionDraft === undefined ? {} : { storedDraft: questionDraft })} {...(fileCount === 0 ? {} : { files: { save: async (file: { name: string; bytes: number }) => ({ id: 'picked-' + file.name, name: file.name, bytes: file.bytes }), load: async () => 'YWJj' } })} onSubmit={(text: string, files: readonly { name: string }[]) => setReply({ text, files: files.map(file => file.name) })} onDismiss={() => {}} /></DockStrip>}
+      {dockOpen && withQuestion && questionRounds.map((value, index) => {
+        // The oldest round is expanded; every round that arrives later starts collapsed.
+        const open = openRounds[value.id] ?? index === 0;
+        return <DockStrip key={value.id} visible={query.get('submitted') !== '1'}>
+          <QuestionForm round={value} collapsed={!open} onToggleCollapsed={() => setOpenRounds(previous => ({ ...previous, [value.id]: !open }))} {...(index === 0 && questionDraft !== undefined ? { storedDraft: questionDraft } : {})} {...(fileCount === 0 ? {} : { files: { save: async (file: { name: string; bytes: number }) => ({ id: 'picked-' + file.name, name: file.name, bytes: file.bytes }), load: async () => 'YWJj' } })} onSubmit={(text: string, files: readonly { name: string }[]) => setReply({ text, files: files.map(file => file.name) })} onDismiss={() => {}} />
+        </DockStrip>;
+      })}
       <div data-composer-stand-in="" style={{ boxSizing: 'border-box', width: 'calc(100% - 2 * var(--dsh-composer-side-clearance))', maxWidth: 'var(--dsh-composer-card-max-width)', margin: '0 auto', border: '1px solid var(--dsw-alias-border-l2,CanvasText)', borderRadius: 10, padding: '12px 14px', minHeight: composerHeight, opacity: 0.75 }}>
         <textarea data-composer-input="" aria-label="Message" placeholder="Message or run a task" style={{ display: 'block', width: '100%', minHeight: 64, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', resize: 'none', padding: 0 }} />
       </div>
@@ -703,8 +716,13 @@ function DecisionScenario() {
       </div>
     </div>
   </div>;
+  // A host-like header band above the scrollport: nothing docked or portaled may cover it.
+  const framed = <>
+    <div data-header="" style={{ flex: 'none', display: 'flex', alignItems: 'center', height: 40, padding: '0 12px', borderBottom: '1px solid var(--kb-line, CanvasText)', opacity: 0.8 }}>Conversation tabs (harness stand-in)</div>
+    {content}
+  </>;
   // The no-scope variant proves the strip is self-sufficient outside the Kanban page.
-  return noScope ? <div data-no-scope="" style={rootStyle}>{content}</div> : <div className="dsh-kanban" style={rootStyle}>{content}</div>;
+  return noScope ? <div data-no-scope="" style={rootStyle}>{framed}</div> : <div className="dsh-kanban" style={rootStyle}>{framed}</div>;
 }
 
 /** One card whose first execution is being prepared, before the countdown arms. */

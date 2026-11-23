@@ -2,6 +2,7 @@ import React, { useEffect, useId, useRef, useState, type FormEvent } from 'react
 import type { Column, DecisionDefinition, Problem, Task } from '../shared/types.js';
 import { ChoiceOptions, Markdown } from '../questions/choice-slide.js';
 import { questionCss } from '../questions/styles.js';
+import { useDockLauncher } from '../questions/launcher-state.js';
 import { DECISION_LIMITS } from '../domain/decision-definition.js';
 import { decisionLabel } from './decision-view.js';
 import { DecisionWindowController, type DecisionWindowEntry } from './decision-window.js';
@@ -77,6 +78,16 @@ export interface DecisionGateProps {
 export function DecisionGate({ decision, selectedId, focusId, note, collapsed, entry, error = null, onToggleCollapsed, onSelect, onFocus, onNote, onConfirm, onCancel }: DecisionGateProps) {
   const prefix = useId();
   const options = decision.options;
+  // The launcher presentation opens one strip at a time. It never rewrites the person's
+  // disclosure choice: with the ordinary layout back, the gate returns to it.
+  const launcher = useDockLauncher();
+  const [launcherCollapsed, setLauncherCollapsed] = useState(false);
+  useEffect(() => { setLauncherCollapsed(false); }, [launcher.active]);
+  const panelVisible = launcher.launcher ? launcher.active && !launcherCollapsed : !collapsed;
+  const toggle = (): void => {
+    if (launcher.launcher) { if (launcher.active) setLauncherCollapsed(value => !value); return; }
+    onToggleCollapsed();
+  };
   const counting = entry?.status === 'counting';
   const busy = entry?.status === 'counting' || entry?.status === 'sending';
   const submit = (event: FormEvent<HTMLFormElement>): void => {
@@ -87,21 +98,21 @@ export function DecisionGate({ decision, selectedId, focusId, note, collapsed, e
     <style>{questionCss}</style>
     <form className="kq-strip" aria-label={decisionLabel(options.length)} onSubmit={submit}>
       <div className="kq-header-row">
-        <button type="button" className="kq-header" aria-expanded={!collapsed} onClick={onToggleCollapsed}>
+        <button type="button" className="kq-header" aria-expanded={panelVisible} onClick={toggle}>
           <span className="kq-icon"><DecisionGlyph /></span>
           <span className="kq-title">{decisionLabel(options.length)}</span>
           <span className="kq-progress" aria-live="polite">{counting ? remainingSeconds(entry?.deadline ?? null) + 's' : ''}</span>
-          <span className="kq-chevron" data-open={!collapsed}><Chevron up={!collapsed} /></span>
+          <span className="kq-chevron" data-open={panelVisible}><Chevron up={panelVisible} /></span>
         </button>
         {/* The cancel action lives in the header, which stays pinned even when the strip scrolls. */}
         {counting && <button type="button" className="kq-secondary kq-header-cancel" onClick={onCancel}>Cancel</button>}
       </div>
-      {collapsed && (counting || entry?.status === 'sending' || entry?.status === 'failed') && <div className="kq-collapsed-status">
+      {!panelVisible && (counting || entry?.status === 'sending' || entry?.status === 'failed') && <div className="kq-collapsed-status">
         {counting && <p role="status">Moving to {entry?.destinationName} in {remainingSeconds(entry?.deadline ?? null)} seconds.</p>}
         {entry?.status === 'sending' && <p role="status">Applying…</p>}
         {entry?.status === 'failed' && <p role="alert">{error}</p>}
       </div>}
-      {!collapsed && <div className="kq-panel">
+      {panelVisible && <div className="kq-panel">
         <div className="kq-scroll">
           {decision.context !== undefined && <div className="kq-context"><Markdown text={decision.context} /></div>}
           <section className="kq-slide">
