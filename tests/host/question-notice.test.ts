@@ -72,10 +72,14 @@ describe('open round notice', () => {
   it('bounds a long stack instead of naming every round', async () => {
     const rounds = Array.from({ length: 7 }, (_value, index) => round('q' + (index + 1), ['Question ' + (index + 1)]));
     const f = setup({ 'session-1': rounds });
-    const text = textOf((await f.step([user('Continue.')]))[0]!);
+    const messages = await f.step([user('Continue.')]);
+    const text = textOf(messages[0]!);
     expect(text).toContain('Round 5 (1 page): Question 5');
     expect(text).not.toContain('Question 6');
     expect(text).toContain('2 more unanswered rounds are open.');
+    // The source records only the rounds the text names, so a long stack cannot flood
+    // the recorded context with references the text does not show.
+    expect((messages[0]!.source as { roundIds: readonly string[] }).roundIds).toHaveLength(5);
     f.dispose();
   });
 

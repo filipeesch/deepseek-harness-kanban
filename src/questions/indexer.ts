@@ -193,6 +193,8 @@ export class QuestionIndex {
     if (!changed) return;
     if (dismissed.size === 0) this.dismissed.delete(sessionId);
     this.rebuild(sessionId);
+    // A rollback is a real state change: a live feed must see the round return.
+    this.emit();
   }
 
   /** Drop every in-memory trace of one conversation whose task was deleted. */
@@ -246,24 +248,30 @@ export class QuestionIndex {
     }) };
   }
 
-  /** One conversation's projection record, or undefined when it holds no events or dismissals. */
-  serializeSession(sessionId: string): QuestionSessionRecord | undefined {
+  /**
+   * One conversation's projection record, or undefined when it holds no events or dismissals.
+   * `retiring` previews turns that are about to stop being answerable, so the host can make
+   * that durable before the feed or the attention snapshot ever exposes it.
+   */
+  serializeSession(sessionId: string, retiring: readonly number[] = []): QuestionSessionRecord | undefined {
     const events = this.events.get(sessionId);
     const dismissedTurns = this.dismissed.get(sessionId);
-    if ((!events || events.size === 0) && (!dismissedTurns || dismissedTurns.size === 0)) return undefined;
+    const extra = new Set(retiring.filter(turn => Number.isSafeInteger(turn) && turn >= 0));
+    if ((!events || events.size === 0) && (!dismissedTurns || dismissedTurns.size === 0) && extra.size === 0) return undefined;
+    const merged = new Set([...(dismissedTurns ?? []), ...extra]);
     return {
       version: 1,
       sessionId,
-      events: this.serializeEvents(sessionId),
-      ...(dismissedTurns && dismissedTurns.size > 0 ? { dismissedTurns: [...dismissedTurns].sort((a, b) => a - b) } : {}),
+      events: this.serializeEvents(sessionId, [...extra]),
+      ...(merged.size > 0 ? { dismissedTurns: [...merged].sort((a, b) => a - b) } : {}),
     };
   }
 
   /** Drop stored question-page payloads for dismissed turns while retaining call/end/human evidence. */
-  private serializeEvents(sessionId: string): ProjectionEvent[] {
+  private serializeEvents(sessionId: string, retiring: readonly number[] = []): ProjectionEvent[] {
     const events = [...(this.events.get(sessionId)?.values() ?? [])].sort((a, b) => a.seq - b.seq);
-    const dismissedTurns = this.dismissed.get(sessionId);
-    if (!dismissedTurns || dismissedTurns.size === 0) return events.map(event => copyEvent(event));
+    const dismissedTurns = new Set([...(this.dismissed.get(sessionId) ?? []), ...retiring]);
+    if (dismissedTurns.size === 0) return events.map(event => copyEvent(event));
     const calls = events.filter((event): event is Extract<ProjectionEvent, { kind: 'call' }> => event.kind === 'call');
     return events.filter(event => {
       if (event.kind === 'native-page') return !dismissedTurns.has(event.turn);

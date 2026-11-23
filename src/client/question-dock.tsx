@@ -177,7 +177,14 @@ export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [retirementError, setRetirementError] = useState<string | null>(null);
   const pendingRetirements = useRef<string[]>([]);
+  const previousOldest = useRef<string | undefined>(undefined);
   useEffect(() => services.track(sessionId), [services, sessionId]);
+  // A retirement the dock could not record belongs to its conversation: switching or
+  // closing the conversation must not carry it into another one.
+  useEffect(() => {
+    pendingRetirements.current = [];
+    setRetirementError(null);
+  }, [sessionId]);
   useEffect(() => { if (attempt > 0) services.retry(sessionId); }, [attempt, services, sessionId]);
   // A closing drawer must not lose the last debounce window; the bridge also flushes on pagehide.
   useEffect(() => () => services.drafts.flush(), [services]);
@@ -189,6 +196,19 @@ export function QuestionDock({ sessionId, services, api }: QuestionDockProps) {
   const oldest = rounds.find(round => !services.isSubmitted(round.id))?.id ?? rounds.at(0)?.id;
   const isExpanded = (roundId: string): boolean => expanded[roundId] ?? (roundId === oldest || roundId === focused);
   const toggle = (roundId: string): void => { setExpanded(previous => ({ ...previous, [roundId]: !isExpanded(roundId) })); };
+  // The oldest unresolved round is open. When one leaves the stack, the round that
+  // becomes the oldest opens even if the person had collapsed it while it was newer.
+  useEffect(() => {
+    const previous = previousOldest.current;
+    previousOldest.current = oldest;
+    if (previous === undefined || oldest === undefined || previous === oldest) return;
+    setExpanded(current => {
+      if (!(oldest in current)) return current;
+      const next = { ...current };
+      delete next[oldest];
+      return next;
+    });
+  }, [oldest]);
   /**
    * Record an admitted answer. The reply is already durable, so a failed retirement is
    * reported beside the stack and retried rather than un-answering anything.

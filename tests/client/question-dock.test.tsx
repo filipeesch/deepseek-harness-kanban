@@ -190,6 +190,24 @@ describe('question dock surfaces', () => {
     expect(strips[0]!.querySelector('.kq-panel')).not.toBeNull();
   });
 
+  it('opens the round that becomes the oldest even after the person collapsed it', async () => {
+    const user = userEvent.setup();
+    const first = questionRound('round 1', 'Which storage should we use?');
+    const second = questionRound('round 2', 'Which region should we use?');
+    const view = liveObservable<QuestionRoundView>({ rounds: [first, second], errors: new Map() });
+    const { container } = render(<QuestionDock sessionId="session-1" services={services(view.source.getSnapshot(), vi.fn(), { view: view.source })} />);
+    const strips = () => container.querySelectorAll('.kq-strip');
+    // Open the newer block, then collapse it by choice so its state is explicitly closed.
+    await user.click(strips()[1]!.querySelector('.kq-header') as HTMLElement);
+    expect(strips()[1]!.querySelector('.kq-panel')).not.toBeNull();
+    await user.click(strips()[1]!.querySelector('.kq-header') as HTMLElement);
+    expect(strips()[1]!.querySelector('.kq-panel')).toBeNull();
+    // The oldest round leaves: the next one becomes the oldest and opens despite that.
+    view.set({ rounds: [second], errors: new Map() });
+    await waitFor(() => expect(strips()).toHaveLength(1));
+    expect(strips()[0]!.querySelector('.kq-panel')).not.toBeNull();
+  });
+
   it('keeps a submitted block mounted but hidden and gives the block to the next round', () => {
     const older = questionRound('round 2', 'Which storage should we use?');
     const newer = questionRound('round 3', 'Which region should we use?');
@@ -210,6 +228,36 @@ describe('question dock surfaces', () => {
     await user.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('The answered question round could not be recorded: storage offline'));
     expect(answer).toHaveBeenCalledWith('session-1', round.id);
+  });
+
+  it('retries a retirement that could not be recorded', async () => {
+    const user = userEvent.setup();
+    const round = freeRound('round 2', 'Which storage should we use?');
+    const answer = vi.fn()
+      .mockRejectedValueOnce(new Error('storage offline'))
+      .mockResolvedValueOnce([]);
+    render(<QuestionDock sessionId="session-1" services={services({ rounds: [round], errors: new Map() }, vi.fn(), { answer })} />);
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'Local');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('storage offline'));
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(answer).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a failed retirement when the conversation changes', async () => {
+    const user = userEvent.setup();
+    const round = freeRound('round 2', 'Which storage should we use?');
+    const answer = vi.fn(async () => { throw new Error('storage offline'); });
+    const { rerender } = render(<QuestionDock sessionId="session-1" services={services({ rounds: [round], errors: new Map() }, vi.fn(), { answer })} />);
+    await user.type(screen.getByRole('textbox', { name: 'Your answer' }), 'Local');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await user.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('storage offline'));
+    // Another conversation must not inherit the previous failure.
+    rerender(<QuestionDock sessionId="session-2" services={services({ rounds: [], errors: new Map() }, vi.fn(), { answer })} />);
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
 
   it('keeps attachments and their order through update, read, and hydrate', async () => {

@@ -76,11 +76,13 @@ export function registerQuestionNotice(ctx: Context, options: QuestionNoticeOpti
       const rounds = options.rounds(agent.id);
       const text = openRoundNotice(rounds);
       if (text === undefined) return undefined;
+      const named = rounds.filter(round => !round.answered && round.pages.length > 0).slice(0, NOTICE_MAX_ROUNDS);
       const source: KanbanQuestionNoticeSource = {
         kind: QUESTION_NOTICE_SOURCE_KIND,
         form: 'notice',
         summary: boundContextSummary('Open questions'),
-        roundIds: rounds.filter(round => !round.answered && round.pages.length > 0).map(round => round.id),
+        // Only the rounds the text names, so a long stack cannot flood the recorded context.
+        roundIds: named.map(round => round.id),
       };
       const message: UserMessage = createUserMessage({ content: [{ type: 'text', text }], source });
       return message;

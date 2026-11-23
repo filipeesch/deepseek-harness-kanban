@@ -428,6 +428,33 @@ describe('public SDK plugin binding contracts', () => {
     expect(f.remote.saveQuestionDraft).not.toHaveBeenCalledWith(expect.objectContaining({ draft: null }));
   });
 
+  it('keeps the surviving round and its draft after a successful dismissal', async () => {
+    const older: QuestionRound = { ...question, id: 'older', turnId: '1', pages: [{ callId: 'call-older', sequence: 1, page: { question: 'Older question', type: 'freetext' } }] };
+    const stored: StoredQuestionDraft = {
+      answers: { 'call-a': { choices: [], text: 'Surviving draft.', other: '', notes: '' } },
+      generalNotes: '',
+      active: { kind: 'page', callId: 'call-a' },
+      updatedAt: '2026-11-12T10:00:00.000Z',
+    };
+    const f = await installed([older, question], { [question.id]: stored });
+    const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;
+    // The host dismisses only the older round and keeps the one that still owes an answer.
+    vi.mocked(f.remote.dismissQuestions).mockResolvedValueOnce({ ok: true, value: { ok: true, value: [question] } });
+    render(<Dock sessionId="a" />);
+    const forms = await screen.findAllByRole('form', { name: 'Questions from the agent' });
+    expect(forms).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(screen.getAllByRole('form', { name: 'Questions from the agent' })).toHaveLength(1));
+    // The surviving round becomes the oldest, opens, and keeps its draft.
+    expect(screen.getByRole('heading', { name: 'Choose the implementation' })).toBeTruthy();
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Surviving draft.');
+    // A later feed update still carries it, and its draft was never discarded.
+    f.questionFeeds[0]!.push({ kind: 'update', rounds: [question] });
+    await waitFor(() => expect(screen.getAllByRole('form', { name: 'Questions from the agent' })).toHaveLength(1));
+    expect((screen.getByLabelText('Your answer') as HTMLTextAreaElement).value).toBe('Surviving draft.');
+    expect(f.remote.saveQuestionDraft).not.toHaveBeenCalledWith(expect.objectContaining({ draft: null }));
+  });
+
   it('clears a typed draft when the round becomes answered', async () => {
     const f = await installed();
     const Dock = f.entries.get('conversation.input.dock:kanban-decision-questions')!.Component;

@@ -51,7 +51,9 @@ Alternative: equal split (rejected: a short strip wastes height that the long on
 
 Alternative: keep the expansion state inside the form and remount the next block with a new key to force expansion (rejected: remount discards transient submission state and focus, and the dock would not own the stack rule).
 
-The launcher fallback stays a presentation-only override written by the seat to the block's DOM; it never changes the dock's expansion state, so leaving the launcher presentation restores the person's own choice.
+The dock also opens the round that becomes the oldest when one leaves the stack, clearing any earlier manual collapse of that round, so the promise that the oldest round is open holds at every step.
+
+The launcher fallback is a presentation-only state published by the seat through a React context, not a DOM click on the strip's header. The strip renders its body when the seat has the launcher open, and the person's disclosure choice is never rewritten, so returning to the ordinary layout restores it. The launchers live in one bounded, scrollable list inside the visible conversation: a stack taller than the chat scrolls instead of running off screen, and the open panel is kept in view at the top of that list.
 
 ### One durable "no longer answerable" fact for both retirement triggers
 
@@ -69,9 +71,9 @@ A failed retirement write after an admitted reply is reported by the dock and ke
 
 ### Open-round notice as a pre-step injection
 
-A new host injector reads the conversation's unresolved rounds from `QuestionIndex` and prepends one user-role message before the step's own messages, naming each open round with its question texts and page counts and reminding the agent not to repeat them. The message comes from the host, so the question projection does not count it as a human reply. The stage-notice injector already proves this pattern.
+A new host injector reads the conversation's unresolved rounds from `QuestionIndex` and prepends one user-role message before the step's own messages, naming each open round with its question texts and page counts and reminding the agent not to repeat them. The native loop records that message in the conversation as a host context message: its source kind is `question-notice`, so the question projection never counts it as the person's reply and no round is retired by it. The stage-notice injector already proves this pattern.
 
-The notice is capped in size (a bounded number of rounds and characters) so a long stack cannot flood the context.
+The notice is capped in size (five rounds, a bounded line and a bounded set of round references) so a long stack cannot flood the context.
 
 ### Tool description and preset guidance
 
@@ -91,12 +93,13 @@ The content height is read from the expanded body's `scrollHeight` while the str
 - A tall single strip hides the conversation → accepted: the header always stays visible and collapsing reveals the chat.
 - An ordinary chat reply no longer retires rounds → the open-round notice tells the agent the round is open, and the person can dismiss it; documented in `docs/user/conversations.md`.
 - The durable retirement write can fail after the reply was admitted → the block stays hidden for the session and the dock reports the problem; a reload can resurrect the round for dismissal, never the answer.
-- A stack of many blocks may exhaust the seat → the existing fallbacks keep every block reachable; a stack-specific cap is deliberately not added.
+- A stack of many blocks may exhaust the seat → the existing fallbacks keep every block reachable; a stack-specific cap is deliberately not added. The launcher list is bounded and scrolls, and the open panel keeps the top of it.
+- A very short conversation that still fits both fixed control sets gives each body little height (the question body can be under 30px at 360x420 with a 190px composer). Reserving a usable minimum body would need either a transcript reserve or a new forced fallback the product has not chosen, so the trade-off stands: every fixed control stays reachable and the body scrolls, and collapsing one block gives the other more height.
 - Reusing the dismissal record for retirement means the stored marker cannot tell the two triggers apart → the projection never needs that distinction after the fact, because the reply in the transcript is the answer's record.
 - The gate and the rounds compete for the same seat → allocation is by need, the gate stays expanded and first, and the fallbacks apply when nothing fits.
 
 ## Migration Plan
 
 - No data migration: the durable record shape is unchanged, and the projection recomputes the same rounds from the transcript.
-- Existing dismissed turns keep excluding their rounds; existing submitted rounds are already backed by their reply in the transcript.
+- Existing dismissed turns keep excluding their rounds. A round that the previous version retired only through its ordinary-reply heuristic has no durable marker, so it is presented again once after the upgrade; it can be dismissed, and no answer is lost because the reply is still in the transcript.
 - Rollback: revert the plugin release. The stored records remain readable by the previous version because no field was added.

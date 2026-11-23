@@ -174,6 +174,56 @@ describe('conversation question persistence', () => {
     await app.close();
   });
 
+  it('presents a legacy round once when it carries no durable retirement marker', async () => {
+    // The previous version retired a round on any later human message. That heuristic is
+    // gone, so such a record has no marker and the round is presented once after upgrade.
+    const record: QuestionSessionRecord = { version: 1, sessionId: 's', events: [
+      { kind: 'call', seq: 1, turn: 1, callId: 'c', name: 'decision_request' },
+      { kind: 'native-page', seq: 2, turn: 1, callId: 'c', page: { question: 'Legacy question', type: 'freetext' } },
+      { kind: 'end', seq: 3, turn: 1 },
+      { kind: 'human', seq: 4 },
+    ] };
+    const store: QuestionStore = { load: id => id === 's' ? record : undefined, save: async () => {}, remove: async () => false };
+    const app = await appWith(store);
+    const rounds = await app.rounds('s');
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.answered).toBe(false);
+    expect(app.questions.pending('s')).toBe(true);
+    await app.close();
+  });
+
+  it('never publishes a retirement the store rejected', async () => {
+    const report = vi.fn();
+    let release!: () => void;
+    let started!: () => void;
+    const saveStarted = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const store: QuestionStore = {
+      load: () => undefined,
+      save: async () => { started(); await gate; throw new Error('disk full'); },
+      remove: async () => false,
+    };
+    const app = await appWith(store, { report });
+    app.observe('s', call(1, 1, 'a'));
+    app.observe('s', result(2, 1, 'a'));
+    app.observe('s', end(3, 1));
+    const round = (await app.rounds('s'))[0]!;
+    let notifications = 0;
+    const stop = app.questions.subscribe(() => { notifications += 1; });
+    const dismissal = app.dismissQuestions('s', round.id);
+    await saveStarted;
+    // The live projection is untouched while the durable write is still open.
+    expect(notifications).toBe(0);
+    expect(app.questions.pending('s')).toBe(true);
+    release();
+    await expect(dismissal).rejects.toMatchObject({ code: 'STORAGE_SAVE_FAILED' });
+    expect(notifications).toBe(0);
+    expect(app.questions.pending('s')).toBe(true);
+    expect((await app.rounds('s')).filter(value => !value.answered)).toHaveLength(1);
+    stop();
+    await app.close();
+  });
+
   it('records an admitted answer durably and never presents the round again', async () => {
     let saved: QuestionSessionRecord | undefined;
     const store: QuestionStore = { load: id => id === 's' ? saved : undefined, save: async (_id, record) => { saved = structuredClone(record); }, remove: async () => false };

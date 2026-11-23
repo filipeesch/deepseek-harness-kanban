@@ -86,12 +86,27 @@ describe('seat plan', () => {
     expect(plan.budgets).toEqual([34, 428]);
   });
 
-  it('keeps every header and shares the rest evenly when the fixed controls cannot all fit', () => {
+  it('keeps every header and shares the rest evenly between the expanded strips', () => {
     const plan = seatPlan([GATE, LONG], { dockSpace: 100, crampedSpace: 100 });
     expect(plan.mode).toBe('dock');
     expect(plan.tight).toBe(true);
     expect(plan.budgets).toEqual([50, 50]);
     expect(plan.budgets.reduce((left, right) => left + right, 0)).toBe(100);
+  });
+
+  it('gives a collapsed strip no share of the tight remainder', () => {
+    const plan = seatPlan([GATE, COLLAPSED], { dockSpace: 100, crampedSpace: 100 });
+    expect(plan.tight).toBe(true);
+    // The collapsed strip needs its header only; the expanded strip gets the rest.
+    expect(plan.budgets[1]).toBe(34);
+    expect(plan.budgets[0]).toBe(66);
+    expect(plan.budgets.reduce((left, right) => left + right, 0)).toBe(100);
+  });
+
+  it('never allocates more than a fractional space', () => {
+    expect(distributeByNeed(161.25, [100, 100]).reduce((left, right) => left + right, 0)).toBe(161);
+    const plan = seatPlan([GATE, LONG], { dockSpace: 100.25, crampedSpace: 100.25 });
+    expect(plan.budgets.reduce((left, right) => left + right, 0)).toBeLessThanOrEqual(100);
   });
 
   it('falls back to cramped panels when not even the headers fit', () => {

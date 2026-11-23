@@ -12,6 +12,7 @@ import { clipboardFiles } from '../attachments/clipboard.js';
 import { useAttachmentPicks } from '../attachments/picks.js';
 import { useRestoreFocusAfterFailure } from '../attachments/focus.js';
 import { useQuestionDraft } from './use-question-draft.js';
+import { useDockLauncher } from './launcher-state.js';
 import { questionCss } from './styles.js';
 
 /** One attached file as the form hands it to the submission. */
@@ -112,6 +113,13 @@ export function QuestionForm({ round, hidden = false, collapsed, onToggleCollaps
   // own, so the same component serves both without a second collapse implementation.
   const [ownCollapsed, setOwnCollapsed] = useState(false);
   const isCollapsed = collapsed ?? ownCollapsed;
+  // In the launcher presentation the seat opens one strip at a time. That is presentation
+  // only: the person's disclosure choice above stays untouched and returns with the
+  // ordinary layout. A second activation collapses the open launcher until it closes.
+  const launcher = useDockLauncher();
+  const [launcherCollapsed, setLauncherCollapsed] = useState(false);
+  useEffect(() => { setLauncherCollapsed(false); }, [launcher.active]);
+  const panelVisible = launcher.launcher ? launcher.active && !launcherCollapsed : !isCollapsed;
   const [focused, setFocused] = useState<Record<string, string>>({});
   const headingRef = useRef<HTMLDivElement>(null);
   const keepAnsweringRef = useRef<HTMLButtonElement>(null);
@@ -215,6 +223,10 @@ export function QuestionForm({ round, hidden = false, collapsed, onToggleCollaps
   function next() { if (canAdvance) goTo(slides[index + 1]); }
   function back() { goTo(slides[index - 1]); }
   function toggle() {
+    if (launcher.launcher) {
+      if (launcher.active) setLauncherCollapsed(value => !value);
+      return;
+    }
     if (collapsed === undefined) setOwnCollapsed(value => !value);
     else onToggleCollapsed?.();
   }
@@ -222,7 +234,10 @@ export function QuestionForm({ round, hidden = false, collapsed, onToggleCollaps
     if (!onDismiss || disabled) return;
     if (hasDraft && !current.confirmingDismiss) {
       // The confirmation must be visible, so a collapsed block is opened first.
-      if (isCollapsed) toggle();
+      if (!panelVisible) {
+        if (launcher.launcher) setLauncherCollapsed(false);
+        else toggle();
+      }
       updateSurface(previous => ({ ...previous, confirmingDismiss: true, dismissError: null }));
       return;
     }
@@ -371,13 +386,13 @@ export function QuestionForm({ round, hidden = false, collapsed, onToggleCollaps
   return <>
     <style>{questionCss}</style>
     <form className="kq-strip" aria-label="Questions from the agent" hidden={hidden} aria-hidden={hidden || undefined} onSubmit={submit}>
-      <button type="button" className="kq-header" aria-expanded={!isCollapsed} aria-controls={bodyId} onClick={toggle}>
+      <button type="button" className="kq-header" aria-expanded={panelVisible} aria-controls={bodyId} onClick={toggle}>
         <span className="kq-icon"><QuestionGlyph /></span>
         <span className="kq-title">Questions from the agent</span>
         <span className="kq-progress" aria-live="polite">{index + 1} / {slides.length}</span>
-        <span className="kq-chevron" data-open={!isCollapsed}><Chevron up={!isCollapsed} /></span>
+        <span className="kq-chevron" data-open={panelVisible}><Chevron up={panelVisible} /></span>
       </button>
-      {!isCollapsed && <div className="kq-panel" id={bodyId} onPaste={event => {
+      {panelVisible && <div className="kq-panel" id={bodyId} onPaste={event => {
         // Paste belongs to the whole panel, not only its body: a file pasted while the
         // attach control or a footer button has focus still reaches the active slide.
         // Pasted text stays text, and a surface that is submitting or dismissing takes

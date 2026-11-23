@@ -714,8 +714,13 @@ function DecisionScenario() {
       </div>
     </div>
   </div>;
+  // A host-like header band above the scrollport: nothing docked or portaled may cover it.
+  const framed = <>
+    <div data-header="" style={{ flex: 'none', display: 'flex', alignItems: 'center', height: 40, padding: '0 12px', borderBottom: '1px solid var(--kb-line, CanvasText)', opacity: 0.8 }}>Conversation tabs (harness stand-in)</div>
+    {content}
+  </>;
   // The no-scope variant proves the strip is self-sufficient outside the Kanban page.
-  return noScope ? <div data-no-scope="" style={rootStyle}>{content}</div> : <div className="dsh-kanban" style={rootStyle}>{content}</div>;
+  return noScope ? <div data-no-scope="" style={rootStyle}>{framed}</div> : <div className="dsh-kanban" style={rootStyle}>{framed}</div>;
 }
 
 /** One card whose first execution is being prepared, before the countdown arms. */

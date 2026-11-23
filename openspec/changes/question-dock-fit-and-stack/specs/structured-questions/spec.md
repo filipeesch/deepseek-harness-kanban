@@ -8,7 +8,7 @@ Every unresolved question round of a conversation SHALL be presented as its own 
 
 The oldest unresolved round SHALL be expanded. A round that arrives while another round is unresolved SHALL be presented collapsed below the existing blocks. More than one block MAY be expanded at the same time, and a collapsed block SHALL occupy only its header.
 
-When a round leaves the stack because it was answered or dismissed, the oldest remaining unresolved round SHALL be expanded, and every other remaining block SHALL keep its current disclosure state.
+The oldest unresolved round SHALL be expanded even when the person had collapsed it while it was newer: when a round leaves the stack because it was answered or dismissed, the round that becomes the oldest SHALL be expanded, and every other remaining block SHALL keep its current disclosure state.
 
 Answering or dismissing one block SHALL NOT remove, collapse, reset, or discard the draft of another block.
 
@@ -61,11 +61,11 @@ Pages produced while one round is still being generated SHALL join that round's 
 
 ### Requirement: The agent is told which question rounds are open
 
-Before an agent step in a conversation that has unresolved question rounds, the host SHALL present the agent a notice that names each open round and its questions, so the agent can avoid repeating them.
+Before an agent step in a conversation that has unresolved question rounds, the host SHALL present the agent a notice that names each open round and its questions, so the agent can avoid repeating them. The notice SHALL name at most five rounds and SHALL be bounded in characters.
 
 The notice SHALL be informational: it SHALL NOT block a tool call, retire a round, change a round's answered or dismissed state, or count as the person's reply.
 
-The notice SHALL NOT be presented for a conversation with no unresolved round, and the plugin SHALL NOT present it in the conversation transcript as a message from the person.
+The notice SHALL be recorded in the conversation as a host context message with its own source, never as a message from the person, and it SHALL NOT create a question page. The notice SHALL NOT be presented for a conversation with no unresolved round.
 
 #### Scenario: Name the open rounds
 
@@ -80,8 +80,10 @@ The notice SHALL NOT be presented for a conversation with no unresolved round, a
 #### Scenario: The notice is not an answer
 
 - **WHEN** the notice is delivered to the agent
-- **THEN** no round is retired or dismissed because of it
-- **AND** no conversation message is added to the transcript
+- **THEN** the conversation records it as a host context message with the notice source
+- **AND** the question projection does not count it as the person's reply
+- **AND** no round is retired or dismissed because of it
+- **AND** it creates no question page
 
 ### Requirement: Round retirement removes only the answered block
 
@@ -242,7 +244,7 @@ Question rounds SHALL update from conversation-scoped question state that does n
 
 Each active question round SHALL be presented in its own panel docked directly above the message composer, in the host input-dock strip, and that panel SHALL remain in place while the conversation transcript scrolls. The panel SHALL show a header bar with the round title, a progress indicator, and a collapse toggle, and SHALL follow the stack rule defined by Question rounds stack above the composer, which expands the oldest unresolved round and presents a round that arrives while another round is unresolved collapsed.
 
-In its normal presentation the panel SHALL grow with its content up to the height its composer seat can spare inside the conversation's scrolling body, so the panel, the message composer, and every other entry waiting in the same seat fit inside that body together. The bound SHALL be measured from the conversation rather than from the browser window, so an embedded conversation and a growing draft both reduce it. The panel SHALL NOT grow past the conversation's chat scrollport, so the conversation header and its tab row stay uncovered, and it SHALL NOT reserve transcript height: it may cover the chat, and collapsing it from its header SHALL reveal the conversation again. While the bound can hold the panel's fixed controls, the header bar and the footer actions SHALL stay outside the panel's scrolling body, and the body's content SHALL scroll only when it exceeds the height the seat can spare. When several strips wait in the same seat, the available height SHALL be shared by need: each strip takes up to its own content, the leftover goes to the other strips, and a proportional split applies only when their needs together exceed the space. In the fallbacks below that guarantee is replaced by reachability. When the bound can hold the header bar but not every fixed control, the panel SHALL keep its header bar as its entry point and SHALL scroll as a whole, so its navigation, submit, and dismiss actions remain reachable. When the seat cannot hold even the header bars beside the composer, the panel SHALL be presented above the conversation, scrolling as a whole and leaving the composer reachable again once the panel is collapsed. When the visible conversation is too shallow to present two usable panels, each waiting panel SHALL be presented as a compact launcher and only one SHALL be open at a time, opening the launcher the person chooses. A launcher's header SHALL report whether its body is visible, moving focus alone SHALL NOT open it, and activating a launcher SHALL select and open it in one action, even one the person had collapsed before. Only the disclosure button SHALL be treated as an activation: every other control that stays visible on an inactive launcher, such as the countdown cancel action, SHALL keep working. Reopening the conversation SHALL open a visible launcher again instead of remembering a closed one, and leaving the launcher presentation SHALL keep the panel's disclosure state. A short window SHALL therefore never hide a control permanently: it decides only whether that control is visible at once or reachable by scrolling the panel.
+In its normal presentation the panel SHALL grow with its content up to the height its composer seat can spare inside the conversation's scrolling body, so the panel, the message composer, and every other entry waiting in the same seat fit inside that body together. The bound SHALL be measured from the conversation rather than from the browser window, so an embedded conversation and a growing draft both reduce it. The panel SHALL NOT grow past the conversation's chat scrollport, so the conversation header and its tab row stay uncovered, and it SHALL NOT reserve transcript height: it may cover the chat, and collapsing it from its header SHALL reveal the conversation again. While the bound can hold the panel's fixed controls, the header bar and the footer actions SHALL stay outside the panel's scrolling body, and the body's content SHALL scroll only when it exceeds the height the seat can spare. When several strips wait in the same seat, the available height SHALL be shared by need: each strip takes up to its own content, the leftover goes to the other strips, and a proportional split applies only when their needs together exceed the space. In the fallbacks below that guarantee is replaced by reachability. When the bound can hold the header bar but not every fixed control, the panel SHALL keep its header bar as its entry point and SHALL scroll as a whole, so its navigation, submit, and dismiss actions remain reachable. When the seat cannot hold even the header bars beside the composer, the panel SHALL be presented above the conversation, scrolling as a whole and leaving the composer reachable again once the panel is collapsed. When the visible conversation is too shallow to present two usable panels, each waiting panel SHALL be presented as a compact launcher in one bounded list above the conversation, and only one SHALL be open at a time, opening the launcher the person chooses. The list SHALL stay inside the visible conversation and SHALL scroll when the launchers are taller than it, opening with the open launcher's panel in view, so every launcher stays reachable in a stack of any size. A launcher's header SHALL report whether its body is visible, moving focus alone SHALL NOT open it, and activating a launcher SHALL select and open it in one action, even one the person had collapsed before, without changing the disclosure state the person chose outside the launcher presentation. Only the disclosure button SHALL be treated as an activation: every other control that stays visible on an inactive launcher, such as the countdown cancel action, SHALL keep working. Reopening the conversation SHALL open a visible launcher again instead of remembering a closed one, and leaving the launcher presentation SHALL restore that disclosure state. A short window SHALL therefore never hide a control permanently: it decides only whether that control is visible at once or reachable by scrolling the panel.
 
 The answer-file controls SHALL stay reachable at every height. In the normal presentation the attach action and the footer actions stay outside the panel's scrolling body, and a list of attached files scrolls inside a bounded row of its own instead of growing the footer until the actions are clipped. In the fallbacks every action remains reachable: the head of the panel keeps the entry point, and the panel scrolls as a whole so the file row and the footer can be brought into view.
 
@@ -458,7 +460,7 @@ The composer question dock SHALL present every unresolved round as a block in th
 
 ### Requirement: Question panel removed when the round is answered
 **Reason**: Retirement is now per round and an ordinary chat reply no longer retires a round. The behavior is specified by Round retirement removes only the answered block.
-**Migration**: No data migration. Rounds already retired stay retired; unresolved rounds stay in the stack and are retired only by their own submission or dismissal.
+**Migration**: No data migration. An explicit dismissal or a recorded answer keeps its round retired. A round the previous version retired only through its ordinary-reply heuristic carries no durable marker, so it is presented again once after the upgrade and can then be dismissed.
 
 ### Requirement: Dismiss an unresolved question round
 **Reason**: Dismissal is now per round so a stack keeps the rounds the person did not discard. The behavior is specified by Dismiss one unresolved question round.

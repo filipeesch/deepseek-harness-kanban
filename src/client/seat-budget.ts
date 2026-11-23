@@ -98,8 +98,11 @@ function apportion(space: number, weights: readonly number[]): number[] {
  */
 export function distributeByNeed(space: number, needs: readonly number[]): number[] {
   const result = needs.map(() => 0);
-  if (needs.length === 0 || space <= 0) return result;
-  let remaining = space;
+  // DOM reservations can be fractional; the allocatable height is whole pixels, and the
+  // allocation must never exceed the space it was given.
+  const budget = Math.floor(Math.max(0, space));
+  if (needs.length === 0 || budget <= 0) return result;
+  let remaining = budget;
   const order = needs
     .map((need, index) => ({ need: Math.max(0, need), index }))
     .sort((left, right) => left.need - right.need || left.index - right.index);
@@ -136,7 +139,8 @@ export function distributeByNeed(space: number, needs: readonly number[]): numbe
 export function seatPlan(strips: readonly StripMetrics[], input: SeatPlanInput): SeatPlan {
   const count = strips.length;
   if (count === 0) return { mode: 'dock', budgets: [], tight: false, panelHeight: 0, launcher: false };
-  const dockSpace = Math.max(0, input.dockSpace);
+  // Reservations measured in the DOM can be fractional; the seat allocates whole pixels.
+  const dockSpace = Math.floor(Math.max(0, input.dockSpace));
   const fixed = strips.map(metrics => Math.max(0, metrics.fixed));
   const headers = strips.map(metrics => Math.max(0, Math.min(metrics.header, metrics.fixed)));
   const contents = strips.map(metrics => (metrics.expanded ? Math.max(0, metrics.content) : 0));
@@ -148,10 +152,21 @@ export function seatPlan(strips: readonly StripMetrics[], input: SeatPlanInput):
   const headerTotal = sum(headers);
   if (dockSpace >= headerTotal) {
     // No strip can show its full fixed controls here, so need cannot decide the split:
-    // every strip keeps its header and shares the remainder evenly, which is what gives
-    // each one enough of its own scrolling body to reach its actions.
-    const extra = splitEvenly(dockSpace - headerTotal, count);
-    return { mode: 'dock', budgets: headers.map((value, index) => value + extra[index]!), tight: true, panelHeight: 0, launcher: false };
+    // each expanded strip keeps its header and shares the remainder evenly, which is what
+    // gives each one enough of its own scrolling body to reach its actions. A collapsed
+    // strip can use no extra height, so it keeps only its header.
+    const expanded = strips.map((metrics, index) => (metrics.expanded ? index : -1)).filter(index => index >= 0);
+    const extra = splitEvenly(dockSpace - headerTotal, expanded.length);
+    return {
+      mode: 'dock',
+      budgets: headers.map((value, index) => {
+        const slot = expanded.indexOf(index);
+        return slot < 0 ? value : value + extra[slot]!;
+      }),
+      tight: true,
+      panelHeight: 0,
+      launcher: false,
+    };
   }
   const gap = Math.max(0, input.gap ?? 0);
   const share = Math.floor(Math.max(0, Math.max(0, input.crampedSpace) - gap * Math.max(0, count - 1)) / count);

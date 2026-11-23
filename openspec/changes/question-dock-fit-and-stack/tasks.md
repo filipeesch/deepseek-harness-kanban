@@ -30,7 +30,7 @@
 - [x] 4.1 Update the `decision_request` description in `src/host/tools/questions.ts` with the self-contained-page rule, the prohibition on announcing or previewing later pages, the note that the form reports progress, and the no-re-ask rule; keep the per-call result unchanged. Verify with host tests that assert the new phrases and the unchanged result text.
 - [x] 4.2 Add the same self-contained-page rule to the workflow operator preset guidance in `cordis.patch.yml`. Verify with the preset tests and a read of the shipped instruction.
 - [x] 4.3 Add `src/host/question-notice.ts` as a pre-step injector that names each open round and its questions, bounded in rounds and characters, and register it in the host composition. Verify with host tests: two open rounds are named, no notice without open rounds, and the notice is not recorded as a human reply.
-- [x] 4.4 Verify the notice never reaches the transcript or the question projection: it adds no conversation message, retires nothing, and creates no question page. Verify with an integration test over a conversation with a steering message and one open round.
+- [x] 4.4 Verify the notice is recorded only as a host context message: the question projection never counts it as the person's reply, no round is retired by it, and it creates no question page. Verify with a test over a conversation with a steering message and one open round, asserting the notice source and that the projection ignores it.
 
 ## 5. Decision gate
 

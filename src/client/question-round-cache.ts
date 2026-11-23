@@ -70,6 +70,8 @@ export class QuestionRoundCache {
   private readonly closers = new Map<string, () => void>();
   private readonly generations = new Map<string, number>();
   private readonly dismissed = new Set<string>();
+  /** Rounds this client retired itself, so an older or delayed frame cannot revive them. */
+  private readonly retired = new Set<string>();
   private readonly submitted = new Map<string, Submission>();
   private focused: string | undefined;
   private disposed = false;
@@ -174,14 +176,19 @@ export class QuestionRoundCache {
       remaining = await this.options.answerer.answer(sessionId, roundId);
     } catch (error) {
       if ((error as { code?: unknown }).code !== 'QUESTION_ROUND_NOT_FOUND') throw error;
-      remaining = this.rounds.filter(round => round.sessionId !== sessionId || round.id !== roundId);
+      // The host already retired it. Keep this conversation's other rounds only: the
+      // fallback must never leak another session's rounds into this merge.
+      remaining = this.rounds.filter(round => round.sessionId === sessionId && round.id !== roundId);
     }
     if (this.disposed) return [];
+    // Retire it locally as well: the answer is admitted, so a delayed unresolved frame
+    // for the same round must not bring it back while the host catches up.
+    this.retired.add(roundId);
     this.submitted.delete(roundId);
     if (this.focused === roundId) this.focused = undefined;
     this.rounds = ordered([
       ...this.rounds.filter(round => round.sessionId !== sessionId),
-      ...remaining.filter(round => !this.dismissed.has(round.id)),
+      ...remaining.filter(round => !this.dismissed.has(round.id) && !this.retired.has(round.id)),
     ]);
     this.errors.delete(sessionId);
     this.publish();
@@ -192,7 +199,7 @@ export class QuestionRoundCache {
     if (this.disposed) return;
     this.disposed = true;
     for (const close of this.closers.values()) close();
-    this.closers.clear(); this.refs.clear(); this.generations.clear(); this.dismissed.clear(); this.submitted.clear();
+    this.closers.clear(); this.refs.clear(); this.generations.clear(); this.dismissed.clear(); this.retired.clear(); this.submitted.clear();
     this.focused = undefined; this.rounds = []; this.errors = new Map();
     this.state.set(EMPTY_VIEW); this.state.clear();
   }
@@ -237,8 +244,9 @@ export class QuestionRoundCache {
     const kept = this.rounds.filter(round => round.sessionId === sessionId
       && this.submitted.has(round.id)
       && !this.dismissed.has(round.id)
+      && !this.retired.has(round.id)
       && !incoming.some(candidate => candidate.id === round.id));
-    const next = ordered([...this.rounds.filter(round => round.sessionId !== sessionId), ...incoming.filter(round => !this.dismissed.has(round.id)), ...kept]);
+    const next = ordered([...this.rounds.filter(round => round.sessionId !== sessionId), ...incoming.filter(round => !this.dismissed.has(round.id) && !this.retired.has(round.id)), ...kept]);
     this.rounds = next;
     this.errors.delete(sessionId);
     this.publish();
