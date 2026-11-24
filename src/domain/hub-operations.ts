@@ -17,8 +17,9 @@ import { renameTaskStage, updateStage } from './stage-update.js';
 import { describeStageActivity, hasInFlightWork, persistedStageActivity } from '../shared/stage-activity.js';
 import { ownsStageRouting, transitionTargets } from './transitions.js';
 import { assertProjectSave, buildProject } from './project-registration.js';
-import { assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, normalizeProjectKeys } from './board-project-scope.js';
-import { requireProjectKey } from './project-key.js';
+import { assertKnownProjectIdentities, assertProjectCreatable, boardsAllowingIdentity, normalizeProjectKeys, publishedIdentityOf } from './board-project-scope.js';
+import { allocateProjectKey, publishedProjectName, requireProjectKey } from './project-key.js';
+import { planReceivedScope } from './received-project-scope.js';
 import { applyNoteTags, validateNoteWrite, type NoteInput } from './note.js';
 import type { Placement } from './placement.js';
 import { compareTaskOrder } from './task-order.js';
@@ -199,12 +200,15 @@ export function renameBoard(hub: HubState, boardId: string, name: string, deps: 
   return board;
 }
 
-export function deleteBoard(hub: HubState, boardId: string, deps: OperationDeps): Board {
+export function deleteBoard(hub: HubState, boardId: string, deps: OperationDeps, options: { prune?: boolean } = {}): Board {
   const board = requireBoard(hub, boardId);
   const tasks = hub.tasks.filter(task => task.boardId === board.id);
   invariant(tasks.length === 0, 'BOARD_IN_USE', 'Delete or move the tasks in this board before deleting it.');
   hub.boards.splice(hub.boards.indexOf(board), 1);
   hub.updatedAt = timestamp(deps);
+  // A placeholder exists because a board names its identity; deleting the last board
+  // that named one leaves it stating nothing. A batch defers this to its own end.
+  if (options.prune !== false) pruneUncitedPlaceholders(hub, deps);
   return board;
 }
 
@@ -286,13 +290,44 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
   const projectId = value.id ?? nextId(hub.projects, deps.id);
   const current = hub.projects.find(project => project.id === projectId);
   assertProjectSave(hub, projectId, value);
-  const takenKeys = hub.projects.filter(project => project.id !== projectId).map(project => project.projectKey);
+  // Adoption supplies a directory and nothing else: the keys a team published stay, so no
+  // board scope of the receiving installation is rewritten by the person filling a path.
+  if (current !== undefined && isPublishedProject(current)) {
+    const requestedLocal = value.projectKey === undefined || value.projectKey.trim() === '' ? current.projectKey : requireProjectKey(value.projectKey);
+    const requestedPublished = typeof value.publishedKey === 'string' ? (value.publishedKey.trim() === '' ? undefined : requireProjectKey(value.publishedKey)) : current.publishedKey;
+    invariant(requestedLocal === current.projectKey && (requestedPublished ?? null) === (current.publishedKey ?? null), 'PROJECT_IDENTITY_FIXED', 'Adopting a received project keeps the keys its board scopes name. Adopt it first, then edit the keys.');
+  }
+  // A save that claims an identity a placeholder holds takes that placeholder over, so
+  // the placeholder's local key — which is that same identity — must not read as a
+  // conflict while the claim is being built.
+  const others = hub.projects.filter(project => project.id !== projectId);
+  // The identity this save will state, read the way buildProject reads it: an explicit
+  // published key wins, an empty one leaves the identity to the local key, an absent one
+  // keeps the stored published key, and a local key that is neither requested nor stored
+  // is allocated below (so it can name no placeholder yet).
+  const requestedPublished = typeof value.publishedKey === 'string' ? value.publishedKey.trim() : undefined;
+  const publishedAfter = requestedPublished === undefined ? current?.publishedKey : (requestedPublished === '' ? undefined : requireProjectKey(requestedPublished));
+  const localAfter = value.projectKey === undefined || value.projectKey.trim() === '' ? current?.projectKey : requireProjectKey(value.projectKey);
+  const claimedIdentity = publishedAfter ?? localAfter;
+  const absorbed = claimedIdentity === undefined ? undefined : others.find(project => isPublishedProject(project) && publishedIdentityOf(project) === claimedIdentity);
+  const takenKeys = others.filter(project => project !== absorbed).map(project => project.projectKey);
   const project = buildProject(projectId, value, current, takenKeys);
-  // A key edit is a local reference migration: every board scope of the Hub follows it
-  // in the same write, so no board is left naming a key that no project owns.
-  if (current !== undefined && current.projectKey !== project.projectKey) {
-    for (const board of boardsAllowingKey(hub.boards, current.projectKey)) {
-      board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).map(key => key === current.projectKey ? project.projectKey : key));
+  const previous = current === undefined ? null : publishedIdentityOf(current);
+  const next = publishedIdentityOf(project);
+  // A published identity answers one project and one project only. A placeholder states
+  // that a team identity is not answered yet, so a save that claims it takes it over;
+  // another project already answering it is a conflict the person must resolve.
+  const holder = hub.projects.find(candidate => candidate.id !== projectId && publishedIdentityOf(candidate) === next);
+  if (holder !== undefined) {
+    if (!isPublishedProject(holder)) throw new KanbanError('PROJECT_KEY_CONFLICT', 'Another project of this Hub already uses that published key.', { projectKey: next });
+    hub.projects.splice(hub.projects.indexOf(holder), 1);
+  }
+  // Changing the published identity is a local reference migration: every board scope of
+  // the Hub follows it in the same write, so no board is left naming an identity no
+  // project owns. A local key edit that leaves the identity alone touches no scope.
+  if (previous !== null && previous !== next) {
+    for (const board of boardsAllowingIdentity(hub.boards, previous)) {
+      board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).map(key => key === previous ? next : key));
       board.updatedAt = timestamp(deps);
     }
   }
@@ -304,13 +339,18 @@ export function saveProject(hub: HubState, input: ProjectInput, deps: OperationD
 
 export function deleteProject(hub: HubState, projectId: string, deps: OperationDeps): Project {
   const project = requireProject(hub, projectId);
+  // A received identity is answered by its placeholder, and removing that answer from the
+  // board scopes would make them differ from the published version. Ignoring it is the
+  // operation that keeps every scope valid.
+  if (isPublishedProject(project)) throw new KanbanError('PROJECT_NOT_DELETABLE', 'This project was received from a team board. Ignore it instead of deleting it: an ignore keeps every board scope naming a project of the Hub.', { projectId });
   invariant(!project.operation, 'PROJECT_BUSY', 'Resolve the project relocation before deleting the project.');
   invariant(!hub.tasks.some(task => task.projectId === projectId), 'PROJECT_IN_USE', 'Delete the tasks in this project before deleting the project.');
   invariant(!(hub.schedules ?? []).some(schedule => schedule.projectId === projectId), 'PROJECT_IN_USE', 'Delete or repoint the schedules in this project before deleting the project.');
-  // A deleted project cannot stay in a board's scope: the key leaves every board that
-  // names it, which may leave a restricted board with fewer keys or with none at all.
-  for (const board of boardsAllowingKey(hub.boards, project.projectKey)) {
-    board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).filter(key => key !== project.projectKey));
+  // A deleted project cannot stay in a board's scope: the identity leaves every board
+  // that names it, which may leave a restricted board with fewer keys or with none at all.
+  const identity = publishedIdentityOf(project);
+  for (const board of boardsAllowingIdentity(hub.boards, identity)) {
+    board.allowedProjectKeys = normalizeProjectKeys((board.allowedProjectKeys ?? []).filter(key => key !== identity));
     board.updatedAt = timestamp(deps);
   }
   hub.projects.splice(hub.projects.indexOf(project), 1);
@@ -318,18 +358,106 @@ export function deleteProject(hub: HubState, projectId: string, deps: OperationD
   return project;
 }
 
+/**
+ * Give the Hub a published placeholder for every identity it does not answer yet.
+ *
+ * Reception is what makes a team board readable here: the identities its scope names
+ * are written as placeholders in the same transaction that writes the scope, so the
+ * scope names projects of the Hub and no board is left naming an identity nothing
+ * answers. An identity the Hub already answers, including an ignored one, is left
+ * alone. Returns the identities this call created, in the order they were received.
+ */
+export function ensurePublishedProjects(hub: HubState, identities: readonly string[], deps: OperationDeps): string[] {
+  // A document may name one identity twice; one placeholder answers both.
+  const { placeholders } = planReceivedScope([...new Set(identities.map(requireProjectKey))], hub.projects);
+  const takenLocalKeys = new Set(hub.projects.map(project => project.projectKey));
+  // Every incoming identity keeps its natural local key when nothing holds it, so a
+  // mechanical key never takes the natural key of an identity received beside it.
+  const reserved = new Set([...takenLocalKeys, ...placeholders]);
+  const created: string[] = [];
+  for (const identity of placeholders) {
+    // The identity is the natural local key, but a registered project may already hold that
+    // local key while answering a different team key (it is linked). A local key is unique
+    // within the Hub, so the placeholder takes a mechanical one and keeps the received
+    // identity as the key every board scope names.
+    const localKey = takenLocalKeys.has(identity) ? allocateProjectKey(identity, reserved) : identity;
+    takenLocalKeys.add(localKey);
+    reserved.add(localKey);
+    const project: Project = {
+      id: nextId(hub.projects, deps.id), name: publishedProjectName(identity), projectKey: localKey, origin: 'published',
+      ...(localKey === identity ? {} : { publishedKey: identity }),
+    };
+    hub.projects.push(project);
+    created.push(identity);
+  }
+  if (created.length > 0) hub.updatedAt = timestamp(deps);
+  return created;
+}
+
+/**
+ * Acknowledge one received identity without a project, or take that back.
+ *
+ * The placeholder stays, marked and hidden, so every board scope that names its
+ * identity keeps naming a project of the Hub: removing the identity from the scopes
+ * instead would make those boards differ from the version the team published. Only a
+ * placeholder can be ignored, because a registered project is already answered.
+ */
+export function dismissProject(hub: HubState, projectId: string, dismissed: unknown, deps: OperationDeps): Project {
+  const project = requireProject(hub, projectId);
+  if (!isPublishedProject(project)) throw new KanbanError('PROJECT_NOT_IGNORABLE', 'Only a project received from a team can be ignored.');
+  invariant(typeof dismissed === 'boolean', 'INVALID_INPUT', 'The ignored state must be a boolean.');
+  if (dismissed) project.dismissed = true;
+  else delete project.dismissed;
+  hub.updatedAt = timestamp(deps);
+  return project;
+}
+
+/** The published identities whose placeholders no board of the Hub names, without writing. */
+export function uncitedPlaceholders(hub: HubState): string[] {
+  const cited = new Set<string>();
+  for (const board of hub.boards) for (const key of board.allowedProjectKeys ?? []) cited.add(key);
+  return hub.projects
+    .filter(project => isPublishedProject(project) && !cited.has(publishedIdentityOf(project)))
+    .map(publishedIdentityOf);
+}
+
+/**
+ * Drop the placeholders no board of the Hub names any more.
+ *
+ * A placeholder exists because a board named its identity; once nothing names it, it
+ * states nothing. Pruning never records an ignore, so a team that names the identity
+ * again receives a fresh placeholder awaiting adoption.
+ */
+export function pruneUncitedPlaceholders(hub: HubState, deps: OperationDeps): string[] {
+  const cited = new Set<string>();
+  for (const board of hub.boards) for (const key of board.allowedProjectKeys ?? []) cited.add(key);
+  const removed: string[] = [];
+  for (const project of [...hub.projects]) {
+    if (!isPublishedProject(project)) continue;
+    if (cited.has(publishedIdentityOf(project))) continue;
+    hub.projects.splice(hub.projects.indexOf(project), 1);
+    removed.push(publishedIdentityOf(project));
+  }
+  if (removed.length > 0) hub.updatedAt = timestamp(deps);
+  return removed;
+}
+
 /** Set or clear one board's project scope; an absent list allows every project of the Hub. */
-export function setBoardProjectScope(hub: HubState, boardId: string, projectKeys: readonly string[] | undefined, deps: OperationDeps): Board {
+export function setBoardProjectScope(hub: HubState, boardId: string, projectKeys: readonly string[] | undefined, deps: OperationDeps, options: { prune?: boolean } = {}): Board {
   const board = requireBoard(hub, boardId);
   if (projectKeys === undefined) {
     delete board.allowedProjectKeys;
   } else {
     const keys = normalizeProjectKeys(projectKeys.map(requireProjectKey));
-    assertKnownProjectKeys(keys, hub.projects);
+    assertKnownProjectIdentities(keys, hub.projects);
     board.allowedProjectKeys = keys;
   }
   board.updatedAt = timestamp(deps);
   hub.updatedAt = timestamp(deps);
+  // Every scope write is the chance to drop the placeholders it stopped naming, whether a
+  // person narrowed the scope or a team update settled it. A batch defers this, so a
+  // scope that drops an identity never prunes one another board of the batch adds.
+  if (options.prune !== false) pruneUncitedPlaceholders(hub, deps);
   return board;
 }
 

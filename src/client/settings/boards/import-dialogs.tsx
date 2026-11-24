@@ -192,7 +192,7 @@ export function ImportBoardsDialog({ hub, api, files, run, onClose, onApplied }:
                 <input className="kb-input" aria-label={'Copy name for ' + entry.name} value={settlement.copyName} disabled={pending} onChange={event => settle(entry, 'copy', event.target.value)} />
               </label>}
               {reason !== null && <p className="kb-problem" role="alert">{reason}</p>}
-              {entry.droppedProjectKeys.length > 0 && <p className="kb-hint">Project scope drops {entry.droppedProjectKeys.join(', ')}{entry.scopeOpened ? ', and the board then accepts every project of this Hub' : ''}.</p>}
+              {entry.awaitingProjectKeys.length > 0 && <p className="kb-hint">Projects awaiting adoption: {entry.awaitingProjectKeys.join(', ')}. The board keeps them in its scope; adopt or link them in Configuration → Projects.</p>}
               {entry.realigned.length > 0 && <p className="kb-hint">Renames {entry.realigned.map(value => value.from + ' to ' + value.to).join(', ')}, keeping their cards.</p>}
               {entry.orphaned.length > 0 && settlement?.settlement === 'replace' && <p className="kb-hint">Cannot replace yet: {orphanedHint(entry.orphaned)}.</p>}
               {entry.externalScriptSources.length > 0 && <p className="kb-hint">Reads an external file: {entry.externalScriptSources.join(', ')}.</p>}
@@ -203,6 +203,7 @@ export function ImportBoardsDialog({ hub, api, files, run, onClose, onApplied }:
       {result !== null && <div className="kb-notice" role="status">
         <p>Import finished.</p>
         <ul className="kb-batch-list">{result.outcomes.map(outcome => <li key={outcome.name + outcome.status}><strong>{outcome.name}</strong>{' — '}{outcome.status}{outcome.status === 'failed' && outcome.reason !== undefined ? ': ' + outcome.reason : ''}</li>)}</ul>
+        {result.cleanupFailure !== undefined && <p className="kb-hint">Cleaning up the projects nothing names any more did not finish: {result.cleanupFailure.message}. The boards above landed; the Projects section lists what is left.</p>}
       </div>}
       <ErrorNotice problem={error} />
       <div className="kb-actions">

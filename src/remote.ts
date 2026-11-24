@@ -17,7 +17,7 @@ import { TRANSFER_MAX_COMPRESSED_BYTES } from './domain/workflow-transfer/docume
 export const PACKAGE_NAME = 'dsh-kanban';
 const id=z.string().min(1).max(200);
 const revision=z.number().int().nonnegative().optional();
-const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional(),projectKey:z.string().min(1).optional(),worktreePolicy:z.enum(['ask','always','never']).optional()}).strict();
+const project=z.object({id:id.optional(),name:z.string().min(1),projectPath:z.string().min(1),gitRootPath:z.string().optional(),defaultBranch:z.string().optional(),projectKey:z.string().min(1).optional(),publishedKey:z.string().optional(),worktreePolicy:z.enum(['ask','always','never']).optional()}).strict();
 const relocationProject=project.extend({id});
 const hubId=id.optional();
 const boardId=id.optional();
@@ -64,6 +64,7 @@ export const CommandSchema:z.ZodType<Command>=z.discriminatedUnion('type',[
  z.object({type:z.literal('project.relocationRetry'),hubId,projectId:id}).strict(),
  z.object({type:z.literal('project.relocationCancel'),hubId,projectId:id}).strict(),
  z.object({type:z.literal('project.delete'),hubId,projectId:id,confirmed:z.boolean(),expectedRevision:revision}).strict(),
+ z.object({type:z.literal('project.dismiss'),hubId,projectId:id,dismissed:z.boolean(),expectedRevision:revision}).strict(),
  z.object({type:z.literal('settings.save'),settings:boardSettings,expectedRevision:revision}).strict(),
  newTaskSchema.extend({type:z.literal('task.create'),hubId,attachmentUploads:z.array(z.object({name:z.string().min(1),origin:z.enum(['upload','clipboard']),data:z.string()}).strict()).optional()}).strict(),
  z.object({type:z.literal('task.edit'),hubId,taskId:id,title:z.string().optional(),description:z.string().optional(),attachmentPaths:z.array(z.string().min(1)).optional(),attachmentUploads:z.array(z.object({name:z.string().min(1),origin:z.enum(['upload','clipboard']),data:z.string()}).strict()).optional(),removeAttachmentIds:z.array(z.string().min(1)).optional(),confirmed:z.boolean().optional(),expectedRevision:revision}).strict(),

@@ -114,9 +114,22 @@ export function planProjectRelocation(from: ProjectLocationPaths, to: ProjectLoc
 }
 
 /**
+ * The published key a save states: absent keeps the stored one, an empty string clears
+ * it, and any other value is the key this Hub's boards name the project by.
+ */
+function projectPublishedKey(input: ProjectInput, current?: Project): string | undefined {
+  if (input.publishedKey === undefined) return current?.publishedKey;
+  if (typeof input.publishedKey !== 'string') throw new KanbanError('INVALID_INPUT', 'A published project key must be text.');
+  const value = input.publishedKey.trim();
+  return value.length === 0 ? undefined : requireProjectKey(value);
+}
+
+/**
  * Build the stored project, discarding a default branch that has no Git root to belong
- * to. The key is kept when the project already has one, generated scriptedally
- * when it does not, and validated for uniqueness against the Hub's other projects.
+ * to. The local key is kept when the project already has one, generated scriptedally
+ * when it does not, and validated for uniqueness against the Hub's other projects. The
+ * published key follows the save or the stored project, and an adoption keeps the
+ * identity the placeholder was received under.
  */
 export function buildProject(projectId: string, input: ProjectInput, current?: Project, takenKeys: Iterable<string> = []): RegisteredProject {
   const gitRootPath = projectGitRoot(input);
@@ -126,9 +139,11 @@ export function buildProject(projectId: string, input: ProjectInput, current?: P
     throw new KanbanError('PROJECT_KEY_CONFLICT', 'Another project of this Hub already uses this key.', { projectKey: requested });
   }
   const projectKey = requested ?? current?.projectKey ?? allocateProjectKey(input.name, taken);
+  const publishedKey = projectPublishedKey(input, current);
   const worktreePolicy = projectWorktreePolicy(input, current);
   const project: RegisteredProject = {
     id: projectId, name: input.name.trim(), projectPath: input.projectPath, projectKey,
+    ...(publishedKey === undefined ? {} : { publishedKey }),
     ...(gitRootPath === undefined ? {} : { gitRootPath }),
     ...(worktreePolicy === undefined ? {} : { worktreePolicy }),
     ...(current?.workspaceId ? { workspaceId: current.workspaceId } : {}),

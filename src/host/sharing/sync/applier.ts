@@ -9,6 +9,7 @@ import { stageRenames } from '../../../domain/journal/migrate.js';
 import { materializeIdentities } from '../../../domain/journal/materialize.js';
 import { renameTaskStage } from '../../../domain/stage-update.js';
 import * as operations from '../../../domain/hub-operations.js';
+import type { HubState } from '../../../shared/types.js';
 import type { BoardLogSnapshot } from '../ports.js';
 import { emptyBoard, type HubSharingRecord, type StoredBoard } from '../state.js';
 import { needsPluginUpdate } from '../board-compatibility.js';
@@ -47,10 +48,16 @@ export class BoardApplier {
       // A board this installation cannot read is that board's own state: it must not
       // fail the updates of the boards that can be applied.
       if (needsPluginUpdate(record.boards[entry.key]?.problem)) continue;
-      try { await this.applyKey(this.session.requireRecord(hubId), entry.key, false); }
+      try { await this.applyKey(this.session.requireRecord(hubId), entry.key, false, false); }
       catch (error) {
         failures.push(error instanceof KanbanError ? error : new KanbanError('SHARING_FAILED', error instanceof Error ? error.message : String(error)));
       }
+    }
+    // The whole batch has landed: now a placeholder no board names can go, including one
+    // an earlier board of this same update moved to a later one.
+    try { await this.session.options.hubs.pruneUncitedPlaceholders(hubId); }
+    catch (error) {
+      failures.push(error instanceof KanbanError ? error : new KanbanError('SHARING_FAILED', error instanceof Error ? error.message : String(error)));
     }
     await this.observer.refresh(this.session.requireRecord(hubId), layout);
     if (failures.length > 0) {
@@ -60,8 +67,13 @@ export class BoardApplier {
     }
   }
 
-  /** Apply one published log, creating the local board when this installation lacks it. */
-  async applyKey(record: HubSharingRecord, key: string, alsoRefresh = true): Promise<void> {
+  /**
+   * Apply one published log, creating the local board when this installation lacks it.
+   *
+   * A batch passes `pruneScope: false` and prunes once when it finishes: one board's new
+   * scope must not drop an identity another board of the same update is about to name.
+   */
+  async applyKey(record: HubSharingRecord, key: string, alsoRefresh = true, pruneScope = true): Promise<void> {
     const layout = this.session.layoutFor(record);
     const snapshot = await layout.readLog(key);
     if (snapshot === null) throw new KanbanError('SHARING_DOCUMENT_MISSING', 'The team board has no published log.', { key });
@@ -83,7 +95,7 @@ export class BoardApplier {
         for (const [boundId, boundKey] of Object.entries(bindings)) if (boundKey === key) delete bindings[boundId];
         bindings[orphanId] = key;
         await this.session.save({ ...record, bindings, orphans });
-        await this.applyKey(this.session.requireRecord(record.hubId), key, alsoRefresh);
+        await this.applyKey(this.session.requireRecord(record.hubId), key, alsoRefresh, pruneScope);
         return;
       }
       const published = publishedWorkflow(snapshot.log);
@@ -100,7 +112,7 @@ export class BoardApplier {
         if (identity.presetMode === null) delete added.defaultPresetMode;
         else added.defaultPresetMode = identity.presetMode;
         operations.saveBoardWorkflow(draft, added.id, createdText, this.session.deps());
-        operations.setBoardProjectScope(draft, added.id, appliedScope(snapshot.log), this.session.deps());
+        this.writeReceivedScope(draft, added.id, appliedScope(snapshot.log) ?? null, pruneScope);
         if (orderClean && identity.rank !== null) reorderBoundBoards(draft, { ...record.bindings, [added.id]: key }, { ...record.boards, [key]: { ...stored, rank: identity.rank } });
         return added.id;
       }, hub.revision);
@@ -115,7 +127,7 @@ export class BoardApplier {
       return;
     }
     if (pending.some(event => event.kind === 'board.removed')) {
-      await this.applyRemoval(record, snapshot, key, board.id, nameOf(record, key, board.name));
+      await this.applyRemoval(record, snapshot, key, board.id, nameOf(record, key, board.name), pruneScope);
       return;
     }
     const recovered = replay(snapshot.log, stored.workflow === null ? null : { text: stored.workflow, cursor: stored.seq });
@@ -152,7 +164,7 @@ export class BoardApplier {
         if (workflowChanged) operations.saveBoardWorkflow(draft, board.id, appliedText, this.session.deps());
       }
       if (adoptName && identity.name !== null && identity.name !== board.name) operations.renameBoard(draft, board.id, identity.name, this.session.deps());
-      if (adoptScope && !sameScope(identity.projectKeys, board.allowedProjectKeys ?? null)) operations.setBoardProjectScope(draft, board.id, identity.projectKeys === null ? undefined : [...identity.projectKeys], this.session.deps());
+      if (adoptScope && !sameScope(identity.projectKeys, board.allowedProjectKeys ?? null)) this.writeReceivedScope(draft, board.id, identity.projectKeys, pruneScope);
       if (adoptPreset) {
         const target = operations.requireBoard(draft, board.id);
         if (identity.presetMode === null) delete target.defaultPresetMode;
@@ -205,7 +217,7 @@ export class BoardApplier {
           for (const rename of renames) for (const task of draft.tasks) if (task.boardId === boardId) renameTaskStage(task, rename.from, rename.to);
           operations.saveBoardWorkflow(draft, boardId, head.text, this.session.deps());
           if (identity.name !== null && identity.name !== board.name) operations.renameBoard(draft, boardId, identity.name, this.session.deps());
-          operations.setBoardProjectScope(draft, boardId, identity.projectKeys === null ? undefined : [...identity.projectKeys], this.session.deps());
+          this.writeReceivedScope(draft, boardId, identity.projectKeys, true);
           if (adoptPreset) {
             const target = operations.requireBoard(draft, boardId);
             if (identity.presetMode === null) delete target.defaultPresetMode;
@@ -229,7 +241,7 @@ export class BoardApplier {
   }
 
   /** Apply the team's removal of one board: delete it when empty, otherwise orphan it. */
-  private async applyRemoval(record: HubSharingRecord, snapshot: BoardLogSnapshot, key: string, boardId: string, name: string): Promise<void> {
+  private async applyRemoval(record: HubSharingRecord, snapshot: BoardLogSnapshot, key: string, boardId: string, name: string, pruneScope = true): Promise<void> {
     const hub = this.session.options.hubs.requireHub(record.hubId);
     const board = hub.boards.find(candidate => candidate.id === boardId);
     const hasTasks = hub.tasks.some(task => task.boardId === boardId);
@@ -253,10 +265,26 @@ export class BoardApplier {
       return;
     }
     if (board !== undefined) {
-      await this.session.options.hubs.hub(record.hubId).transact(draft => { operations.deleteBoard(draft, boardId, this.session.deps()); return draft; }, hub.revision);
+      await this.session.options.hubs.hub(record.hubId).transact(draft => { operations.deleteBoard(draft, boardId, this.session.deps(), { prune: pruneScope }); return draft; }, hub.revision);
       await this.session.removeRevisions(boardId);
     }
     await this.session.save({ ...record, bindings, boards, orphans, lastSyncedAt: this.session.now() });
+  }
+
+  /**
+   * Materialize the projects a received scope needs, write the scope, and drop the
+   * placeholders no board names any more.
+   *
+   * Reception is what makes a team board readable here: the identities a scope names
+   * are written as placeholders in the same transaction that writes the scope, so the
+   * scope names projects of the Hub and the board lands whatever its team has. A
+   * placeholder the installation ignored stays answered by its hidden placeholder, so
+   * the scope is still written and the board is not a draft.
+   */
+  private writeReceivedScope(draft: HubState, boardId: string, identities: readonly string[] | null, prune: boolean): void {
+    const scope = identities === null ? undefined : [...identities];
+    operations.ensurePublishedProjects(draft, scope ?? [], this.session.deps());
+    operations.setBoardProjectScope(draft, boardId, scope, this.session.deps(), { prune });
   }
 
   /** Whether the local board order still matches the applied positions. */
@@ -285,13 +313,11 @@ export class BoardApplier {
    */
   private refusal(error: unknown, appliedText: string, hub: { tasks: ReadonlyArray<{ boardId: string; columnId: string }> }, board: { id: string; name: string; workflowYaml: string; allowedProjectKeys?: readonly string[] }): unknown {
     if (!(error instanceof KanbanError) || (error.code !== 'INVALID_WORKFLOW' && error.code !== 'WORKFLOW_ORPHAN_COLUMNS')) return error;
-    const counts = new Map<string, number>();
-    for (const task of hub.tasks) if (task.boardId === board.id) counts.set(task.columnId, (counts.get(task.columnId) ?? 0) + 1);
-    const local = { boardId: board.id, name: board.name, workflow: board.workflowYaml, projectKeys: board.allowedProjectKeys === undefined ? null : [...board.allowedProjectKeys], tasks: 0, taskColumns: [...counts].map(([columnId, tasks]) => ({ columnId, tasks })) };
+    const local = localBoardOf(hub, board);
     const columns = orphanedColumns(appliedText, local);
     if (columns.length === 0) return error;
     const columnId = columns[0]!;
-    const tasks = counts.get(columnId) ?? 0;
+    const tasks = local.taskColumns.filter(column => column.columnId === columnId).reduce((sum, column) => sum + column.tasks, 0);
     return new KanbanError('SHARING_REFUSED', 'Applying the team change to board "' + board.name + '" would leave ' + tasks + ' task' + (tasks === 1 ? '' : 's') + ' in column "' + columnId + '" that the workflow no longer defines. Move them, then get the update again.', { boardId: board.id, columnId, tasks });
   }
 }

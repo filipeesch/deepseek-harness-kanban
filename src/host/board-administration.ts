@@ -144,8 +144,9 @@ export interface ImportEntryInput {
   /** The recorded default-preset choice the entry carries. */
   readonly presetMode: 'operator' | 'host' | null;
   /**
-   * The project scope the entry writes, already filtered against the destination Hub.
-   * Undefined means the board accepts every project; an empty list keeps it closed.
+   * The project scope the entry writes, exactly as the document states it. Undefined
+   * means the board accepts every project; an empty list keeps it closed. An identity
+   * the Hub does not answer is materialized as a placeholder by the apply.
    */
   readonly projectScope: readonly string[] | undefined;
   /** The stable stage identities the entry carries. */
@@ -163,6 +164,8 @@ export type ImportEntryOutcome =
 export interface ImportResult {
   readonly hubId: string;
   readonly outcomes: readonly ImportEntryOutcome[];
+  /** Present when the boards landed but the cleanup of unused projects could not finish. */
+  readonly cleanupFailure?: Problem;
 }
 
 export interface UpdateBoardInput { hubId?: string; boardId: string; name?: string; workflowYaml?: string; expectedRevision?: number; revision?: RevisionAttribution | false; presetChoice?: 'host' | 'named'; restorePresetMode?: { value: 'operator' | 'host' | undefined } }
@@ -631,7 +634,19 @@ export class BoardAdministration {
           outcomes.push({ name: entry.name, status: 'failed', reason: refused.message, code: refused.code });
         }
       }
-      return { hubId, outcomes };
+      // Pruning waits for the whole document: an identity one entry stops naming may be the
+      // one another entry of the same document starts naming. It runs after the entries
+      // committed, so a failure here is reported beside the outcomes instead of replacing
+      // them with an error that would hide which boards landed.
+      let cleanupFailure: Problem | undefined;
+      if (outcomes.some(outcome => outcome.status === 'created' || outcome.status === 'replaced')) {
+        try { await this.options.hubs.pruneUncitedPlaceholders(hubId); }
+        catch (error) {
+          this.options.report?.(error);
+          cleanupFailure = problem(error);
+        }
+      }
+      return { hubId, outcomes, ...(cleanupFailure === undefined ? {} : { cleanupFailure }) };
     });
   }
 
@@ -704,7 +719,8 @@ export class BoardAdministration {
       // An absent import choice stays absent, so the board keeps the host default.
       if (entry.presetMode === null) delete board.defaultPresetMode;
       else board.defaultPresetMode = entry.presetMode;
-      operations.setBoardProjectScope(draft, created.id, entry.projectScope, deps);
+      operations.ensurePublishedProjects(draft, entry.projectScope ?? [], deps);
+      operations.setBoardProjectScope(draft, created.id, entry.projectScope, deps, { prune: false });
       // The document associations are restored over the save result, which reconciled
       // against an empty board and would otherwise drop them, and the resulting map is
       // what the board keeps.
@@ -781,7 +797,8 @@ export class BoardAdministration {
       if (entry.name !== stored.name) operations.renameBoard(draft, boardId, entry.name, deps);
       if (entry.presetMode === null) delete board.defaultPresetMode;
       else board.defaultPresetMode = entry.presetMode;
-      operations.setBoardProjectScope(draft, boardId, entry.projectScope, deps);
+      operations.ensurePublishedProjects(draft, entry.projectScope ?? [], deps);
+      operations.setBoardProjectScope(draft, boardId, entry.projectScope, deps, { prune: false });
       // The save reconciles the map from the authored keys, which would drop the
       // associations the resolution above relied on. The resolved map is restored over the
       // save result, so the persisted identities are exactly the ones that chose where each

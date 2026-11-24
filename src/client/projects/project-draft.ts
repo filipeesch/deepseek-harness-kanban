@@ -4,8 +4,12 @@ import type { Project, ProjectInput, ProjectLocation, WorktreePolicy } from '../
 export interface ProjectDraft {
   id?: string;
   name: string;
-  /** Stable identity within the Hub; empty means the host derives it from the name. */
+  /** Stable local identity within the Hub; empty means the host derives it from the name. */
   projectKey: string;
+  /** The key the team's boards name this project by; empty means the local key. */
+  publishedKey: string;
+  /** The stored team key the draft started from, so clearing it is a stated change. */
+  initialPublishedKey: string;
   projectPath: string;
   gitRootPath: string;
   defaultBranch: string;
@@ -22,6 +26,8 @@ export function createProjectDraft(project?: Project): ProjectDraft {
     ...(project === undefined ? {} : { id: project.id }),
     name: project?.name ?? '',
     projectKey: project?.projectKey ?? '',
+    publishedKey: project?.publishedKey ?? '',
+    initialPublishedKey: project?.publishedKey ?? '',
     projectPath: project?.projectPath ?? '',
     gitRootPath: project?.gitRootPath ?? '',
     defaultBranch: project?.defaultBranch ?? '',
@@ -31,7 +37,7 @@ export function createProjectDraft(project?: Project): ProjectDraft {
   };
 }
 
-export function editProjectDraft(draft: ProjectDraft, field: 'name' | 'projectKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch' | 'worktreePolicy', value: string): ProjectDraft {
+export function editProjectDraft(draft: ProjectDraft, field: 'name' | 'projectKey' | 'publishedKey' | 'projectPath' | 'gitRootPath' | 'defaultBranch' | 'worktreePolicy', value: string): ProjectDraft {
   return { ...draft, [field]: value, edited: { ...draft.edited, [field]: true } };
 }
 
@@ -67,10 +73,15 @@ export function toProjectInput(draft: ProjectDraft): ProjectInput {
   const gitRootPath = draft.gitRootPath.trim();
   const defaultBranch = draft.defaultBranch.trim();
   const projectKey = draft.projectKey.trim();
+  const publishedKey = draft.publishedKey.trim();
   return {
     ...(draft.id === undefined ? {} : { id: draft.id }),
     name: draft.name.trim(),
     ...(projectKey ? { projectKey } : {}),
+    // Stated only when it says something: a value claims the identity, and an empty
+    // field over a stored key clears it. Otherwise the host keeps what it holds, so a
+    // save of a project with no team key carries no field at all.
+    ...(publishedKey !== '' || draft.initialPublishedKey !== '' ? { publishedKey } : {}),
     projectPath: draft.projectPath.trim(),
     worktreePolicy: draft.worktreePolicy,
     ...(gitRootPath ? { gitRootPath } : {}),

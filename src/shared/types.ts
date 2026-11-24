@@ -29,8 +29,14 @@ export interface ProjectRelocation {
 /** The fields every project carries, whatever its kind. */
 export interface ProjectBase {
   id: string; name: string;
-  /** Stable identity across boards and installations; unique within its Hub. */
+  /** Stable local identity across boards and installations; unique within its Hub. */
   projectKey: string;
+  /**
+   * The key this Hub's boards, its published configuration, and an exported document name
+   * the project by; absent means the local key. Kept on this installation: it is never part
+   * of a published board and never received from a team layout.
+   */
+  publishedKey?: string;
   gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean;
   /**
    * Absent means Ask. Kept on this installation: it is never part of a published board and is
@@ -43,7 +49,12 @@ export interface ProjectBase {
 /** A project registered in a Hub, with the directory its tasks use. */
 export interface RegisteredProject extends ProjectBase { projectPath: string; origin?: undefined }
 /** A project that exists only because a received board names its key; it has no directory until adopted. */
-export interface PublishedProject extends ProjectBase { origin: 'published'; projectPath?: undefined }
+export interface PublishedProject extends ProjectBase {
+  origin: 'published';
+  projectPath?: undefined;
+  /** Set when this installation acknowledged the identity without a project; it stays hidden until restored. */
+  dismissed?: boolean;
+}
 export type Project = RegisteredProject | PublishedProject;
 /** A project whose Git root is known; required by every Git and worktree operation. */
 export type GitProject = RegisteredProject & { gitRootPath: string };
@@ -612,7 +623,7 @@ export interface SnapshotRequest {
 /** Client snapshot: host facts plus the client-owned attention projection. State is always merged. */
 export interface KanbanSnapshot extends Omit<HostSnapshot, 'conversations' | 'state'> { state: KanbanState; attention: Record<string, Attention>; conversationAttention: Record<string, Attention>; clientEpoch?: number }
 export const EMPTY_ATTENTION: Attention = { running: false, background: [], unread: false, awaitingReply: false, failed: false, pending: NO_PENDING_USER_WORK };
-export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string; /** Absent keeps the stored policy; a new project defaults to Ask. */ worktreePolicy?: WorktreePolicy }
+export interface ProjectInput { id?: string; name: string; projectPath: string; gitRootPath?: string; defaultBranch?: string; projectKey?: string; /** Absent keeps the stored published key; an empty string clears it. */ publishedKey?: string; /** Absent keeps the stored policy; a new project defaults to Ask. */ worktreePolicy?: WorktreePolicy }
 export type Command =
   | { type: 'task.scriptedPlay'; taskId: string }
   /** Start a new execution of the current entry; the only action that captures and runs again. */
@@ -640,6 +651,8 @@ export type Command =
   | { type: 'project.relocationRetry'; hubId?: string; projectId: string }
   | { type: 'project.relocationCancel'; hubId?: string; projectId: string }
   | { type: 'project.delete'; hubId?: string; projectId: string; confirmed: boolean; expectedRevision?: number }
+  /** Acknowledge a received identity without a project, or restore it; only a published placeholder qualifies. */
+  | { type: 'project.dismiss'; hubId?: string; projectId: string; dismissed: boolean; expectedRevision?: number }
   | { type: 'settings.save'; settings: BoardSettings; expectedRevision?: number }
   | ({ type: 'task.create'; hubId?: string; attachmentUploads?: Array<{ name: string; origin: 'upload' | 'clipboard'; data: string }> } & NewTask)
   | { type: 'task.edit'; hubId?: string; taskId: string; title?: string; description?: string; attachmentPaths?: string[]; attachmentUploads?: Array<{ name: string; origin: 'upload' | 'clipboard'; data: string }>; removeAttachmentIds?: string[]; confirmed?: boolean; expectedRevision?: number }
@@ -731,8 +744,8 @@ export interface WorkflowImportEntry {
   copyName: string | null;
   orphaned: readonly WorkflowImportOrphan[];
   realigned: readonly WorkflowImportRealignment[];
-  droppedProjectKeys: readonly string[];
-  scopeOpened: boolean;
+  /** The published identities this entry names that await adoption in the destination Hub. */
+  awaitingProjectKeys: readonly string[];
   blockReason: 'invalid-workflow' | 'name-conflict' | 'stale-plan' | null;
   detail: string | null;
   externalScriptSources: readonly string[];
@@ -747,7 +760,7 @@ export interface WorkflowImportApplyRequest { hubId?: string; archive: string; d
 /** One entry as applying it ended. */
 export interface WorkflowImportOutcome { name: string; status: 'created' | 'replaced' | 'skipped' | 'failed'; boardId?: string; reason?: string; code?: string }
 /** The result of one applied import. */
-export interface WorkflowImportResult { hubId: string; outcomes: WorkflowImportOutcome[] }
+export interface WorkflowImportResult { hubId: string; outcomes: WorkflowImportOutcome[]; /** A cleanup the apply could not finish after its boards landed. */ cleanupFailure?: Problem }
 export interface QuestionOption { title: string; description: string }
 export interface QuestionPage {
   question: string; type: 'exclusive' | 'non_exclusive' | 'freetext'; context?: string;

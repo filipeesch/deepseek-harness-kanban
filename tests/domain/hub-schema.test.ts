@@ -90,6 +90,44 @@ describe('HubState schema', () => {
     expect(HubStateSchema.safeParse(duplicate).success).toBe(false);
   });
 
+  it('accepts a scope naming a linked project by its published key and rejects its local key', () => {
+    const hub = hubWith();
+    hub.projects[0] = { ...hub.projects[0]!, publishedKey: 'team-app' } as HubState['projects'][number];
+    hub.boards[0]!.allowedProjectKeys = ['team-app'];
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+    // The local key is not an identity a board names, because the project answers the team's.
+    hub.boards[0]!.allowedProjectKeys = ['project'];
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+  });
+
+  it('rejects two projects that answer the same published identity', () => {
+    const hub = hubWith();
+    hub.projects[0] = { ...hub.projects[0]!, publishedKey: 'team-app' } as HubState['projects'][number];
+    hub.projects.push({ id: 'other', name: 'Other', projectKey: 'other', publishedKey: 'team-app', projectPath: '/repo/other' });
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+    // A placeholder owns the identity it was received under, so a second project cannot claim it.
+    const claimed = hubWith();
+    claimed.projects.push({ id: 'ops', name: 'ops', projectKey: 'ops', origin: 'published' });
+    claimed.projects[0] = { ...claimed.projects[0]!, publishedKey: 'ops' } as HubState['projects'][number];
+    expect(HubStateSchema.safeParse(claimed).success).toBe(false);
+  });
+
+  it('accepts a placeholder whose mechanical local key carries the received identity', () => {
+    const hub = hubWith();
+    hub.projects.push({ id: 'received', name: 'Api', projectKey: 'api-2', publishedKey: 'api', origin: 'published' });
+    hub.boards[0]!.allowedProjectKeys = ['api'];
+    expect(HubStateSchema.safeParse(hub).success).toBe(true);
+    // Two projects cannot answer the same received identity.
+    hub.projects[0] = { ...hub.projects[0]!, publishedKey: 'api' } as HubState['projects'][number];
+    expect(HubStateSchema.safeParse(hub).success).toBe(false);
+  });
+
+  it('rejects an ignore on a registered project', () => {
+    const registered = hubWith();
+    registered.projects[0] = { ...registered.projects[0]!, dismissed: true } as unknown as HubState['projects'][number];
+    expect(HubStateSchema.safeParse(registered).success).toBe(false);
+  });
+
   it('reads a stored record whose project predates project keys, but not as an opened Hub', () => {
     const stored = hubWith();
     stored.projects[0] = { id: 'project', name: 'Project', projectPath: '/repo/app', gitRootPath: '/repo' } as unknown as HubState['projects'][number];

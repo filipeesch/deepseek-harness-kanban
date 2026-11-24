@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useState } from 'react';
 import type { ClientApi, HubSharingView, HubState, SharingAuthView } from '../../../shared/types.js';
+import { isPublishedProject } from '../../../shared/project.js';
 import { useSharingActions } from '../../sharing/actions.js';
 import { ErrorNotice, Tabs, type RunCommand } from '../../ui.js';
 import { ChangesArea } from './changes-area.js';
@@ -11,10 +12,14 @@ import { ConnectionArea } from './connection-area.js';
  * Changes area is only offered while the Hub is bound, because a Hub with no binding
  * publishes nothing; connection details appear once, in the Connection area.
  */
-export function TeamSettings({ hub, sharing, auth, api, run }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; api?: ClientApi; run?: RunCommand }) {
+export function TeamSettings({ hub, sharing, auth, api, run, onOpenProjects }: { hub: HubState; sharing?: HubSharingView; auth?: SharingAuthView; api?: ClientApi; run?: RunCommand; onOpenProjects?: () => void }) {
   const actions = useSharingActions(api);
   const id = useId();
   const [area, setArea] = useState<'Connection' | 'Changes'>('Connection');
+  // A team board can name a project this Hub cannot answer yet. The board itself is
+  // fine; the person is told here, where they learn about the team's content, and the
+  // surface that fixes it is Projects.
+  const awaiting = hub.projects.filter(project => isPublishedProject(project) && project.dismissed !== true).length;
   const unavailable = sharing?.blockers.some(blocker => blocker.code === 'SHARING_DOCUMENT_VERSION_UNSUPPORTED') === true;
   const bound = sharing !== undefined && sharing.status !== 'preview';
   const areas: readonly string[] = bound ? ['Connection', 'Changes'] : ['Connection'];
@@ -26,6 +31,10 @@ export function TeamSettings({ hub, sharing, auth, api, run }: { hub: HubState; 
     <p className="kb-hint">Projects, tasks, notes, and Hub names stay on this machine.</p>
     <Tabs label="Team settings areas" values={areas} selected={selected} onSelect={value => setArea(value as 'Connection' | 'Changes')} id={id} />
     {unavailable && <p className="kb-error" role="alert"><strong>Update dsh-kanban</strong><span>This team storage was written by a newer plugin version. Reading and publishing stay blocked until dsh-kanban is updated.</span></p>}
+    {awaiting > 0 && <div className="kb-notice" role="status">
+      <p>{awaiting === 1 ? 'One project awaits adoption.' : String(awaiting) + ' projects await adoption.'} A board or an imported workflow names it and this Hub has no directory for it yet. Adopt one by choosing its directory, or link it to a project you already have.</p>
+      {onOpenProjects !== undefined && <div className="kb-actions"><button type="button" className="kb-button kb-primary" onClick={onOpenProjects}>Open Projects</button></div>}
+    </div>}
     <div className="kb-share-panel" role="tabpanel" id={id + '-panel-' + selected} aria-labelledby={id + '-tab-' + selected}>
       {selected === 'Connection'
         ? <ConnectionArea hub={hub} sharing={sharing} auth={auth} api={api} act={actions.run} pending={actions.pending} />

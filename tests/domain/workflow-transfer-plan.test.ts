@@ -21,18 +21,21 @@ function board(input: { id: string; name: string; columns: Array<{ id: string; l
   };
 }
 
-function hub(input: { boards: Board[]; tasks?: Array<{ boardId: string; columnId: string }>; projectKeys?: string[] }): HubState {
+function hub(input: { boards: Board[]; tasks?: Array<{ boardId: string; columnId: string }>; projectKeys?: string[]; placeholders?: Array<{ key: string; dismissed?: boolean }> }): HubState {
   return {
     id: 'hub-1', name: 'Team Hub', revision: 1,
-    projects: (input.projectKeys ?? ['api']).map(key => ({ id: 'project-' + key, projectKey: key, name: key.toUpperCase(), projectPath: '/repo/' + key })),
+    projects: [
+      ...(input.projectKeys ?? ['api']).map(key => ({ id: 'project-' + key, projectKey: key, name: key.toUpperCase(), projectPath: '/repo/' + key })),
+      ...(input.placeholders ?? []).map(entry => ({ id: 'placeholder-' + entry.key, projectKey: entry.key, name: entry.key, origin: 'published' as const, ...(entry.dismissed === true ? { dismissed: true } : {}) })),
+    ],
     boards: input.boards,
     tasks: (input.tasks ?? []).map((task, index) => ({ ...task, id: 'task-' + String(index), projectId: 'project-api', title: 'Task ' + String(index), description: '', position: index, sessionIds: [], closedSessionIds: [], effectiveCwd: '/repo/api', worktree: null, operation: null, createdAt: now, updatedAt: now })),
     notes: [], createdAt: now, updatedAt: now,
   };
 }
 
-const planned = (boards: Board[], entries: Parameters<typeof transferBoard>[0][], tasks: Array<{ boardId: string; columnId: string }> = [], projectKeys?: string[]) =>
-  planTransfer({ hub: hub({ boards, tasks, ...(projectKeys === undefined ? {} : { projectKeys }) }), boards: entries.map(transferBoard), hubId: 'hub-1', origin: 'Home Hub' });
+const planned = (boards: Board[], entries: Parameters<typeof transferBoard>[0][], tasks: Array<{ boardId: string; columnId: string }> = [], projectKeys?: string[], placeholders?: Array<{ key: string; dismissed?: boolean }>) =>
+  planTransfer({ hub: hub({ boards, tasks, ...(projectKeys === undefined ? {} : { projectKeys }), ...(placeholders === undefined ? {} : { placeholders }) }), boards: entries.map(transferBoard), hubId: 'hub-1', origin: 'Home Hub' });
 
 describe('free board name', () => {
   it('appends the imported suffix when it is free', () => {
@@ -134,31 +137,37 @@ describe('replacement card placement', () => {
   });
 });
 
-describe('project scope filtering', () => {
+describe('project scope reception', () => {
   const delivery = board({ id: 'board-1', name: 'Delivery', columns: [{ id: 'todo' }] });
 
-  it('keeps the keys the destination Hub holds', () => {
+  it('reports nothing awaiting when the Hub answers the scope', () => {
     const plan = planned([delivery], [{ name: 'Import', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['api'] }], [], ['api', 'web']);
-    expect(plan.entries[0]!.droppedProjectKeys).toEqual([]);
-    expect(plan.entries[0]!.scopeOpened).toBe(false);
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual([]);
   });
 
-  it('drops an unknown key and reports it', () => {
+  it('reports an unknown identity as awaiting adoption instead of dropping it', () => {
     const plan = planned([delivery], [{ name: 'Import', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['api', 'gone'] }], [], ['api']);
-    expect(plan.entries[0]!.droppedProjectKeys).toEqual(['gone']);
-    expect(plan.entries[0]!.scopeOpened).toBe(false);
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual(['gone']);
   });
 
-  it('reports an emptied scope as opened', () => {
+  it('reports every unknown identity of a scope the Hub answers none of', () => {
     const plan = planned([delivery], [{ name: 'Import', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['gone', 'lost'] }], [], ['api']);
-    expect(plan.entries[0]!.droppedProjectKeys).toEqual(['gone', 'lost']);
-    expect(plan.entries[0]!.scopeOpened).toBe(true);
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual(['gone', 'lost']);
   });
 
-  it('treats an entry with no scope as open without reporting a drop', () => {
+  it('reports an identity held by a placeholder as awaiting adoption', () => {
+    const plan = planned([delivery], [{ name: 'Import', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['held'] }], [], ['api'], [{ key: 'held' }]);
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual(['held']);
+  });
+
+  it('keeps an ignored identity out of the awaiting list', () => {
+    const plan = planned([delivery], [{ name: 'Import', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['held'] }], [], ['api'], [{ key: 'held', dismissed: true }]);
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual([]);
+  });
+
+  it('treats an entry with no scope as needing nothing', () => {
     const plan = planned([delivery], [{ name: 'Import', workflowYaml: workflowOf([{ id: 'todo' }]) }], [], ['api']);
-    expect(plan.entries[0]!.droppedProjectKeys).toEqual([]);
-    expect(plan.entries[0]!.scopeOpened).toBe(false);
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual([]);
   });
 });
 

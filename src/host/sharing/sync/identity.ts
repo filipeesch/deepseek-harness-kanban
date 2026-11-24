@@ -1,3 +1,4 @@
+import { normalizeProjectKeys } from '../../../domain/board-project-scope.js';
 import { parseWorkflow } from '../../../domain/workflow.js';
 import type { JournalEvent } from '../../../domain/journal/event.js';
 import type { BoardLog } from '../../../domain/journal/log.js';
@@ -24,7 +25,9 @@ export function foldIdentity(base: BoardIdentity, events: readonly JournalEvent[
   let presetMode = base.presetMode;
   for (const event of events) {
     if (event.kind === 'board.renamed') name = event.name;
-    else if (event.kind === 'board.scope-changed') projectKeys = event.projectKeys === null ? null : [...event.projectKeys];
+    // A board scope is always stored in canonical order, so an event that states the
+    // same identities in another order is the same scope, not a local draft.
+    else if (event.kind === 'board.scope-changed') projectKeys = event.projectKeys === null ? null : normalizeProjectKeys(event.projectKeys);
     else if (event.kind === 'board.rank-changed') rank = event.rank;
     else if (event.kind === 'board.preset-changed') presetMode = event.mode;
   }

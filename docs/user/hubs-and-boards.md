@@ -8,11 +8,11 @@ The active Hub and the last board used per Hub are remembered in browser local s
 
 ## Hub scope and deletion
 
-A board with no recorded scope accepts tasks from every project of the Hub. A board can instead allow only chosen projects, and a board that allows none accepts no new task. The scope lives on the board, never in the workflow YAML, and the **New task** dialog offers only the projects the active board allows.
+A board with no recorded scope accepts tasks from every project of the Hub. A board can instead allow only chosen projects, and a board that allows none accepts no new task. The scope lives on the board, never in the workflow YAML, and the **New task** dialog offers only the projects the active board allows. A scope names each project by the identity the board records, which a received board keeps naming as its team published it; [Team sharing](team-sharing.md) owns how a received identity is answered.
 
 Deleting a Hub is allowed only when none of its boards has a task. It removes the Hub's empty boards and task-free project registrations without deleting project directories, worktrees, branches, native conversations, or native workspaces. The worktree base path is global and survives.
 
-Deleting a board keeps the projects, worktrees, conversations, and native workspaces it referenced. A board that belongs to the published team configuration asks whether the removal applies only here or for the team; see [Team sharing](team-sharing.md).
+Deleting a board keeps the registered projects, worktrees, conversations, and native workspaces it referenced; a placeholder only that board named is dropped. A board that belongs to the published team configuration asks whether the removal applies only here or for the team; see [Team sharing](team-sharing.md).
 
 ## Board configuration
 
@@ -20,7 +20,7 @@ Deleting a board keeps the projects, worktrees, conversations, and native worksp
 
 Only the topmost dialog answers Escape and pointer dismissal, and the layers below it are inert.
 
-**General** edits the board name and its order. **Projects** edits the board's project scope and shows the placeholders a received team board awaits. **Workflow** edits the YAML and the diagram; see [Workflows](workflows.md). **Danger zone** deletes the board.
+**General** edits the board name and its order. **Projects** edits the board's project scope, naming each project by the identity the board records and marking one that awaits adoption or was ignored. A project can be linked to a team's identity, so the same project answers both its local key and the key a received board names. **Workflow** edits the YAML and the diagram; see [Workflows](workflows.md). **Danger zone** deletes the board.
 
 ## Board defaults
 

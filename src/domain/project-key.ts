@@ -48,6 +48,18 @@ export function canonicalProjectKeys(keys: Iterable<string>): string[] {
   return [...new Set(keys)].sort();
 }
 
+/**
+ * A readable name for an identity received from a team when the Hub holds no project
+ * for it. The identity itself is presented beside the name, so the name never hides it.
+ */
+export function publishedProjectName(identity: string): string {
+  return identity
+    .split('-')
+    .filter(part => part.length > 0)
+    .map(part => (/^[a-z]/.test(part) ? part.charAt(0).toLocaleUpperCase() + part.slice(1) : part))
+    .join(' ');
+}
+
 /** Validate an edited key, normalizing its case; the pattern keeps it safe in a published document. */
 export function requireProjectKey(value: unknown): string {
   invariant(typeof value === 'string', 'INVALID_PROJECT_KEY', 'A project key must be text.');

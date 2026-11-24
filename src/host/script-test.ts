@@ -2,6 +2,7 @@ import type { Board, HubState, Project } from '../shared/types.js';
 import type { ScriptedDefinition } from '../shared/scripted.js';
 import type { ScriptedRuntime, SimulatedShellResponse, TestProgramOutcome } from './scripted/ports.js';
 import { invariant } from '../shared/errors.js';
+import { isProjectAllowed } from '../domain/board-project-scope.js';
 import { declaredParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
 import { requireProjectPath } from '../shared/project.js';
 import { bounded } from './scripted/safety.js';
@@ -53,7 +54,9 @@ function boundResponse(response: SimulatedShellResponse): SimulatedShellResponse
 
 /** The project a test runs against: the named one, or the first allowed one that has a directory. */
 function testProject(hub: HubState, board: Board, projectId: string | undefined): Project {
-  const candidates = hub.projects.filter(project => project.projectPath !== undefined && (board.allowedProjectKeys === undefined || board.allowedProjectKeys.includes(project.projectKey)));
+  // The board allows a project by the identity it records, which is the project's team
+  // key when it is linked and its local key otherwise.
+  const candidates = hub.projects.filter(project => project.projectPath !== undefined && isProjectAllowed(board, project));
   if (projectId !== undefined) {
     const named = candidates.find(project => project.id === projectId);
     invariant(named !== undefined, 'PROJECT_NOT_FOUND', 'The board allows no project with that identifier and a directory.');

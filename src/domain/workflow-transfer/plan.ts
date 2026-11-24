@@ -1,5 +1,6 @@
 import type { Board, HubState, Workflow } from '../../shared/types.js';
 import type { TransferBoard } from './document.js';
+import { planReceivedScope } from '../received-project-scope.js';
 import { parseWorkflow } from '../workflow.js';
 import { reconcileLocalStageIdentities } from '../stage-identity.js';
 import { KanbanError } from '../../shared/errors.js';
@@ -44,10 +45,8 @@ export interface TransferEntryPlan {
   readonly orphaned: readonly TransferOrphan[];
   /** The stages a replacement would rename while keeping their cards. */
   readonly realigned: readonly TransferRealignment[];
-  /** The project keys the destination Hub does not hold and the import would drop. */
-  readonly droppedProjectKeys: readonly string[];
-  /** Whether filtering the scope emptied it, which opens it to every project. */
-  readonly scopeOpened: boolean;
+  /** The published identities this entry names that await adoption in the destination Hub. */
+  readonly awaitingProjectKeys: readonly string[];
   /** Why the entry is blocked, when it is. */
   readonly blockReason: TransferBlockReason | null;
   /** A one-line explanation the surface presents beside the entry. */
@@ -193,24 +192,22 @@ function cardsOf(hub: HubState, boardId: string): Map<string, number> {
   return counts;
 }
 
-/** The project keys the destination Hub does not hold, and whether that empties the scope. */
-function scopeOutcome(entry: TransferBoard, held: ReadonlySet<string>): { dropped: string[]; opened: boolean } {
-  if (entry.projectKeys === null) return { dropped: [], opened: false };
-  const dropped = entry.projectKeys.filter(key => !held.has(key));
-  return { dropped, opened: entry.projectKeys.length > 0 && dropped.length === entry.projectKeys.length };
+/** The published identities this entry names that the destination installation still awaits. */
+function awaitingIdentities(entry: TransferBoard, hub: HubState): string[] {
+  return [...planReceivedScope(entry.projectKeys, hub.projects).awaiting];
 }
 
 /** One conflicting entry before any settlement names it. */
 export function conflictingEntry(input: { readonly entry: TransferBoard; readonly stored: Board; readonly hub: HubState; readonly taken: readonly string[] }): TransferEntryPlan {
   const cards = cardsOf(input.hub, input.stored.id);
-  const scope = scopeOutcome(input.entry, new Set(input.hub.projects.map(project => project.projectKey)));
+  const awaitingProjectKeys = awaitingIdentities(input.entry, input.hub);
   // A conflict whose document cannot be read is reported as unreadable, exactly
   // as an unopposed entry would be: a name clash must not hide a worse problem.
   const unreadable = entryRefusal(input.entry);
   if (unreadable !== null) {
     return {
       name: input.entry.name, destination: 'blocked', targetBoardId: input.stored.id, copyName: null,
-      orphaned: [], realigned: [], droppedProjectKeys: scope.dropped, scopeOpened: scope.opened,
+      orphaned: [], realigned: [], awaitingProjectKeys,
       blockReason: 'invalid-workflow', detail: unreadable, externalScriptSources: [],
     };
   }
@@ -229,7 +226,7 @@ export function conflictingEntry(input: { readonly entry: TransferBoard; readonl
     // else: a document carrying one unusable board must still apply the others.
     return {
       name: input.entry.name, destination: 'blocked', targetBoardId: input.stored.id, copyName: null,
-      orphaned: [], realigned: [], droppedProjectKeys: scope.dropped, scopeOpened: scope.opened,
+      orphaned: [], realigned: [], awaitingProjectKeys,
       blockReason: 'invalid-workflow', detail: error instanceof Error ? error.message : 'The board cannot take these stage identities.', externalScriptSources: [],
     };
   }
@@ -240,8 +237,7 @@ export function conflictingEntry(input: { readonly entry: TransferBoard; readonl
     copyName: freeBoardName(input.entry.name, input.taken),
     orphaned: outcome.stranded,
     realigned: outcome.realigned,
-    droppedProjectKeys: scope.dropped,
-    scopeOpened: scope.opened,
+    awaitingProjectKeys,
     blockReason: 'name-conflict',
     detail: 'A board with this name already exists in this Hub.',
     externalScriptSources: externalSources(input.entry.workflowYaml),
@@ -250,17 +246,17 @@ export function conflictingEntry(input: { readonly entry: TransferBoard; readonl
 
 /** One entry whose name the Hub does not hold, or which cannot be read at all. */
 export function newEntry(input: { readonly entry: TransferBoard; readonly hub: HubState; readonly invalid: string | null }): TransferEntryPlan {
-  const scope = scopeOutcome(input.entry, new Set(input.hub.projects.map(project => project.projectKey)));
+  const awaitingProjectKeys = awaitingIdentities(input.entry, input.hub);
   if (input.invalid !== null) {
     return {
       name: input.entry.name, destination: 'blocked', targetBoardId: null, copyName: null,
-      orphaned: [], realigned: [], droppedProjectKeys: scope.dropped, scopeOpened: scope.opened,
+      orphaned: [], realigned: [], awaitingProjectKeys,
       blockReason: 'invalid-workflow', detail: input.invalid, externalScriptSources: [],
     };
   }
   return {
     name: input.entry.name, destination: 'create', targetBoardId: null, copyName: null,
-    orphaned: [], realigned: [], droppedProjectKeys: scope.dropped, scopeOpened: scope.opened,
+    orphaned: [], realigned: [], awaitingProjectKeys,
     blockReason: null, detail: null, externalScriptSources: externalSources(input.entry.workflowYaml),
   };
 }

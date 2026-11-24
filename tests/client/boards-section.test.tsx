@@ -45,7 +45,7 @@ function mountSectionWithTransfer(options: { entries?: WorkflowImportEntry[] } =
   hub.boards = [...hub.boards, { ...hub.boards[0]!, id: 'board-2', name: 'Second board' }];
   const mock = fakeApi(data, {
     exportResult: { archive: '', fileName: 'kanban-workflows-hub.json.gz', boardCount: 1, advisories: [] },
-    importPlan: { hubId: 'hub-1', origin: 'Other Hub', entries: options.entries ?? [{ name: 'Fresh', destination: 'create', targetBoardId: null, copyName: null, orphaned: [], realigned: [], droppedProjectKeys: [], scopeOpened: false, blockReason: null, detail: null, externalScriptSources: [] }] },
+    importPlan: { hubId: 'hub-1', origin: 'Other Hub', entries: options.entries ?? [{ name: 'Fresh', destination: 'create', targetBoardId: null, copyName: null, orphaned: [], realigned: [], awaitingProjectKeys: [], blockReason: null, detail: null, externalScriptSources: [] }] },
     onImport: (command, target) => {
       for (const decision of command.decisions) {
         if (decision.settlement === 'skip') continue;
@@ -92,4 +92,3 @@ describe('transfer actions in the Boards section', () => {
     expect(screen.getByRole('button', { name: 'Edit board Delivery' })).toBeTruthy();
   });
 });
-

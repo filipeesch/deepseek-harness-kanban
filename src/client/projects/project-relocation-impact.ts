@@ -45,13 +45,18 @@ export function relocationImpact(project: Project, input: ProjectInput, tasks: r
  */
 export function relocationBlockedReason(project: Project | undefined, input: ProjectInput, tasks: readonly Task[]): string | null {
   if (!project || projectTasks(project, tasks).length === 0) return null;
-  // The relocation command carries a location, not a key, so a key edit has to be a
-  // separate save; silently dropping it would report success for an ignored change.
-  if (input.projectKey !== undefined && input.projectKey !== project.projectKey) return 'Save the new project key before relocating the project location.';
   const currentRoot = project.gitRootPath ?? '';
   const nextRoot = input.gitRootPath ?? '';
   const kindChanged = (currentRoot === '') !== (nextRoot === '');
-  if (!kindChanged) return null;
-  const locationChanged = project.projectPath !== input.projectPath || (currentRoot !== '' && nextRoot !== '' && currentRoot !== nextRoot);
-  return locationChanged ? 'Change the Git association and save the project first, then relocate its location.' : null;
+  if (kindChanged) {
+    const locationChanged = project.projectPath !== input.projectPath || (currentRoot !== '' && nextRoot !== '' && currentRoot !== nextRoot);
+    return locationChanged ? 'Change the Git association and save the project first, then relocate its location.' : null;
+  }
+  // A key edit on its own is an ordinary registration save, which rewriting the board
+  // scopes already covers. Only a relocation would drop it, because its journal records a
+  // location and never an identity.
+  if (!needsRelocation(project, input, tasks)) return null;
+  if (input.projectKey !== undefined && input.projectKey !== project.projectKey) return 'Save the new project key before relocating the project location.';
+  if (input.publishedKey !== undefined && input.publishedKey !== (project.publishedKey ?? '')) return 'Save the new team key before relocating the project location.';
+  return null;
 }

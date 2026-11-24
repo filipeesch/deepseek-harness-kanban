@@ -165,10 +165,18 @@ const projectFields = {
   id, name: nonempty,
   projectPath: absolutePath.optional(),
   gitRootPath: absolutePath.optional(), defaultBranch: nonempty.optional(), workspaceId: id.optional(), workspaceOwned: z.boolean().optional(), worktreePolicy: z.enum(WORKTREE_POLICIES).optional(), operation: projectRelocation.optional(),
+  /**
+   * The key this Hub's boards name the project by; absent means its local key. A placeholder
+   * carries one only when its local key had to be mechanical, because another project already
+   * holds the identity as its local key.
+   */
+  publishedKey: projectKey.optional(),
   /** Present only on a placeholder created from a received document. */
   origin: z.literal('published').optional(),
+  /** Present only on a published placeholder this installation acknowledged without a project. */
+  dismissed: z.boolean().optional(),
 };
-function projectIssues(value: { origin?: 'published'; projectPath?: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean; operation?: unknown }, context: z.RefinementCtx): void {
+function projectIssues(value: { origin?: 'published'; projectPath?: string; gitRootPath?: string; defaultBranch?: string; workspaceId?: string; workspaceOwned?: boolean; operation?: unknown; publishedKey?: string; dismissed?: boolean }, context: z.RefinementCtx): void {
   const issue = (path: string, message: string): void => { context.addIssue({ code: 'custom', path: [path], message }); };
   if (value.origin === 'published') {
     if (value.projectPath !== undefined) issue('projectPath', 'A published placeholder has no project path.');
@@ -180,6 +188,7 @@ function projectIssues(value: { origin?: 'published'; projectPath?: string; gitR
   }
   if (value.projectPath === undefined) issue('projectPath', 'A project requires a project path.');
   if (value.defaultBranch !== undefined && value.gitRootPath === undefined) issue('defaultBranch', 'A default branch requires a Git root.');
+  if (value.dismissed !== undefined) issue('dismissed', 'Only a published placeholder can be ignored.');
 }
 /** A stored project whose key may still be missing until the open backfill assigns one. */
 export const storedProject = z.strictObject({ ...projectFields, projectKey: projectKey.optional() }).superRefine(projectIssues);

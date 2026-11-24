@@ -15,6 +15,23 @@ const other = { ...project, id: 'other', name: 'Other', projectPath: '/repo/othe
 const moved = { name: 'Web', projectPath: '/moved/app', gitRootPath: '/moved' };
 
 describe('relocation cannot carry a key edit', () => {
+  it('allows a key edit alone on a project that has cards', () => {
+    const linked = { id: 'p', name: 'P', projectKey: 'p', publishedKey: 'team-p', projectPath: '/repo/app', gitRootPath: '/repo' } as const;
+    const tasks = [{ projectId: 'p' } as never];
+    const input = { id: 'p', name: 'P', projectPath: '/repo/app', publishedKey: 'team-q' };
+    expect(needsRelocation(linked, input, tasks)).toBe(false);
+    expect(relocationBlockedReason(linked, input, tasks)).toBeNull();
+    expect(relocationBlockedReason(linked, { ...input, projectKey: 'q' }, tasks)).toBeNull();
+  });
+
+  it('blocks a path change combined with a team key change', () => {
+    const linked = { id: 'p', name: 'P', projectKey: 'p', publishedKey: 'team-p', projectPath: '/repo/app' } as const;
+    const tasks = [{ projectId: 'p' } as never];
+    expect(relocationBlockedReason(linked, { id: 'p', name: 'P', projectPath: '/repo/moved', publishedKey: 'team-q' }, tasks)).toMatch(/team key/);
+    expect(relocationBlockedReason(linked, { id: 'p', name: 'P', projectPath: '/repo/moved', publishedKey: 'team-p' }, tasks)).toBeNull();
+    expect(relocationBlockedReason(linked, { id: 'p', name: 'P', projectPath: '/repo/moved', publishedKey: '' }, tasks)).toMatch(/team key/);
+  });
+
   it('blocks a path change combined with a key change', () => {
     const project = { id: 'p', name: 'P', projectKey: 'before', projectPath: '/repo/app' } as const;
     const tasks = [{ projectId: 'p' } as never];

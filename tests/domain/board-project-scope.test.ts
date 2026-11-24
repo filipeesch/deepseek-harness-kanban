@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  assertKnownProjectKeys, assertProjectCreatable, boardsAllowingKey, creatableProjects,
-  isBoardClosedForCreation, isProjectAllowed, normalizeProjectKeys,
+  assertKnownProjectIdentities, assertProjectCreatable, boardsAllowingIdentity, creatableProjects,
+  isBoardClosedForCreation, isProjectAllowed, normalizeProjectKeys, projectByIdentity, publishedIdentities, publishedIdentityOf,
 } from '../../src/domain/board-project-scope.js';
 import { requireProjectPath, requireRegisteredProject } from '../../src/shared/project.js';
 import type { Board, Project } from '../../src/shared/types.js';
@@ -50,13 +50,35 @@ describe('board project scope', () => {
     expect(codeOf(() => assertProjectCreatable(board(['ops']), placeholder))).toBe('PROJECT_NOT_ADOPTED');
   });
 
-  it('finds the boards that name a key', () => {
-    expect(boardsAllowingKey([board(['api']), board(['web']), board(), board([])], 'api').map(value => value.id)).toEqual(['board']);
+  it('finds the boards that name an identity', () => {
+    expect(boardsAllowingIdentity([board(['api']), board(['web']), board(), board([])], 'api').map((value: Board) => value.id)).toEqual(['board']);
   });
 
-  it('rejects a key that no project of the Hub owns', () => {
-    expect(codeOf(() => assertKnownProjectKeys(['api', 'missing'], [registered]))).toBe('INVALID_PROJECT_KEY');
-    expect(() => assertKnownProjectKeys(['api'], [registered])).not.toThrow();
+  it('rejects an identity that no project of the Hub owns', () => {
+    expect(codeOf(() => assertKnownProjectIdentities(['api', 'missing'], [registered]))).toBe('INVALID_PROJECT_KEY');
+    expect(() => assertKnownProjectIdentities(['api'], [registered])).not.toThrow();
+  });
+
+  it('names a linked project by its published identity', () => {
+    const linked: Project = { ...registered, publishedKey: 'team-api' };
+    expect(publishedIdentityOf(linked)).toBe('team-api');
+    expect(isProjectAllowed(board(['team-api']), linked)).toBe(true);
+    expect(isProjectAllowed(board(['api']), linked)).toBe(false);
+    expect(publishedIdentityOf(registered)).toBe('api');
+    expect(publishedIdentityOf(placeholder)).toBe('ops');
+  });
+
+  it('resolves one project per identity and lists every identity once', () => {
+    const linked: Project = { ...registered, publishedKey: 'team-api' };
+    expect(projectByIdentity([linked, placeholder], 'team-api')?.id).toBe('api');
+    expect(projectByIdentity([linked, placeholder], 'ops')?.id).toBe('ops');
+    expect(projectByIdentity([linked], 'api')).toBeUndefined();
+    expect([...publishedIdentities([linked, placeholder])]).toEqual(['team-api', 'ops']);
+  });
+
+  it('offers a linked project for creation by its published identity', () => {
+    const linked: Project = { ...registered, publishedKey: 'team-api' };
+    expect(creatableProjects(board(['team-api']), [linked]).map(project => project.id)).toEqual(['api']);
   });
 
   it('refuses a placeholder everywhere a directory is required', () => {
