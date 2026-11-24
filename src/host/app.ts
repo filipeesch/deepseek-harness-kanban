@@ -59,6 +59,7 @@ import { effectiveBoardPreset } from '../domain/board-preset.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
+import type { HumanReply } from '../questions/answer-reply.js';
 import * as operations from '../domain/hub-operations.js';
 import type { HubSharingService } from './sharing/service.js';
 import type { TeamFiles } from './team-files/service.js';
@@ -102,6 +103,18 @@ function stageIdentityOf(board: Pick<Board, 'workflow' | 'localStageIdentities'>
   return board.localStageIdentities?.[columnId] ?? board.workflow.columns.find(column => column.id === columnId)?.key ?? columnId;
 }
 
+/** The person's textual message, when this canonical event is one. */
+function humanReply(event:unknown):HumanReply|undefined{
+ if(!isEvent(event)||event.type!=='user/message')return undefined;
+ const data=event.data as {role?:unknown;source?:{kind?:unknown};content?:unknown}|null;
+ if(data?.role!=='user'||data.source?.kind!=='user')return undefined;
+ if(!Array.isArray(data.content))return undefined;
+ const text=data.content
+  .filter((part):part is {type:string;text:string}=>part!==null&&typeof part==='object'&&(part as {type?:unknown}).type==='text'&&typeof (part as {text?:unknown}).text==='string')
+  .map(part=>part.text)
+  .join('\n');
+ return text.trim()===''?undefined:{seq:event.seq,text};
+}
 function userPromptTime(event:unknown):number|undefined{
  if(!isEvent(event)||event.type!=='user/message')return undefined;
  const source=(event.data as {source?:{kind?:unknown}}|null)?.source;
@@ -641,11 +654,15 @@ export class KanbanApp {
   if(this.prepared.has(sessionId))return this.prepared.get(sessionId);
   const work=(async()=>{
    this.restoreQuestionProjection(sessionId);
-   if(this.options.history){for(const event of await this.options.history(sessionId)){if(this.forgottenSessions.has(sessionId))return;if(isEvent(event))this.questions.apply(sessionId,event);}}
+   const replies:HumanReply[]=[];
+   if(this.options.history){for(const event of await this.options.history(sessionId)){if(this.forgottenSessions.has(sessionId))return;if(isEvent(event))this.questions.apply(sessionId,event);const reply=humanReply(event);if(reply)replies.push(reply);}}
    // A restored or replayed unanswered round changes the pending user work the
    // attention snapshot and the auto-mode hold derive from, without a live event.
    // A conversation deleted while its history was replayed must not resurrect.
    if(this.forgottenSessions.has(sessionId))return;
+   // A round answered before the plugin recorded a durable retirement is reconstructed
+   // from its own submission reply only; an ordinary steering message never matches it.
+   if(replies.length>0)this.questions.retireAnsweredRounds(sessionId,replies);
    this.rederiveAttention(sessionId);
    this.schedulePersist(sessionId);
   })();

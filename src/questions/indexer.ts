@@ -1,5 +1,6 @@
 import type { QuestionPage, QuestionRound, RoundPage } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
+import { answeredRoundIds, type HumanReply } from './answer-reply.js';
 import { validateQuestionPage } from './validation.js';
 
 /** Structural input accepted by the published SDK's canonical SessionEvent union. */
@@ -195,6 +196,20 @@ export class QuestionIndex {
     this.rebuild(sessionId);
     // A rollback is a real state change: a live feed must see the round return.
     this.emit();
+  }
+
+  /**
+   * Retire complete rounds whose own submission reply is already in the conversation.
+   *
+   * This reconstructs the durable retirement for a round answered before the plugin
+   * recorded one. An ordinary chat message never matches the answer block, so it never
+   * retires a round. Returns the number of turns newly retired.
+   */
+  retireAnsweredRounds(sessionId: string, replies: readonly HumanReply[]): number {
+    if (this.disposed || !id(sessionId) || replies.length === 0) return 0;
+    const rounds = this.rounds.get(sessionId) ?? [];
+    const ids = answeredRoundIds(rounds, replies);
+    return ids.length === 0 ? 0 : this.dismiss(sessionId, ids);
   }
 
   /** Drop every in-memory trace of one conversation whose task was deleted. */
