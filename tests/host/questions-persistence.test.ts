@@ -267,6 +267,53 @@ describe('conversation question persistence', () => {
     await reloaded.close();
   });
 
+  it('retires a round answered before the durable marker existed, from its own reply', async () => {
+    vi.useFakeTimers();
+    const record: QuestionSessionRecord = { version: 1, sessionId: 's', events: [
+      { kind: 'call', seq: 1, turn: 1, callId: 'c', name: 'decision_request' },
+      { kind: 'native-page', seq: 2, turn: 1, callId: 'c', page: { question: 'Ship it?', type: 'freetext' } },
+      { kind: 'end', seq: 3, turn: 1 },
+      { kind: 'human', seq: 4 },
+    ] };
+    let saved: QuestionSessionRecord | undefined;
+    const store: QuestionStore = { load: id => id === 's' ? record : undefined, save: async (_id, value) => { saved = structuredClone(value); }, remove: async () => false };
+    const reply = { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '### 1. Ship it?\n\nAnswer: yes' }] } };
+    const app = await appWith(store, { history: async () => [reply] });
+    const rounds = await app.rounds('s');
+    expect(rounds.filter(value => !value.answered)).toEqual([]);
+    expect(app.questions.pending('s')).toBe(false);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(saved?.dismissedTurns).toEqual([1]);
+    await app.close();
+  });
+
+  it('never retires a legacy round from an ordinary steering message', async () => {
+    const record: QuestionSessionRecord = { version: 1, sessionId: 's', events: [
+      { kind: 'call', seq: 1, turn: 1, callId: 'c', name: 'decision_request' },
+      { kind: 'native-page', seq: 2, turn: 1, callId: 'c', page: { question: 'Ship it?', type: 'freetext' } },
+      { kind: 'end', seq: 3, turn: 1 },
+      { kind: 'human', seq: 4 },
+    ] };
+    const store: QuestionStore = { load: id => id === 's' ? record : undefined, save: async () => {}, remove: async () => false };
+    const steering = { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue with the next step.' }] } };
+    const app = await appWith(store, { history: async () => [steering] });
+    expect((await app.rounds('s')).filter(value => !value.answered)).toHaveLength(1);
+    await app.close();
+  });
+
+  it('does not treat a host context message as the person answering', async () => {
+    const record: QuestionSessionRecord = { version: 1, sessionId: 's', events: [
+      { kind: 'call', seq: 1, turn: 1, callId: 'c', name: 'decision_request' },
+      { kind: 'native-page', seq: 2, turn: 1, callId: 'c', page: { question: 'Ship it?', type: 'freetext' } },
+      { kind: 'end', seq: 3, turn: 1 },
+    ] };
+    const store: QuestionStore = { load: id => id === 's' ? record : undefined, save: async () => {}, remove: async () => false };
+    const context = { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'runtime-context' }, content: [{ type: 'text', text: '### 1. Ship it?\n\nAnswer: yes' }] } };
+    const app = await appWith(store, { history: async () => [context] });
+    expect((await app.rounds('s')).filter(value => !value.answered)).toHaveLength(1);
+    await app.close();
+  });
+
   it('records an admitted answer durably and never presents the round again', async () => {
     let saved: QuestionSessionRecord | undefined;
     const store: QuestionStore = { load: id => id === 's' ? saved : undefined, save: async (_id, record) => { saved = structuredClone(record); }, remove: async () => false };
