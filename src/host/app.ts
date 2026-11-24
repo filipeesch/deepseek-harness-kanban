@@ -88,7 +88,7 @@ import { testStageScript, type ScriptTestInput, type ScriptTestResult } from './
 import { ConversationObservationIndex, createObservedFactsSource } from './conversation-observation.js';
 import { classifySessionFailure } from '../domain/session-observation.js';
 import { exportBoards } from './workflow-transfer/export.js';
-import { analyzeTransfer, boardOfWorkflow, scopeOf, settlePlan } from './workflow-transfer/import.js';
+import { analyzeTransfer, boardOfWorkflow, importedScope, settlePlan } from './workflow-transfer/import.js';
 import type { WorkflowExportRequest, WorkflowExportResult, WorkflowImportDecision, WorkflowImportPlan, WorkflowImportReadRequest, WorkflowImportResult } from '../shared/types.js';
 
 async function pathExists(value:string):Promise<boolean>{try{await lstat(value);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}}
@@ -361,7 +361,7 @@ export class KanbanApp {
     copyName:entry.copyName,
     workflowYaml:board.workflowYaml,
     presetMode:board.presetMode,
-    projectScope:scopeOf(board, settled.hub),
+    projectScope:importedScope(board),
     stageIdentities:board.stageIdentities,
    };
   });
@@ -372,7 +372,7 @@ export class KanbanApp {
    status:outcome.status,
    ...(outcome.status==='created'||outcome.status==='replaced'?{boardId:outcome.boardId}:{}),
    ...(outcome.status==='failed'?{reason:outcome.reason,code:outcome.code}:{}),
-  }))};
+  })), ...(result.cleanupFailure===undefined?{}:{cleanupFailure:result.cleanupFailure})};
  }
  /** Attach isolated execution after composition; task records remain the only authority. */
  attachScriptedRuntime(nativeRuntime:ScriptedRuntime):()=>Promise<void>{
@@ -1732,6 +1732,7 @@ export class KanbanApp {
     commandReceipt={kind:'project',id:command.project.id};
     break;
    }
+   case 'project.dismiss':{const store=this.hubStore(command.hubId);store.requireProject(command.projectId);await store.dismissProject(command.projectId,command.dismissed,command.expectedRevision);break;}
    case 'project.relocationRetry':{const store=this.hubStore(command.hubId);const project=store.requireProject(command.projectId);invariant(project.id===command.projectId,'PROJECT_NOT_FOUND','Project does not exist in the selected Hub.');await this.relocations.retry(command.projectId);break;}
    case 'project.relocationCancel':{const store=this.hubStore(command.hubId);store.requireProject(command.projectId);await this.relocations.cancel(command.projectId);break;}
    case 'project.delete':{const store=this.hubStore(command.hubId);invariant(command.confirmed,'CONFIRMATION_REQUIRED','Confirm deleting the project registration.');const project=store.requireProject(command.projectId);invariant(!project.operation,'PROJECT_BUSY','Resolve the project relocation before deleting the project.');await store.deleteProject(command.projectId,command.expectedRevision);break;}

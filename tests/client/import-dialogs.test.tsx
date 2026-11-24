@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { ImportBoardsDialog } from '../../src/client/settings/boards/import-dialogs.js';
-import type { WorkflowImportEntry, WorkflowImportPlan } from '../../src/shared/types.js';
+import type { WorkflowImportEntry, WorkflowImportPlan, WorkflowImportResult } from '../../src/shared/types.js';
 import { fakeApi, fixture } from './helpers.js';
 import { fakeFilePort } from './transfer-support.js';
 
@@ -13,7 +13,7 @@ afterEach(cleanup);
 function entry(overrides: Partial<WorkflowImportEntry> = {}): WorkflowImportEntry {
   return {
     name: 'Imported', destination: 'create', targetBoardId: null, copyName: null,
-    orphaned: [], realigned: [], droppedProjectKeys: [], scopeOpened: false,
+    orphaned: [], realigned: [], awaitingProjectKeys: [],
     blockReason: null, detail: null, externalScriptSources: [],
     ...overrides,
   };
@@ -25,10 +25,10 @@ function conflict(overrides: Partial<WorkflowImportEntry> = {}): WorkflowImportE
 
 function plan(entries: WorkflowImportEntry[]): WorkflowImportPlan { return { hubId: 'hub-1', origin: 'Other Hub', entries }; }
 
-function mount(options: { entries?: WorkflowImportEntry[]; chosen?: { fileName: string; bytes: Uint8Array } | null; withApi?: boolean } = {}) {
+function mount(options: { entries?: WorkflowImportEntry[]; chosen?: { fileName: string; bytes: Uint8Array } | null; withApi?: boolean; importResult?: WorkflowImportResult } = {}) {
   const data = fixture();
   const hub = data.state.hubs[0]!;
-  const mock = fakeApi(data, options.withApi === false ? {} : { importPlan: plan(options.entries ?? [entry(), conflict()]) });
+  const mock = fakeApi(data, options.withApi === false ? {} : { importPlan: plan(options.entries ?? [entry(), conflict()]), ...(options.importResult === undefined ? {} : { importResult: options.importResult }) });
   const files = fakeFilePort(options.chosen === undefined ? { chosen: { fileName: 'export.json.gz', bytes: new Uint8Array([1, 2]) } } : { chosen: options.chosen });
   const user = userEvent.setup();
   render(<ImportBoardsDialog hub={hub} {...(options.withApi === false ? {} : { api: mock.api })} files={files} run={async request => mock.api.command(request as never)} onClose={() => undefined} />);
@@ -111,11 +111,32 @@ describe('import dialog', () => {
     expect((screen.getByRole('button', { name: 'Import' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('names the identities awaiting adoption without blocking the import', async () => {
+    const { user } = mount({ entries: [entry({ awaitingProjectKeys: ['team-a', 'team-b'] })] });
+    await choose(user);
+    await waitFor(() => expect(screen.getByText(/Projects awaiting adoption: team-a, team-b/)).toBeTruthy());
+    expect((screen.getByRole('button', { name: 'Import' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('reports an unreadable file when it is chosen', async () => {
     const { user } = mount({ withApi: false });
     await user.click(screen.getByRole('button', { name: /Choose file/ }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('cannot read'));
     expect(screen.queryByRole('button', { name: 'Import' })).toBeTruthy();
+  });
+
+  it('reports the landed boards when the cleanup could not finish', async () => {
+    const { user } = mount({ importResult: {
+      hubId: 'hub-1',
+      outcomes: [{ name: 'Imported', status: 'created', boardId: 'board-created' }],
+      cleanupFailure: { code: 'STORAGE_SAVE_FAILED', message: 'The Hub could not be saved.' },
+    } });
+    await choose(user);
+    await waitFor(() => expect(screen.getByText('Delivery')).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(screen.getByText(/Cleaning up the projects nothing names any more did not finish/)).toBeTruthy());
+    expect(screen.getAllByText('Imported').length).toBeGreaterThan(0);
+    expect(screen.getByText(/The boards above landed/)).toBeTruthy();
   });
 
   it('keeps the surface open after applying', async () => {

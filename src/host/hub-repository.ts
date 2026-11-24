@@ -569,6 +569,17 @@ export class HubRepository {
     });
   }
 
+  /**
+   * Drop the placeholders no board of the Hub names.
+   *
+   * A cleanup runs after work that already committed, so it must be invisible when it has
+   * nothing to drop: no write, no revision, no notification.
+   */
+  async pruneUncitedPlaceholders(hubId: string): Promise<string[]> {
+    if (operations.uncitedPlaceholders(this.requireHub(hubId)).length === 0) return [];
+    return this.transact(hubId, draft => operations.pruneUncitedPlaceholders(draft, this.deps()));
+  }
+
   /** Resolve an uncertain exceptional finalization without guessing whether storage committed. */
   async reconcileExceptionalFinalization(hubId: string, taskId: string, pendingId: string, exceptionId: string): Promise<'prepared' | 'finalized'> {
     return this.mutate(async () => {
@@ -662,6 +673,11 @@ export class HubStore {
   async deleteProject(projectId: string, expectedRevision?: number): Promise<Project> {
     return this.transact(draft => operations.deleteProject(draft, projectId, this.deps()), expectedRevision);
   }
+  /** Acknowledge a received identity without a project, or restore it. */
+  async dismissProject(projectId: string, dismissed: boolean, expectedRevision?: number): Promise<Project> {
+    return this.transact(draft => operations.dismissProject(draft, projectId, dismissed, this.deps()), expectedRevision);
+  }
+
   async setProjectWorkspace(projectId: string, workspaceId: string, owned: boolean): Promise<Project> {
     return this.transact(draft => operations.setProjectWorkspace(draft, projectId, workspaceId, owned, this.deps()));
   }

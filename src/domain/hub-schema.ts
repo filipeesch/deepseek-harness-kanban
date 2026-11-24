@@ -70,6 +70,12 @@ export const HubStateSchema = z.strictObject({
   const taskIds = new Set(state.tasks.map(value => value.id));
   const projectKeys = new Set(state.projects.map(value => value.projectKey));
   if (projectKeys.size !== state.projects.length) issue(['projects'], 'Project keys must be unique within a Hub.');
+  // The identity a board scope names is the project's published key when it carries one
+  // and its local key otherwise. Two projects answering one identity would make a scope
+  // entry name either of them.
+  const identities = state.projects.map(value => value.publishedKey ?? value.projectKey);
+  if (new Set(identities).size !== identities.length) issue(['projects'], 'Published project keys must be unique within a Hub.');
+  const knownIdentities = new Set(identities);
   const boardById = new Map(state.boards.map(value => [value.id, value]));
   for (const [index, value] of state.boards.entries()) {
     unique(value.workflow.columns.map(item => item.id), ['boards', index, 'workflow', 'columns']);
@@ -77,7 +83,7 @@ export const HubStateSchema = z.strictObject({
     unique(value.workflow.groups.map(item => item.id), ['boards', index, 'workflow', 'groups']);
     if (value.allowedProjectKeys !== undefined) {
       unique(value.allowedProjectKeys, ['boards', index, 'allowedProjectKeys']);
-      for (const key of value.allowedProjectKeys) if (!projectKeys.has(key)) issue(['boards', index, 'allowedProjectKeys'], 'A board project scope must name a project of the Hub.');
+      for (const key of value.allowedProjectKeys) if (!knownIdentities.has(key)) issue(['boards', index, 'allowedProjectKeys'], 'A board project scope must name a project of the Hub.');
     }
     if (!value.workflow.columns.some(item => item.id === value.workflow.initialColumnId)) issue(['boards', index, 'workflow', 'initialColumnId'], 'Initial column must exist.');
     try {

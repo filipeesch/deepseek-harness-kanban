@@ -55,6 +55,12 @@ function sameLocation(left: ProjectLocationPaths, right: ProjectLocationPaths): 
 function assertKindPreserved(project: Project, input: RelocationTarget): void {
   const targetIsGit = typeof input.gitRootPath === 'string' && input.gitRootPath.trim().length > 0;
   invariant((project.gitRootPath !== undefined) === targetIsGit, 'PROJECT_ASSOCIATION_CHANGE', 'Adding or removing a Git association is a project save, not a relocation.');
+  // A relocation records a location, never an identity: reporting success for a key the
+  // journal cannot carry would silently drop a change the person made.
+  const targetKey = input.projectKey === undefined ? project.projectKey : input.projectKey.trim();
+  invariant(targetKey === project.projectKey, 'PROJECT_KEY_CHANGE_REQUIRES_SAVE', 'Save the new project key before relocating the project location.');
+  const targetTeamKey = input.publishedKey === undefined ? project.publishedKey ?? '' : input.publishedKey.trim();
+  invariant(targetTeamKey === (project.publishedKey ?? ''), 'PROJECT_KEY_CHANGE_REQUIRES_SAVE', 'Save the new team key before relocating the project location.');
 }
 
 function blocksRelocation(operation: ContextOperation | null): boolean {

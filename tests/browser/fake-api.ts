@@ -21,7 +21,7 @@ export interface HarnessApi {
 }
 export type TestSnapshot = KanbanSnapshot & { state: KanbanState & Omit<BoardState, 'settings'> & { settings: any } };
 
-export interface HarnessOptions { scripted?: import('../../src/shared/scripted.js').ScriptedPhase; scriptedDelivery?: 'failed'; scriptedRefusal?: boolean; scriptedManyParameters?: boolean; scriptedFailure?: 'infrastructure' | 'diagnostic'; scriptedHold?: 'job' | 'pending'; stageUpdateFailure?: boolean; history?: 'short' | 'long'; relations?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean; mcpServers?: string[];
+export interface HarnessOptions { scripted?: import('../../src/shared/scripted.js').ScriptedPhase; scriptedDelivery?: 'failed'; scriptedRefusal?: boolean; scriptedManyParameters?: boolean; scriptedFailure?: 'infrastructure' | 'diagnostic'; scriptedHold?: 'job' | 'pending'; stageUpdateFailure?: boolean; history?: 'short' | 'long'; relations?: boolean; recorded?: boolean; staleRoute?: boolean; attention?: boolean; presence?: boolean; hubs?: number; restricted?: boolean; restrictedNext?: boolean; runFailure?: boolean; persist?: boolean; pending?: boolean; auto?: boolean; declared?: boolean; declaredFailed?: boolean; detect?: 'git' | 'folder'; prepare?: 'plain' | 'restricted'; initialInstruction?: boolean; agentPause?: boolean; notes?: boolean; idle?: boolean; sharing?: Record<string, HubSharingView>; shareFailure?: boolean; shareRefusal?: boolean; folderRefusal?: boolean; retained?: Array<{ path: string; projectId: string; taskTitle: string; reason: 'folder' | 'unresolved' }>; relocation?: Array<'waiting' | 'failed' | null>; extraProject?: boolean; drive?: 'ready' | 'empty' | 'app-missing' | 'unsupported' | 'error'; schedules?: HubSchedule[]; scheduleRuntime?: HubScheduleRuntime; modelCatalogFailure?: boolean; mcpServers?: string[]; projectAdoption?: boolean;
   /** Sets both fixture projects' worktree policy, so the notice and Git surfaces can be captured. */
   projectPolicy?: 'ask' | 'always' | 'never';
   /** Names the board's default model and what its conversations report back when it cannot be applied. */
@@ -214,6 +214,14 @@ boards: [{ id: 'board', name: 'Harness board', workflowYaml: workflowYaml(option
     board.workflow = parseWorkflow(board.workflowYaml);
   }
   if (options.extraProject) hub.projects.push({ id: 'p3', projectKey: 'p3', name: 'Relocation-only project', projectPath: '/repo/free', gitRootPath: '/repo', defaultBranch: 'main' });
+  if (options.projectAdoption) {
+    // A board received from the team names identities this Hub does not answer: one is
+    // still awaiting adoption and one was ignored, exactly as a checked project looks.
+    hub.projects[0]!.publishedKey = 'team-api';
+    hub.projects.push({ id: 'p-awaiting', projectKey: 'team-planning', name: 'Team planning', origin: 'published' });
+    hub.projects.push({ id: 'p-ignored', projectKey: 'team-management', name: 'Team management', origin: 'published', dismissed: true });
+    hub.boards[0]!.allowedProjectKeys = ['team-api', 'team-planning', 'team-management'];
+  }
   options.relocation?.forEach((state, index) => {
     const project = hub.projects[index];
     if (!project || state === null || state === undefined) return;

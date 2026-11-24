@@ -63,7 +63,8 @@ async function fixture(seed?: { version?: number | null; logs?: Record<string, B
   delete seeded.boards[0]!.defaultPresetMode;
   seeded.projects = [{ id: 'project', projectKey: 'project', name: 'Project', projectPath: '/repo' }];
   storage.hubs.set('hub', seeded);
-  const hubs = await HubRepository.open(storage, { id: () => 'generated', now: () => NOW });
+  // A fresh identifier per call: one apply can create several boards and placeholders.
+  const hubs = await HubRepository.open(storage, { id: (() => { let generated = 0; return () => 'generated-' + (++generated); })(), now: () => NOW });
   await hubs.hub('hub').transact(draft => { operations.saveBoardWorkflow(draft, 'board', FLOW, hubs.operationDeps()); return draft; }, hubs.requireHub('hub').revision);
   const layout = new MemoryLayoutStore(seed?.version === undefined && seed?.logs === undefined ? {} : { version: seed?.version ?? 4, logs: seed?.logs ?? {} });
   const store = memorySharing();
@@ -817,6 +818,149 @@ describe('per-board publishing service', () => {
     await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
     expect(f.service.view('hub')).toMatchObject({ status: 'needs-review' });
     await expect(f.service.publishAll('hub')).rejects.toBeInstanceOf(KanbanError);
+    await f.close();
+  });
+});
+/** A published board log whose scope names the given project identities. */
+function scopedLog(text: string, name: string, rank: string, projectKeys: string[]): BoardLog {
+  return genesisLog(text, [
+    { kind: 'board.renamed', name },
+    { kind: 'board.scope-changed', projectKeys },
+    { kind: 'board.rank-changed', rank },
+  ]);
+}
+
+describe('receiving a scope with unknown project identities', () => {
+  /** Connect, take the team's boards, and apply them, as a person does on a new machine. */
+  async function receiveAll(f: Fixture): Promise<void> {
+    await f.service.connect({ type: 'sharing.connect', hubId: 'hub', provider: 'local-folder', settings: { path: '/team' } });
+    await f.service.receive('hub');
+    await f.service.getUpdates('hub');
+  }
+
+  it('applies a board whose scope names identities this Hub does not hold', async () => {
+    const f = await fixture({ logs: { team: scopedLog(FLOW, 'Planning', 'i', ['quintoandar-planning', 'quintoandar-management']) } });
+    await receiveAll(f);
+    const hub = f.hubs.requireHub('hub');
+    const board = hub.boards.find(value => value.name === 'Planning');
+    expect(board).toBeDefined();
+    expect(board!.workflowYaml).toContain('name: Flow');
+    expect(board!.allowedProjectKeys).toEqual(['quintoandar-management', 'quintoandar-planning']);
+    const placeholders = hub.projects.filter(project => project.origin === 'published');
+    expect(placeholders.map(project => project.projectKey).sort()).toEqual(['quintoandar-management', 'quintoandar-planning']);
+    expect(placeholders.every(project => project.projectPath === undefined)).toBe(true);
+    expect(stateOf(f, board!.id)).toBe('in-sync');
+    await f.close();
+  });
+
+  it('applies every scoped board of the storage in one update', async () => {
+    const f = await fixture({ logs: {
+      planning: scopedLog(FLOW, 'Planning', 'i', ['team-planning']),
+      management: scopedLog(SECOND, 'Management', 'j', ['team-management']),
+    } });
+    await receiveAll(f);
+    const hub = f.hubs.requireHub('hub');
+    const planning = hub.boards.find(value => value.name === 'Planning');
+    const management = hub.boards.find(value => value.name === 'Management');
+    expect(planning?.workflowYaml).toContain('name: Flow');
+    expect(management?.workflowYaml).toContain('name: Second');
+    expect(hub.projects.filter(project => project.origin === 'published').map(project => project.projectKey).sort()).toEqual(['team-management', 'team-planning']);
+    expect(stateOf(f, planning!.id)).toBe('in-sync');
+    expect(stateOf(f, management!.id)).toBe('in-sync');
+    await f.close();
+  });
+
+  it('keeps an ignored identity hidden and the board out of draft when the team scopes it again', async () => {
+    const f = await fixture({ logs: { team: scopedLog(FLOW, 'Planning', 'i', ['team-planning']) } });
+    await receiveAll(f);
+    const board = f.hubs.requireHub('hub').boards.find(value => value.name === 'Planning')!;
+    const placeholder = f.hubs.requireHub('hub').projects.find(project => project.projectKey === 'team-planning')!;
+    await f.hubs.hub('hub').dismissProject(placeholder.id, true);
+    expect(f.hubs.requireHub('hub').boards.find(value => value.id === board.id)!.allowedProjectKeys).toEqual(['team-planning']);
+    const key = keyOf(f, board.id)!;
+    const snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'board.scope-changed', projectKeys: ['team-planning', 'team-new'] }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+    await f.service.getUpdates('hub');
+    const hub = f.hubs.requireHub('hub');
+    expect(hub.projects.filter(project => project.projectKey === 'team-planning')).toHaveLength(1);
+    expect((hub.projects.find(project => project.projectKey === 'team-planning') as { dismissed?: boolean }).dismissed).toBe(true);
+    expect(hub.projects.find(project => project.projectKey === 'team-new')).toMatchObject({ origin: 'published' });
+    expect(stateOf(f, board.id)).toBe('in-sync');
+    await f.close();
+  });
+
+  it('prunes the placeholder of an identity the team stops naming', async () => {
+    const f = await fixture({ logs: { team: scopedLog(FLOW, 'Planning', 'i', ['team-planning']) } });
+    await receiveAll(f);
+    const board = f.hubs.requireHub('hub').boards.find(value => value.name === 'Planning')!;
+    expect(f.hubs.requireHub('hub').projects.some(project => project.projectKey === 'team-planning')).toBe(true);
+    const key = keyOf(f, board.id)!;
+    const snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'board.scope-changed', projectKeys: [] }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+    await f.service.getUpdates('hub');
+    const hub = f.hubs.requireHub('hub');
+    expect(hub.boards.find(value => value.id === board.id)!.allowedProjectKeys).toEqual([]);
+    expect(hub.projects.some(project => project.projectKey === 'team-planning')).toBe(false);
+    expect(stateOf(f, board.id)).toBe('in-sync');
+    await f.close();
+  });
+
+  it('keeps the ignored identity when one update moves it between boards', async () => {
+    // The logs sort by key, so swapping the names applies the two boards in both orders.
+    for (const keys of [{ dropping: 'a-drop', adding: 'b-add' }, { dropping: 'b-drop', adding: 'a-add' }]) {
+      const f = await fixture({ logs: {
+        [keys.dropping]: scopedLog(FLOW, 'Dropping', 'i', ['shared-key']),
+        [keys.adding]: scopedLog(SECOND, 'Adding', 'j', []),
+      } });
+      await receiveAll(f);
+      const placeholder = f.hubs.requireHub('hub').projects.find(project => project.projectKey === 'shared-key')!;
+      await f.hubs.hub('hub').dismissProject(placeholder.id, true);
+      for (const [key, projectKeys] of [[keys.dropping, []], [keys.adding, ['shared-key']]] as const) {
+        const snapshot = (await f.layout.readLog(key))!;
+        await f.layout.appendChanges(key, [{ kind: 'board.scope-changed', projectKeys: [...projectKeys] }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+      }
+      await f.service.getUpdates('hub');
+      const hub = f.hubs.requireHub('hub');
+      const placeholders = hub.projects.filter(project => project.projectKey === 'shared-key');
+      expect(placeholders).toHaveLength(1);
+      expect((placeholders[0] as { dismissed?: boolean }).dismissed).toBe(true);
+      expect(hub.boards.find(board => board.name === 'Adding')!.allowedProjectKeys).toEqual(['shared-key']);
+      await f.close();
+    }
+  });
+
+  it('presents a pruned identity as awaiting adoption again when the team names it again', async () => {
+    const f = await fixture({ logs: { team: scopedLog(FLOW, 'Planning', 'i', ['team-planning']) } });
+    await receiveAll(f);
+    const board = f.hubs.requireHub('hub').boards.find(value => value.name === 'Planning')!;
+    const placeholder = f.hubs.requireHub('hub').projects.find(project => project.projectKey === 'team-planning')!;
+    await f.hubs.hub('hub').dismissProject(placeholder.id, true);
+    const key = keyOf(f, board.id)!;
+    let snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'board.scope-changed', projectKeys: [] }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+    await f.service.getUpdates('hub');
+    expect(f.hubs.requireHub('hub').projects.some(project => project.projectKey === 'team-planning')).toBe(false);
+    snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'board.scope-changed', projectKeys: ['team-planning'] }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+    await f.service.getUpdates('hub');
+    const returning = f.hubs.requireHub('hub').projects.find(project => project.projectKey === 'team-planning')!;
+    expect(returning).toMatchObject({ origin: 'published' });
+    expect((returning as { dismissed?: boolean }).dismissed).toBeUndefined();
+    await f.close();
+  });
+
+  it('creates the placeholders the team version names when resolving a board', async () => {
+    const f = await fixture({ logs: { team: scopedLog(FLOW, 'Team board', 'i', []) } });
+    await receiveAll(f);
+    const board = f.hubs.requireHub('hub').boards.find(value => value.name === 'Team board')!;
+    const key = keyOf(f, board.id)!;
+    const snapshot = (await f.layout.readLog(key))!;
+    await f.layout.appendChanges(key, [{ kind: 'board.scope-changed', projectKeys: ['team-resolved'] }], { expectedHead: snapshot.head, message: 'm', at: NOW });
+    await f.service.resolve('hub', board.id, 'team');
+    const hub = f.hubs.requireHub('hub');
+    expect(hub.boards.find(value => value.id === board.id)!.allowedProjectKeys).toEqual(['team-resolved']);
+    expect(hub.projects.find(project => project.projectKey === 'team-resolved')).toMatchObject({ origin: 'published' });
+    expect(stateOf(f, board.id)).toBe('in-sync');
     await f.close();
   });
 });

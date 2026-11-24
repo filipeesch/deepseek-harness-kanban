@@ -136,10 +136,10 @@ describe('project scope on the agent surface', () => {
     const f = await fixture();
     const second = await f.store.saveProject({ name: 'API', projectPath: f.gitRoot, gitRootPath: f.gitRoot });
     await f.store.transact(draft => { draft.projects.push({ id: 'placeholder', name: 'ops', projectKey: 'ops', origin: 'published' }); });
-    await f.app.command({ type: 'board.projects.save', hubId: f.hub.id, boardId: f.board.id, projectKeys: [f.project.projectKey] });
+    await f.app.command({ type: 'board.projects.save', hubId: f.hub.id, boardId: f.board.id, projectKeys: [f.project.projectKey, 'ops'] });
     const tool = toolFor(f.app);
     const summary = await tool('get_workflow_summary', { board_id: f.board.id }) as { records: Array<Record<string, unknown>> };
-    expect(summary.records).toContainEqual(expect.objectContaining({ kind: 'projectScope', mode: 'restricted', projectCount: 1 }));
+    expect(summary.records).toContainEqual(expect.objectContaining({ kind: 'projectScope', mode: 'restricted', projectCount: 2 }));
     expect(summary.records).toContainEqual({ kind: 'project', key: f.project.projectKey });
     const projects = await tool('list_projects', { board_id: f.board.id }) as Array<{ id: string; allowed: boolean }>;
     expect(projects.find(project => project.id === f.project.id)).toMatchObject({ allowed: true });

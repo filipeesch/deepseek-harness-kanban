@@ -1,5 +1,5 @@
 import React, { useId, useRef, useState } from 'react';
-import type { Attention, ClientApi, HubScheduleRuntime, HubSharingView, HubState, KanbanSettings, Project, SharingAuthView, Task } from '../../shared/types.js';
+import type { Attention, Board, ClientApi, HubScheduleRuntime, HubSharingView, HubState, KanbanSettings, Project, SharingAuthView, Task } from '../../shared/types.js';
 import { ProjectEditorDialog } from '../projects/project-editor-dialog.js';
 import { ProjectList } from '../projects/project-list.js';
 import { Modal, Tabs, type ModalSize, type RunCommand } from '../ui.js';
@@ -52,9 +52,9 @@ export function Configuration({ hub, hubCount, settings, settingsRevision, run, 
     { id: 'General', render: report => <GeneralSettings settings={settings} settingsRevision={settingsRevision} run={run} onDirtyChange={report} /> },
     { id: 'Hub', render: report => hub ? <HubSettings hub={hub} hubCount={hubCount} run={run} {...(sharing === undefined ? {} : { sharing })} {...(onHubDeleted === undefined ? {} : { onDeleted: onHubDeleted })} onDirtyChange={report} /> : <p className="kb-hint">No Hub is selected.</p> },
     { id: 'Boards', render: () => hub ? <BoardsSection hub={hub} settings={settings} run={run} {...(api === undefined ? {} : { api })} {...(sharing === undefined ? {} : { sharing })} {...(nativeSeat === undefined ? {} : { nativeSeat })} {...(onBoardCreated === undefined ? {} : { onCreated: onBoardCreated })} /> : <p className="kb-hint">No Hub is selected.</p> },
-    { id: 'Projects', render: () => hub ? <ProjectsSection projects={hub.projects} tasks={hub.tasks} revision={hub.revision} run={run} api={api} hubId={hub.id} conversationAttention={conversationAttention} /> : <p className="kb-hint">No Hub is selected.</p> },
+    { id: 'Projects', render: () => hub ? <ProjectsSection projects={hub.projects} boards={hub.boards} tasks={hub.tasks} revision={hub.revision} run={run} api={api} hubId={hub.id} conversationAttention={conversationAttention} /> : <p className="kb-hint">No Hub is selected.</p> },
     { id: 'Schedules', render: () => hub ? <SchedulesSettings hub={hub} runtime={scheduleRuntime} {...(api === undefined ? {} : { api })} run={run} {...(onOpenSession === undefined ? {} : { onOpenSession })} {...(nativeSeat === undefined ? {} : { nativeSeat })} /> : <p className="kb-hint">No Hub is selected.</p> },
-    { id: 'Team Settings', render: () => hub ? <TeamSettings key={hub.id} hub={hub} sharing={sharing} auth={sharingAuth} api={api} run={run} /> : <p className="kb-hint">No Hub is selected.</p> },
+    { id: 'Team Settings', render: () => hub ? <TeamSettings key={hub.id} hub={hub} sharing={sharing} auth={sharingAuth} api={api} run={run} onOpenProjects={() => requestSection('Projects')} /> : <p className="kb-hint">No Hub is selected.</p> },
   ];
   const current = sections.find(value => value.id === section) ?? sections[0]!;
   /** Leaving a section that holds a draft discards it, so it asks first. */
@@ -91,12 +91,13 @@ export function Configuration({ hub, hubCount, settings, settingsRevision, run, 
   </Modal>;
 }
 
-function ProjectsSection({ projects, tasks, revision, run, api, hubId, conversationAttention }: { projects: Project[]; tasks: Task[]; revision: number; run: RunCommand; api?: ClientApi; hubId?: string; conversationAttention?: Record<string, Attention> }) {
+function ProjectsSection({ projects, boards, tasks, revision, run, api, hubId, conversationAttention }: { projects: Project[]; boards: Board[]; tasks: Task[]; revision: number; run: RunCommand; api?: ClientApi; hubId?: string; conversationAttention?: Record<string, Attention> }) {
   const [editing, setEditing] = useState<{ project?: Project } | null>(null);
-  const [saved, setSaved] = useState<'saved' | 'relocated' | null>(null);
+  const [saved, setSaved] = useState<'saved' | 'relocated' | 'linked' | null>(null);
   return <div className="kb-form">
-    <ProjectList projects={projects} tasks={tasks} revision={revision} run={run} onAdd={() => { setEditing({}); setSaved(null); }} onEdit={project => { setEditing({ project }); setSaved(null); }} />
+    <ProjectList projects={projects} boards={boards} tasks={tasks} revision={revision} run={run} onAdd={() => { setEditing({}); setSaved(null); }} onEdit={project => { setEditing({ project }); setSaved(null); }} onLinked={() => setSaved('linked')} />
     {saved === 'saved' && <p role="status">Project saved.</p>}
+    {saved === 'linked' && <p role="status">Project linked to the team's key.</p>}
     {saved === 'relocated' && <p role="status">Relocation accepted. Its progress is shown in the project row.</p>}
     {editing && <ProjectEditorDialog
       {...(api === undefined ? {} : { api })}

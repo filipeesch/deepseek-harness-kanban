@@ -243,6 +243,8 @@ describe('applying every board', () => {
       requireRecord: () => record,
       assertReady: () => {},
       layoutFor: () => ({}),
+      // The batch prunes once after its last board; this stub records nothing to prune.
+      options: { hubs: { pruneUncitedPlaceholders: async () => [] } },
     } as unknown as SharingSession;
     const observer = { refresh: async () => record } as unknown as BoardObserver;
     const applier = new BoardApplier(session, observer);

@@ -138,13 +138,15 @@ describe('published project adoption', () => {
   it('exposes the key and adopts a placeholder by choosing its directory', async () => {
     const value = fixture();
     value.state.hubs[0]!.projects.push({ id: 'p3', name: 'ops', projectKey: 'ops', origin: 'published' });
+    value.state.hubs[0]!.boards[0]!.allowedProjectKeys = ['ops'];
     const { user, command } = await mount(value);
     await openConfiguration(user, 'Projects');
-    await user.click(await screen.findByRole('button', { name: 'Edit project ops' }));
+    expect(screen.getByText(/Named by: Delivery/)).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Adopt ops' }));
     expect(screen.getByText('Awaiting adoption')).toBeTruthy();
     const dialog = screen.getByRole('dialog', { name: 'Adopt published project' });
     expect((within(dialog).getByRole('textbox', { name: 'Project key' }) as HTMLInputElement).value).toBe('ops');
-    expect(within(dialog).getByText(/has no directory yet/)).toBeTruthy();
+    expect(within(dialog).getByText(/adopting keeps the local key and the identity the board scopes use/)).toBeTruthy();
     await user.type(within(dialog).getByRole('textbox', { name: 'Project path' }), '/repo/ops');
     await user.click(within(dialog).getByRole('button', { name: 'Save project' }));
     await waitFor(() => expect(command).toHaveBeenCalledWith(expect.objectContaining({

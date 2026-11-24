@@ -45,8 +45,7 @@ export const workflowImportEntrySchema: z.ZodType<WorkflowImportEntry> = z.objec
   copyName: z.string().min(1).nullable(),
   orphaned: z.array(orphanSchema),
   realigned: z.array(realignmentSchema),
-  droppedProjectKeys: z.array(z.string().min(1)),
-  scopeOpened: z.boolean(),
+  awaitingProjectKeys: z.array(z.string().min(1)),
   blockReason,
   detail: z.string().nullable(),
   externalScriptSources: z.array(z.string().min(1)),
@@ -76,4 +75,5 @@ export const workflowImportOutcomeSchema: z.ZodType<WorkflowImportOutcome> = z.o
 
 export const workflowImportResultSchema: z.ZodType<WorkflowImportResult> = z.object({
   hubId: identifier, outcomes: z.array(workflowImportOutcomeSchema),
+  cleanupFailure: z.object({ code: z.string().min(1), message: z.string(), details: z.record(z.string(), z.unknown()).optional() }).strict().optional(),
 }).strict();

@@ -4,7 +4,7 @@ import { HubRepository } from '../../src/host/hub-repository.js';
 import { MemoryHubStorage } from './helpers.js';
 import { TRANSFER_FORMAT, TRANSFER_VERSION, type TransferDocument } from '../../src/domain/workflow-transfer/document.js';
 import { encodeTransferDocument } from '../../src/host/workflow-transfer/archive.js';
-import { analyzeTransfer, scopeOf, settlePlan } from '../../src/host/workflow-transfer/import.js';
+import { analyzeTransfer, importedScope, settlePlan } from '../../src/host/workflow-transfer/import.js';
 import type { ImportEntryInput } from '../../src/host/board-administration.js';
 
 const NOW = '2026-11-20T10:00:00.000Z';
@@ -41,7 +41,7 @@ async function setup(options: { projectKeys?: string[]; revisions?: BoardRevisio
   const service = new BoardAdministration({ hubs, revisions: revisions as BoardRevisionPort });
   const hubId = hubs.defaultHubId();
   for (const key of options.projectKeys ?? []) await hubs.hub(hubId).saveProject({ name: key.toUpperCase(), projectPath: '/repo/' + key, projectKey: key });
-  return { hubs, service, hubId, revisions };
+  return { hubs, service, hubId, revisions, storage };
 }
 
 /** The entries an apply needs, straight from a settled plan. */
@@ -61,7 +61,7 @@ function entriesOf(hubs: HubRepository, hubId: string, value: TransferDocument, 
       copyName: entry.copyName,
       workflowYaml: board.workflowYaml,
       presetMode: board.presetMode,
-      projectScope: scopeOf(board, settled.hub),
+      projectScope: importedScope(board),
       stageIdentities: board.stageIdentities,
     };
   });
@@ -183,16 +183,63 @@ describe('import write', () => {
     expect(hubs.requireHub(hubId).boards.some(value => value.name === 'My copy')).toBe(true);
   });
 
-  it('drops an unknown project key and opens a fully filtered scope', async () => {
+  it('receives an unknown project key as a placeholder and keeps the imported scope', async () => {
     const { hubs, service, hubId } = await setup({ projectKeys: ['api'] });
     const entries = entriesOf(hubs, hubId, document([
       { name: 'Partial', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['api', 'gone'] },
-      { name: 'Empty', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['gone'] },
+      { name: 'Solo', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['lost'] },
     ]));
     await service.importBoards({ hubId, entries });
-    const boards = hubs.requireHub(hubId).boards;
-    expect(boards.find(board => board.name === 'Partial')!.allowedProjectKeys).toEqual(['api']);
-    expect(boards.find(board => board.name === 'Empty')!.allowedProjectKeys).toBeUndefined();
+    const hub = hubs.requireHub(hubId);
+    const boards = hub.boards;
+    expect(boards.find(board => board.name === 'Partial')!.allowedProjectKeys).toEqual(['api', 'gone']);
+    expect(boards.find(board => board.name === 'Solo')!.allowedProjectKeys).toEqual(['lost']);
+    expect(hub.projects.filter(project => project.origin === 'published').map(project => project.projectKey).sort()).toEqual(['gone', 'lost']);
+    expect(hub.projects.find(project => project.projectKey === 'gone')).toMatchObject({ origin: 'published' });
+    expect(hub.projects.find(project => project.projectKey === 'gone')!.projectPath).toBeUndefined();
+  });
+
+  it('reports the landed boards when the cleanup write fails', async () => {
+    const { hubs, service, hubId, storage } = await setup();
+    // The first import leaves a placeholder that only this board names.
+    await service.importBoards({ hubId, entries: entriesOf(hubs, hubId, document([{ name: 'Scoped', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['gone'] }])) });
+    expect(hubs.requireHub(hubId).projects.some(project => project.projectKey === 'gone')).toBe(true);
+    // The replacement commits, then the cleanup that drops "gone" cannot be written.
+    let writes = 0;
+    const save = storage.saveHub.bind(storage);
+    storage.saveHub = async state => { writes++; if (writes === 2) throw new Error('Disk is full.'); return save(state); };
+    const result = await service.importBoards({ hubId, entries: entriesOf(hubs, hubId, document([{ name: 'Scoped', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: [] }]), [{ name: 'Scoped', settlement: 'replace' }]) });
+    expect(result.outcomes).toEqual([expect.objectContaining({ name: 'Scoped', status: 'replaced' })]);
+    expect(result.cleanupFailure).toMatchObject({ code: 'STORAGE_SAVE_FAILED' });
+    const hub = hubs.requireHub(hubId);
+    expect(hub.boards.find(board => board.name === 'Scoped')!.allowedProjectKeys).toEqual([]);
+    expect(hub.projects.some(project => project.projectKey === 'gone')).toBe(true);
+  });
+
+  it('names and stores a repeated identity once', async () => {
+    const { hubs, service, hubId } = await setup({ projectKeys: ['api'] });
+    const doc = document([{ name: 'Repeated', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['gone', 'gone'] }]);
+    const plan = analyzeTransfer(hubs, { hubId, archive: archiveOf(doc) });
+    expect(plan.entries[0]!.awaitingProjectKeys).toEqual(['gone']);
+    await service.importBoards({ hubId, entries: entriesOf(hubs, hubId, doc) });
+    const hub = hubs.requireHub(hubId);
+    expect(hub.boards.find(board => board.name === 'Repeated')!.allowedProjectKeys).toEqual(['gone']);
+    expect(hub.projects.filter(project => project.projectKey === 'gone')).toHaveLength(1);
+  });
+
+  it('keeps an ignored identity out of adoption while the imported board keeps it', async () => {
+    const { hubs, service, hubId } = await setup({ projectKeys: ['api'] });
+    const hub = hubs.requireHub(hubId);
+    const placeholder = { id: 'held', name: 'Held', projectKey: 'held', origin: 'published' as const, dismissed: true };
+    await hubs.hub(hubId).transact(draft => { draft.projects.push(placeholder); });
+    const entries = entriesOf(hubs, hubId, document([{ name: 'Team', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['held'] }]));
+    expect(analyzeTransfer(hubs, { hubId, archive: archiveOf(document([{ name: 'Team', workflowYaml: workflowOf([{ id: 'todo' }]), projectKeys: ['held'] }])) }).entries[0]!.awaitingProjectKeys).toEqual([]);
+    await service.importBoards({ hubId, entries });
+    const after = hubs.requireHub(hubId);
+    expect(after.boards.find(board => board.name === 'Team')!.allowedProjectKeys).toEqual(['held']);
+    expect(after.projects.filter(project => project.projectKey === 'held')).toHaveLength(1);
+    expect((after.projects.find(project => project.projectKey === 'held') as { dismissed?: boolean }).dismissed).toBe(true);
+    expect(after.projects.filter(project => project.origin === 'published')).toHaveLength(1);
   });
 });
 

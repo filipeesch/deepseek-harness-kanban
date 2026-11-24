@@ -319,6 +319,19 @@ describe('project relocation', () => {
     expect(f.store.requireProject(f.project.id).projectPath).toBe(target.projectPath);
   });
 
+  it('rejects a key edit carried by a relocation', async () => {
+    const f = await setup();
+    await taskWithConversation(f.app, { projectId: f.project.id, title: 'Keyed', description: '' });
+    const target = await moveRepository(f);
+    const base = { id: f.project.id, name: f.project.name, projectPath: target.projectPath, gitRootPath: target.movedRoot, defaultBranch: 'main' };
+    await expect(f.app.command({ type: 'project.relocate', project: { ...base, projectKey: 'renamed-local' }, confirmed: true })).rejects.toMatchObject({ code: 'PROJECT_KEY_CHANGE_REQUIRES_SAVE' });
+    await expect(f.app.command({ type: 'project.relocate', project: { ...base, publishedKey: 'team-renamed' }, confirmed: true })).rejects.toMatchObject({ code: 'PROJECT_KEY_CHANGE_REQUIRES_SAVE' });
+    const project = f.store.requireProject(f.project.id);
+    expect(project.operation).toBeUndefined();
+    expect(project.projectPath).toBe(f.projectPath);
+    expect(project.projectKey).toBe(f.project.projectKey);
+  });
+
   it('rejects a relocation that changes neither the path nor the Git root', async () => {
     const f = await setup();
     await taskWithConversation(f.app, { projectId: f.project.id, title: 'No move task', description: '' });

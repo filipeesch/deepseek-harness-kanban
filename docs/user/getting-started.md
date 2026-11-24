@@ -16,7 +16,7 @@ Choosing or typing an absolute **Project path** runs detection. A Git repository
 
 Saving validates existing canonical directories and containment, and for a Git-backed project that the Git root is the repository top level. Registration does not start an agent or grant Git access.
 
-Every project carries a stable **project key**. It is derived from the project name when the field is left empty, stays editable in the same dialog, must be unique within the Hub, and cannot be duplicated. A key change updates every board of the Hub that allows that project in the same save; renaming or relocating a project never changes the key.
+Every project carries a stable **project key**. It is derived from the project name when the field is left empty, stays editable in the same dialog, must be unique within the Hub, and cannot be duplicated. A key change updates every board of the Hub that names that key in the same save; a project linked to a team keeps the key its boards use, and renaming or relocating a project never changes its key. See [Team sharing](team-sharing.md).
 
 The dialog also carries the project's **Worktree** policy: **Ask**, **Always create**, or **Never**. It answers the worktree question before a task's first execution. **Ask** keeps the per-task choice, **Always create** starts the task on its derived default worktree without asking, and **Never** uses the project directory, hides the missing-worktree notice, and stops withholding the first-conversation action. A project saved without a policy is **Ask**, the policy stays local to the installation, and a choice a task already recorded for itself still wins. See [Git and worktrees](git-worktrees.md).
 

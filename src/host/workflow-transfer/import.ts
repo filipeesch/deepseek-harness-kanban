@@ -108,19 +108,16 @@ export function boardOfWorkflow(entry: TransferEntryPlan, boards: ReadonlyMap<st
 }
 
 /**
- * The project scope an apply writes, aligned with the destination Hub.
+ * The project scope an apply writes, exactly as the document states it.
  *
- * Three cases stay distinct, because they mean three different things to a board:
+ * The three cases stay distinct, because they mean three different things to a board:
  * an absent scope accepts every project, an empty list keeps the board closed to
- * creation, and a list keeps exactly the keys the destination Hub holds. Only a
- * scope that arrived nonempty and lost every key becomes open, which is what
- * dropping an unknown key means; an authored empty list is preserved as empty.
+ * creation, and a list keeps every identity the document names. An identity the
+ * destination Hub does not answer is materialized as a placeholder by the apply, so
+ * the exported scope survives the trip instead of being filtered against the Hub.
  */
-export function scopeOf(board: TransferBoard, hub: HubState): string[] | undefined {
+export function importedScope(board: TransferBoard): string[] | undefined {
   if (board.projectKeys === null) return undefined;
-  if (board.projectKeys.length === 0) return [];
-  const held = new Set(hub.projects.map(project => project.projectKey));
-  const kept = board.projectKeys.filter(key => held.has(key));
-  return kept.length === 0 ? undefined : kept;
+  return [...board.projectKeys];
 }
 

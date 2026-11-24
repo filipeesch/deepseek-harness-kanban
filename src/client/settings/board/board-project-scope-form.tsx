@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import type { Board, BoardState, HubState } from '../../../shared/types.js';
 import { isPublishedProject } from '../../../shared/project.js';
+import { publishedIdentityOf } from '../../../domain/board-project-scope.js';
 import { ErrorNotice, useAction, type RunCommand } from '../../ui.js';
 import { usePanelDirty } from './use-panel-dirty.js';
 
@@ -71,12 +72,14 @@ export function BoardProjectScopeForm({ state, hub, board, run, onDirtyChange }:
     {mode === 'selected' && <>
       <ul className="kb-project-list">{hub.projects.map(project => {
         const cards = counts.get(project.id) ?? 0;
+        const identity = publishedIdentityOf(project);
         const placeholder = isPublishedProject(project);
+        const state = placeholder ? (project.dismissed === true ? 'ignored' : 'awaiting adoption') : cards === 0 ? '' : ' · ' + cards + (cards === 1 ? ' card' : ' cards');
         return <li key={project.id}>
           <label className="kb-choice">
-            <input type="checkbox" checked={selected.includes(project.projectKey)} disabled={action.pending || stale} onChange={() => toggle(project.projectKey)} /> {project.name}
+            <input type="checkbox" checked={selected.includes(identity)} disabled={action.pending || stale} onChange={() => toggle(identity)} /> {project.name}
           </label>
-          <span className="kb-hint">{project.projectKey}{placeholder ? ' · awaiting adoption' : cards === 0 ? '' : ' · ' + cards + (cards === 1 ? ' card' : ' cards')}</span>
+          <span className="kb-hint">{identity}{state === '' ? '' : ' · ' + state}</span>
         </li>;
       })}</ul>
       {hub.projects.length === 0 && <p className="kb-hint">This Hub has no projects yet.</p>}

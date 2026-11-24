@@ -66,7 +66,7 @@ describe('transfer wire parity', () => {
     const plan = analyzeTransfer(hubs, { hubId, archive });
     const parsed = workflowImportPlanSchema.safeParse(plan);
     expect(parsed.success).toBe(true);
-    expect(parsed.success && parsed.data.entries.some(entry => entry.droppedProjectKeys.length > 0)).toBe(true);
+    expect(parsed.success && parsed.data.entries.some(entry => entry.awaitingProjectKeys.length > 0)).toBe(true);
     expect(parsed.success && parsed.data.entries.some(entry => entry.blockReason === 'name-conflict')).toBe(true);
   });
 
