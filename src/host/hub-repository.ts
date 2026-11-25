@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, Board, BoardSettings, ContextOperation, HubRelation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, TaskAttachment, Workflow } from '../shared/types.js';
+import type { AgentModelFallback, AutoModePause, Board, BoardSettings, ContextOperation, HubRelation, HubSchedule, HubState, HubTask, KanbanMeta, KanbanState, NewTask, Note, OperationRequest, Project, ProjectInput, TaskAttachment, Workflow } from '../shared/types.js';
 import { repositoryLane } from './repository-lane.js';
 import type { HubStorage } from '../shared/ports.js';
 import { HubStateSchema, initialHubState, defaultHubState } from '../domain/hub-schema.js';
@@ -762,8 +762,8 @@ export class HubStore {
   async recordTransition(taskId: string, columnId: string | undefined, reason: unknown, parameters?: unknown): Promise<HubTask> {
     return this.transact(draft => operations.recordTransition(draft, taskId, columnId, reason, parameters, this.deps()));
   }
-  async addSession(taskId: string, sessionId: string, expectedEffectiveCwd?: string): Promise<HubTask> {
-    return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps(), expectedEffectiveCwd));
+  async addSession(taskId: string, sessionId: string, expectedEffectiveCwd?: string, agent?: string, fallback?: AgentModelFallback): Promise<HubTask> {
+    return this.transact(draft => operations.addSession(draft, taskId, sessionId, this.deps(), expectedEffectiveCwd, agent, fallback));
   }
   async closeSession(taskId: string, sessionId: string): Promise<HubTask> {
     return this.transact(draft => operations.closeSession(draft, taskId, sessionId, this.deps()));
@@ -771,6 +771,7 @@ export class HubStore {
   async reopenSession(taskId: string, sessionId: string): Promise<HubTask> {
     return this.transact(draft => operations.reopenSession(draft, taskId, sessionId, this.deps()));
   }
+
   async saveNote(taskId: string, input: NoteInput): Promise<Note> {
     return this.transact(draft => operations.saveNote(draft, taskId, input, this.deps()));
   }

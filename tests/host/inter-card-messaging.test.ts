@@ -4,22 +4,26 @@ import type { LocatedTask } from '../../src/host/hub-repository.js';
 import type { TaskActivity } from '../../src/shared/types.js';
 import { fakeLocatedTask } from './helpers.js';
 
-function setup(options: { hubId?: string; targetOpen?: string[]; activity?: InterCardMessagingDeps['activity'] } = {}) {
-  const sender = fakeLocatedTask({ taskId: 'sender', title: 'Sender', open: ['sender-session'] });
+function setup(options: { hubId?: string; targetOpen?: string[]; activity?: InterCardMessagingDeps['activity']; agents?: readonly string[]; senderRole?: string } = {}) {
+  const sender = fakeLocatedTask({ taskId: 'sender', title: 'Sender', open: ['sender-session'], ...(options.agents === undefined ? {} : { agents: options.agents }), ...(options.senderRole === undefined ? {} : { roles: { 'sender-session': { agent: options.senderRole } } }) });
   const targets = new Map<string, LocatedTask>([
     ['sender', sender],
-    ['target', fakeLocatedTask({ taskId: 'target', title: 'Target', open: options.targetOpen ?? [], ...(options.hubId === undefined ? {} : { hubId: options.hubId }) })],
+    ['target', fakeLocatedTask({ taskId: 'target', title: 'Target', open: options.targetOpen ?? [], ...(options.agents === undefined ? {} : { agents: options.agents }), ...(options.hubId === undefined ? {} : { hubId: options.hubId }) })],
   ]);
   const delivery = { deliver: vi.fn(async (_sessionId: string, _delivery: unknown) => {}) };
+  const hold = vi.fn(async (_taskId: string, _message: unknown) => {});
   const prepare = vi.fn(async () => ({ sessionId: 'prepared-session', createdConversation: true, createdWorktree: { path: '/tree', branch: 'target' } }));
+  const agentConversation = vi.fn(async () => 'agent-session');
   const service = new InterCardMessaging({
     locateBySession: id => id === 'sender-session' ? sender : undefined,
     locate: id => targets.get(id),
     prepare,
+    hold,
+    agentConversation,
     delivery,
     ...(options.activity === undefined ? {} : { activity: options.activity }),
   });
-  return { service, sender, targets, delivery, prepare, setTarget: (next: LocatedTask) => { targets.set('target', next); } };
+  return { service, sender, targets, delivery, prepare, hold, agentConversation, setTarget: (next: LocatedTask) => { targets.set('target', next); } };
 }
 
 describe('inter-card messaging service', () => {
@@ -158,10 +162,49 @@ describe('inter-card messaging service', () => {
     expect(f.delivery.deliver).not.toHaveBeenCalled();
   });
 
-  it('rejects a message to the sending task', async () => {
+  it('delivers a message to the sending task main conversation', async () => {
     const f = setup();
-    await expect(f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'sender', body: 'Hi', callId: 'c' }))
-      .rejects.toMatchObject({ code: 'SELF_MESSAGE' });
+    const result = await f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'sender', body: 'Hi', callId: 'c' });
+    expect(result).toMatchObject({ delivered: true, target: { taskId: 'sender', sessionId: 'sender-session' } });
+    expect(f.delivery.deliver).toHaveBeenCalledTimes(1);
+    const [sessionId, raw] = f.delivery.deliver.mock.calls[0]!;
+    expect(sessionId).toBe('sender-session');
+    expect((raw as { text: string }).text).toContain('main conversation of this task');
+  });
+
+  it('addresses an agent of another task and refuses one it does not declare', async () => {
+    const f = setup({ targetOpen: ['target-session'], agents: ['designer'] });
+    // A reply to a specialist reaches that specialist's conversation on the other task.
+    const result = await f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'target', body: 'Hi', agent: 'designer', callId: 'c' });
+    expect(result).toMatchObject({ delivered: true, target: { sessionId: 'agent-session' } });
+    expect(f.agentConversation).toHaveBeenCalledWith('target', 'designer');
+    await expect(f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'target', body: 'Hi', agent: 'missing', callId: 'c' }))
+      .rejects.toMatchObject({ code: 'AGENT_NOT_FOUND' });
+    // A destination stage still addresses only the sending task.
+    await expect(f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'target', body: 'Hi', deliverAt: 'todo', callId: 'c' }))
+      .rejects.toMatchObject({ code: 'CROSS_TASK_ADDRESS' });
+  });
+
+  it('names the sending specialist so the reply reaches the conversation that asked', async () => {
+    const f = setup({ targetOpen: ['target-session'], agents: ['designer'], senderRole: 'designer' });
+    await f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'target', body: 'Design is done.', callId: 'c' });
+    const sent = f.delivery.deliver.mock.calls[0]![1] as { text: string };
+    expect(sent.text).toContain('designer conversation of task');
+    expect(sent.text).toContain('agent "designer"');
+  });
+
+  it('holds a message for a later stage instead of delivering it now', async () => {
+    const f = setup();
+    const result = await f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'sender', body: 'Design is ready.', deliverAt: 'todo', callId: 'c' });
+    expect(result).toMatchObject({ delivered: false, held: { columnId: 'todo' } });
     expect(f.delivery.deliver).not.toHaveBeenCalled();
+    expect(f.hold).toHaveBeenCalledTimes(1);
+    expect(f.hold.mock.calls[0]![1]).toMatchObject({ fromSessionId: 'sender-session', columnId: 'todo', body: 'Design is ready.' });
+  });
+
+  it('refuses a stage the workflow does not define', async () => {
+    const f = setup();
+    await expect(f.service.send({ senderSessionId: 'sender-session', targetTaskId: 'sender', body: 'Hi', deliverAt: 'missing', callId: 'c' }))
+      .rejects.toMatchObject({ code: 'STAGE_NOT_FOUND' });
   });
 });

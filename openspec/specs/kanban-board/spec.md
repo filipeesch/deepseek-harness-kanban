@@ -998,7 +998,7 @@ The Kanban configuration experience SHALL include a General section that is pres
 
 ### Requirement: Run a stage instruction from a card
 
-When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker, and a successful stage-instruction delivery for that entry SHALL clear it as well. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL deliver the stage's entry instruction to the task's first open conversation in conversation order as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the worktree choice defined by Execution preparation before a task's first execution; answering it SHALL start the run, which SHALL admit the worktree creation in the background, create a conversation once the worktree is ready, and admit the instruction to that conversation. When no conversation is open after that preparation, the action SHALL create a new conversation and use that conversation as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The delivered context message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
+When a task's current stage has an entry instruction, its card SHALL expose a run action only while the current entry into that stage is unresolved. The entry SHALL be unresolved when a persisted entry marker exists for the current stage and no successful user prompt has been sent in any open conversation of the task since that entry. The marker SHALL be created on every move into an instructed stage, including a task created directly in an instructed initial stage. A same-stage reorder SHALL NOT reset the marker; leaving and re-entering the stage SHALL create a new marker. A successful user prompt in any open conversation SHALL clear the marker, and a successful stage-instruction delivery for that entry SHALL clear it as well. An admission failure SHALL NOT clear it. A task already in an instructed stage without a marker SHALL NOT show the action until its next entry. While the timed instruction for the entry is counting down or being sent, the card SHALL expose the countdown control defined by the Timed stage instruction after a move requirement instead of the run action; canceling that countdown or a failed timed send SHALL expose the run action for the same unresolved entry. When visible, the action SHALL deliver the stage's entry instruction to the conversation that owns the stage — the declared agent's conversation when the stage names an agent, and the task's main conversation otherwise — as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. When the task has no conversation, activating the action SHALL first present the worktree choice defined by Execution preparation before a task's first execution; answering it SHALL start the run, which SHALL admit the worktree creation in the background, create the conversation that owns the stage once the worktree is ready, and admit the instruction to that conversation. When no conversation that the stage owns is open after that preparation, the action SHALL create that conversation and use it as the target. The action SHALL carry the entry identity it was displayed for — the entry's stage and entry timestamp — and the host SHALL reject a request for an entry that has been resolved or replaced. The action SHALL NOT move the task or change its position, SHALL NOT offer a conversation picker, and SHALL NOT be available in selection mode. It SHALL be unavailable while the task has an unresolved context operation or confirmed transition. The delivered context message SHALL contain the stage instruction and, when it applies, the transition briefing; the conversation's first-turn task context supplies the task context. Admission failures SHALL be reported without changing the stage or position and without creating another conversation beyond the resolved target.
 
 This action and its unresolved-instruction marker SHALL remain specific to agent entry instructions. An entry owned by durable scripted activation or control state SHALL instead expose its own applicable Stop and Play controls, whose availability SHALL NOT be cleared by an ordinary conversation prompt or by a later saved change to the stage mode. While that scripted ownership remains, a newly saved agent instruction SHALL NOT expose an agent stage-run action or countdown for that entry. Play SHALL be available only when the latest saved configuration is valid scripted configuration; otherwise the interface SHALL explain that scripted configuration or a new stage entry is required and SHALL NOT silently start an agent or manual-mode execution. A pending scripted handoff SHALL be included as its own identified block in an agent instruction delivery as defined by `task-conversations`; it SHALL NOT replace the instruction or be recast as an agent-declared transition reason.
 
@@ -1063,9 +1063,16 @@ This action and its unresolved-instruction marker SHALL remain specific to agent
 
 #### Scenario: Run an instruction from a card
 
-- **WHEN** the user activates the run action on a card whose stage has an entry instruction and whose first conversation is open
-- **THEN** the stage instruction is delivered to that first open conversation as a stage-instruction context message
+- **WHEN** the user activates the run action on a card whose stage has an entry instruction, names no agent, and whose first conversation is open
+- **THEN** the stage instruction is delivered to that main conversation as a stage-instruction context message
 - **AND** no user message records the instruction
+- **AND** the task's stage and position are unchanged
+- **AND** no conversation picker is presented
+
+#### Scenario: Run an instructed agent stage from a card
+
+- **WHEN** the user activates the run action on a card whose stage names an agent
+- **THEN** the stage instruction is delivered to that agent's conversation as a stage-instruction context message
 - **AND** the task's stage and position are unchanged
 - **AND** no conversation picker is presented
 
@@ -1515,7 +1522,7 @@ When a user requests a transition that the active board's workflow does not perm
 
 ### Requirement: Timed stage instruction after a move
 
-When a permitted move changes a task's stage to a stage with an entry instruction, or a task created directly in an instructed initial stage completes the automatic first-execution preparation defined by Automatic first execution on task creation, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops, drawer stage changes, and the automatic creation preparation. It SHALL NOT be armed for a same-stage reorder, for a creation whose Start execution now option is disabled, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the first conversation exists, which for a task that needed a worktree SHALL be after the background worktree creation is ready; the countdown SHALL NOT be armed from a conversation that does not exist yet. The target SHALL be the task's first open conversation in conversation order; when no conversation is open, the system SHALL create a new conversation and use it. When the five seconds elapse without cancellation, the system SHALL deliver that stage's entry instruction to the target as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed delivery SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
+When a permitted move changes a task's stage to a stage with an entry instruction, or a task created directly in an instructed initial stage completes the automatic first-execution preparation defined by Automatic first execution on task creation, the system SHALL arm one five-second countdown for that entry. The countdown SHALL be armed for board drops, drawer stage changes, and the automatic creation preparation. It SHALL NOT be armed for a same-stage reorder, for a creation whose Start execution now option is disabled, or for a move into a stage without an entry instruction. When the task has no conversation, the countdown SHALL be armed only after the first conversation exists, which for a task that needed a worktree SHALL be after the background worktree creation is ready; the countdown SHALL NOT be armed from a conversation that does not exist yet. The target SHALL be the conversation that owns the stage: the declared agent's conversation when the stage names an agent, and the task's main conversation otherwise. When no such conversation is open, the system SHALL create it and use it. When the stage names an agent whose preset the running host does not offer, the send fails into the held entry defined by Stage entry held while its agent preset is unavailable: the entry stays unresolved, the card names the missing preset, and the card exposes the run action. When the five seconds elapse without cancellation, the system SHALL deliver that stage's entry instruction to the target as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies. Cancel SHALL stop only the automatic send: the task's stage, position, and unresolved entry SHALL remain, and the card's run action SHALL be available. A new instructed entry for the task SHALL replace the pending countdown for the previous entry. The countdown SHALL be canceled without sending when a successful user prompt resolves the entry, when the task is deleted, or when the entry marker is removed for any other reason. The card SHALL present the countdown as a control that cancels when activated. The drawer for the task SHALL present a matching countdown notice above its section panel with the same cancel action. Both notices SHALL identify the stage whose instruction will run. A countdown SHALL continue when its card is not rendered, when the Kanban panel is not visible, or when the user switches to another board or Hub. The automatic send SHALL NOT depend on the board that armed it being mounted or visible. Unsent composer text or attachments in the target conversation SHALL NOT prevent the send and SHALL remain unchanged. The countdown SHALL NOT be persisted: a reload or plugin restart SHALL send nothing and SHALL leave the entry unresolved with its run action available. A failed timed delivery SHALL stop the countdown, report the failure on the card and in the drawer notice, restore the run action for the unresolved entry, and SHALL NOT retry automatically. When admission reports that the entry was already resolved, the countdown SHALL end without reporting a failure. The delay SHALL be fixed at five seconds and SHALL NOT be configurable.
 
 This countdown SHALL remain specific to agent entry instructions and SHALL NOT schedule scripted polling or delay a scripted entry. When an agent entry has a pending scripted handoff, its message SHALL include that identified handoff block in the order defined by `task-conversations`, in addition to the instruction and applicable briefing. The countdown's non-durable reload behavior SHALL NOT stop or redefine the separate durable recovery of scripted programs.
 
@@ -1548,7 +1555,7 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 
 #### Scenario: Send only the instruction on expiry
 - **WHEN** the five-second countdown ends without cancellation
-- **THEN** the stage's entry instruction and any pending scripted handoff are delivered to the task's first open conversation as a stage-instruction context message, followed by the transition briefing when the stage configures two or more targets
+- **THEN** the stage's entry instruction and any pending scripted handoff are delivered to the conversation that owns the stage as a stage-instruction context message, followed by the transition briefing when the stage configures two or more targets
 - **AND** the unresolved entry is resolved
 - **AND** no conversation picker or confirmation is presented
 
@@ -1558,10 +1565,16 @@ This countdown SHALL remain specific to agent entry instructions and SHALL NOT s
 - **AND** the briefing is derived at the moment of sending
 
 #### Scenario: Create a conversation when none is open
-- **WHEN** the countdown ends and every task conversation is closed
-- **THEN** a new conversation is created and becomes the target
+- **WHEN** the countdown ends and no conversation that owns the stage is open
+- **THEN** the conversation that owns the stage is created and becomes the target
 - **AND** the stage's entry instruction and any pending scripted handoff are delivered to that new conversation
 - **AND** the task's stage and position are unchanged
+
+#### Scenario: Hold an unavailable preset instead of starting an agent
+- **WHEN** a move enters a stage that names an agent whose preset the running host does not offer
+- **THEN** no conversation is created and no instruction is delivered
+- **AND** the entry remains unresolved with its held status
+- **AND** the card presents the held entry and its run action
 
 #### Scenario: Cancel from the card
 - **WHEN** the user activates the card's countdown control before it ends
@@ -1927,9 +1940,9 @@ The completed-turn trigger, future-advance control, and resume behavior describe
 - **AND** only its own entry, Stop, Play, recovery, and result rules control that execution
 
 ### Requirement: Automatic advance after a completed turn
-When a conversation of a task whose auto mode is enabled or whose ordinary reason-carrying recorded transition resolves, or whose eligible exceptional recorded transition belongs to that conversation and turn, ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, and the task does not carry the pause requested by the agent, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
+When the conversation that owns the task's current stage — the declared agent's conversation when the stage names an agent, and the main conversation otherwise — of a task whose auto mode is enabled or whose ordinary reason-carrying recorded transition resolves, or whose eligible exceptional recorded transition belongs to that conversation and turn, ends a turn whose reason is `completed`, and no open conversation of the task is running a turn, and the task has no pending user work as defined by Pending user work, and the task does not carry the pause requested by the agent, the host SHALL admit exactly one automatic advance. The host SHALL perform the advance without requiring the board to be mounted, without a confirmation, without a conversation picker, and without arming the timed stage instruction. An admitted advance SHALL be durable: reloading the board SHALL NOT cancel it, and a host restart SHALL dispatch it when it had not been dispatched.
 
-The host SHALL evaluate pending user work when the completed turn ends and SHALL re-evaluate it when the advance is admitted, and SHALL NOT admit the advance when pending user work exists at either evaluation. Consuming pending user work SHALL NOT itself move the task; only an observed completed turn triggers an advance. An ordinary blocked advance SHALL NOT record a pause and SHALL NOT be dropped silently: the task SHALL present the held state defined by Auto mode on a task card, and the next completed turn SHALL re-evaluate the task.
+A completed turn of any other conversation of the task SHALL NOT arm an advance, while it still counts as a running or waiting conversation for the holds below. The host SHALL evaluate pending user work when the completed turn ends and SHALL re-evaluate it when the advance is admitted, and SHALL NOT admit the advance when pending user work exists at either evaluation. Consuming pending user work SHALL NOT itself move the task; only an observed completed turn triggers an advance. An ordinary blocked advance SHALL NOT record a pause and SHALL NOT be dropped silently: the task SHALL present the held state defined by Auto mode on a task card, and the next completed turn SHALL re-evaluate the task.
 
 A turn ending for any other reason SHALL NOT advance the task. The host SHALL NOT admit an advance while the task has an unresolved context operation, an unresolved confirmed transition, or an unresolved entry for its current stage; those conditions SHALL NOT be recorded as a pause and the next completed turn SHALL re-evaluate them. The host SHALL NOT admit an advance while the task carries the agent-requested pause defined by Agent-requested task pause; that pause SHALL NOT be recorded again or cleared by the evaluation, and a later completed turn SHALL re-evaluate it without advancing.
 
@@ -1940,8 +1953,13 @@ The host SHALL NOT replay a turn that ended while it was not observing the task'
 This trigger SHALL NOT advance a task out of an entry owned by durable scripted activation or control state, including an entry waiting for trust, running, stopped, failed, or awaiting result delivery. That ownership SHALL NOT be recomputed from a later saved YAML mode: switching the saved stage to agent or manual mode SHALL NOT enable a conversation turn to bypass the captured run or its stopped state. A completed turn from one of its conversations SHALL NOT replace the named result of that entry or restart its program. The no-catch-up rule above SHALL remain a rule about unobserved conversation turns; automatic recovery of a previously active scripted run SHALL follow `scripted-steps` without replaying a conversation turn.
 
 #### Scenario: Advance after a completed turn
-- **WHEN** the only open conversation of an armed task ends a completed turn and the task has no pending user work
+- **WHEN** the conversation that owns the current stage of an armed task ends a completed turn and the task has no pending user work
 - **THEN** one automatic advance is admitted
+
+#### Scenario: Do not arm from a conversation that does not own the stage
+- **WHEN** a conversation of the task other than the one that owns its current stage ends a completed turn
+- **THEN** no advance is admitted
+- **AND** the task remains in its current stage
 
 #### Scenario: Do not advance after a non-completed turn
 - **WHEN** a turn ends as `error`, `blocked`, `aborted`, or `max-tokens`
@@ -2057,7 +2075,7 @@ When the destination is the recorded transition, the advance SHALL move the task
 
 An ordinary recorded transition that no longer resolves SHALL NOT be replaced by the default destination. In that case the host SHALL NOT advance the task. When the task's auto mode is enabled, the host SHALL pause auto mode with the `transition-stale` reason defined by Auto mode on a task card; a task whose auto mode is disabled SHALL stay in its stage without recording a pause. An ineligible or invalidated exceptional recording SHALL NOT become a default destination, and normal auto-mode behavior remains independent after it is gone.
 
-The task SHALL be placed at the top of the destination stage, before every card that stage already contains. When the destination has an entry instruction, that instruction SHALL be delivered to the task's first open conversation as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the reason the recorded transition carried and then by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies; when no conversation is open, a new conversation SHALL be created and used as the target. The delivered context message SHALL contain the stage instruction, the declared reason when one applies, and, when it applies, the briefing. An advance that consumed no recorded reason SHALL deliver no reason block. The advance SHALL NOT create more than one conversation beyond that target. The destination entry SHALL remain unresolved until a prompt or a stage instruction is delivered.
+The task SHALL be placed at the top of the destination stage, before every card that stage already contains. When the destination has an entry instruction, that instruction SHALL be delivered to the conversation that owns the destination stage — the declared agent's conversation when that stage names an agent, and the task's main conversation otherwise — as the stage-instruction context message defined by Stage instruction delivery as context in `task-conversations`, followed by the reason the recorded transition carried and then by the transition briefing defined by Transition briefing for an instructed stage when that briefing applies; when no conversation that the destination stage owns is open, that conversation SHALL be created and used as the target. The delivered context message SHALL contain the stage instruction, the declared reason when one applies, and, when it applies, the briefing. An advance that consumed no recorded reason SHALL deliver no reason block. The advance SHALL NOT create more than one conversation beyond that target. The destination entry SHALL remain unresolved until a prompt or a stage instruction is delivered.
 
 A scripted destination SHALL admit its own authorized execution rather than create a conversation or consume an agent instruction marker. A named scripted result SHALL resolve exactly through the captured exit mapping of its execution, SHALL NOT select the first exit as a default, and SHALL NOT cross an intermediate manual or scripted destination to reach a later instructed stage. Protected destinations SHALL remain protected: the script SHALL NOT supply a destination or use a human-only override, and a missing or invalid authorized destination SHALL produce a visible failure instead of a fallback. A valid destination agent instruction SHALL additionally carry the scripted handoff defined by `task-conversations`, without mislabeling it as a recorded agent reason. For a scripted result, route authority SHALL come from the approved mapping captured by that execution, not a later authored allowed-target set. Editing an active exit from one destination to another SHALL not change or invalidate the approved captured destination merely because the latest configuration differs. Routing SHALL resolve the captured destination to the same stable stage after an identifier rename and SHALL reject identifier reuse by a different stage. It SHALL still validate the current entry and run, destination existence and stable identity, task context, and pending user work; it SHALL not use a generic human transition override to bypass those checks.
 
@@ -2151,14 +2169,20 @@ A scripted destination SHALL admit its own authorized execution rather than crea
 
 #### Scenario: Target the first open conversation
 
-- **WHEN** an advance with an instructed destination is dispatched and the task has open conversations
-- **THEN** the first open conversation receives the instruction
+- **WHEN** an advance with an instructed destination that names no agent is dispatched and the task has open conversations
+- **THEN** the main conversation receives the instruction
 - **AND** no conversation picker is presented
+
+#### Scenario: Target the agent conversation of the destination
+
+- **WHEN** an advance is dispatched to an instructed destination that names an agent
+- **THEN** that agent's conversation receives the instruction
+- **AND** the main conversation receives nothing
 
 #### Scenario: Create the target conversation
 
-- **WHEN** an advance with an instructed destination is dispatched and the task has no open conversation
-- **THEN** one new conversation is created and receives the instruction
+- **WHEN** an advance with an instructed destination is dispatched and the task owns no open conversation the destination stage needs
+- **THEN** exactly the conversation the destination stage needs is created and receives the instruction
 - **AND** no additional conversation is created
 
 #### Scenario: Keep a failed destination entry unresolved
@@ -3277,45 +3301,40 @@ The active board's header SHALL present a mark-all-read action. The action SHALL
 
 ### Requirement: Board default model
 
-Each board's workflow SHALL accept an optional root model mapping that names the model the
-board's new conversations start on. The mapping SHALL carry a provider and a model, and MAY carry
-a reasoning effort. A workflow without the mapping SHALL keep today's behavior and start those
-conversations on the deployment default. The mapping SHALL be validated with the same accepted
-workflow semantics as the rest of the workflow: a mapping whose provider or model is missing or
-empty, whose reasoning effort is empty, or that carries a field the workflow does not define
-SHALL be rejected as invalid and SHALL NOT replace the last valid workflow. The board's stored
-parsed workflow and its authored YAML SHALL agree on the mapping, in the same way they agree on
-every other workflow field. The board's default model SHALL be part of the workflow's meaning and
-SHALL NOT be part of its layout. The board's default model SHALL be stored in the board's
-workflow and SHALL NOT be stored in a board setting outside it.
+Each board's workflow SHALL accept an optional model mapping on the main agent that names the model the board's main conversation starts on, and SHALL keep accepting a legacy root model mapping for the same purpose while the document authors no `agents` section. The mapping SHALL carry a provider and a model, and MAY carry a reasoning effort. A board whose workflow names neither mapping SHALL start its main conversation on the deployment default. The mapping SHALL be validated with the same accepted workflow semantics as the rest of the workflow: a mapping whose provider or model is missing or empty, whose reasoning effort is empty, or that carries a field the workflow does not define SHALL be rejected as invalid and SHALL NOT replace the last valid workflow. The board's stored parsed workflow and its authored YAML SHALL agree on the mapping, in the same way they agree on every other workflow field. An agent's model SHALL be part of the workflow's meaning and SHALL NOT be part of its layout. A model SHALL be stored in the board's workflow and SHALL NOT be stored in a board setting outside it.
 
 #### Scenario: Accept a board default model
 
-- **WHEN** a workflow configures a root model mapping with a provider, a model, and a reasoning effort
-- **THEN** the configuration is accepted and the board keeps that model as its default
+- **WHEN** a workflow declares a main agent with a model mapping that carries a provider, a model, and a reasoning effort
+- **THEN** the configuration is accepted and the board's main conversation keeps that model as its default
 - **AND** the stored parsed workflow and the authored YAML agree
+
+#### Scenario: Accept the legacy root model mapping
+
+- **WHEN** a workflow authors no `agents` section and authors a root model mapping
+- **THEN** the configuration is accepted and the board's main conversation keeps that model as its default
 
 #### Scenario: Keep the deployment default when the field is absent
 
-- **WHEN** a workflow configures no root model mapping
+- **WHEN** a workflow names no model for the main agent and authors no root model mapping
 - **THEN** the configuration is accepted
 - **AND** the board has no default model of its own
 
 #### Scenario: Reject a model mapping without a model
 
-- **WHEN** a workflow configures a root model mapping whose model is missing or empty
+- **WHEN** a workflow configures an agent model mapping whose model is missing or empty
 - **THEN** the configuration is rejected as invalid
 - **AND** the last valid workflow remains in effect
 
 #### Scenario: Reject an unsupported field in the model mapping
 
-- **WHEN** a workflow configures a root model mapping that carries a field the workflow does not define
+- **WHEN** a workflow configures an agent model mapping that carries a field the workflow does not define
 - **THEN** the configuration is rejected as invalid
 - **AND** the last valid workflow remains in effect
 
 #### Scenario: Count a model change as a workflow change
 
-- **WHEN** a board's workflow differs from another version of that workflow only in its model mapping
+- **WHEN** a board's workflow differs from another version of that workflow only in an agent's model mapping
 - **THEN** that difference is a change to the workflow's meaning and not a layout difference
 
 ### Requirement: Board default model configuration
@@ -3494,50 +3513,55 @@ The active board SHALL present an approval queue while at least one card of that
 
 ### Requirement: Board default agent preset
 
-Each board's workflow SHALL accept an optional root `agent_preset` scalar naming the preset its new conversations start on. It SHALL be nonempty text, validated with the workflow, part of workflow meaning rather than layout, and consistent between parsed workflow and authored YAML. Invalid workflow fields or an empty preset SHALL NOT replace the last valid workflow. An authored preset SHALL take precedence over board-default metadata. A stored preset unavailable on the host SHALL remain stored and SHALL be reported as unavailable; host-default fallback SHALL remain available.
+Each board's workflow SHALL accept agents that name the preset their conversations start on, as defined by Board agents in the workflow document in `workflow-authoring`. The main agent's preset SHALL be the board's default agent preset for the main conversation. A document that authors no `agents` section SHALL keep accepting the legacy root `agent_preset` scalar for the same purpose, and that scalar SHALL take precedence over board-default metadata exactly as before. Invalid workflow fields or an empty preset SHALL NOT replace the last valid workflow. A stored preset unavailable on the host SHALL remain stored and SHALL be reported as unavailable; for the main conversation, host-default fallback SHALL remain available, and an agent conversation whose preset is unavailable SHALL hold its entry as defined by Stage entry held while its agent preset is unavailable.
 
-For a newly created board without an authored preset or explicit user choice, the product SHALL record a versioned implicit workflow-operator selection in board-owned shareable metadata separate from authored YAML. A user-selected host default SHALL be persisted as an explicit distinct choice; legacy absence on an existing board SHALL continue to mean host default. Imported or received already-authored boards SHALL NOT be reclassified as newly created. The effective choice and its origin SHALL be visible in board settings. These selections SHALL be preserved in schema validation, revisions, publication, synchronization, replay, conflict handling, and recovery; incompatible peers SHALL fail explicitly rather than discard them. No existing conversation or other board SHALL be changed by editing the choice.
+For a newly created board whose document authors no `agents.main` and no root `agent_preset`, the product SHALL record a versioned implicit workflow-operator selection in board-owned shareable metadata separate from authored YAML. A user-selected host default SHALL be persisted as an explicit distinct choice; legacy absence on an existing board SHALL continue to mean host default. A document that authors `agents.main` SHALL take that entry as the effective choice: without a preset it is an explicit host default, and with a preset it names that preset; the board metadata SHALL then no longer decide the choice, and the guarded write that authored the entry SHALL retire it. Imported or received already-authored boards SHALL NOT be reclassified as newly created. The effective choice and its origin SHALL be visible in board settings. These selections SHALL be preserved in schema validation, revisions, publication, synchronization, replay, conflict handling, and recovery; incompatible peers SHALL fail explicitly rather than discard them. No existing conversation or other board SHALL be changed by editing the choice.
 
 #### Scenario: Accept a board default agent preset
 
-- **WHEN** a workflow configures a root `agent_preset` with a preset identity
+- **WHEN** a workflow declares `main` with a preset identity
 - **THEN** the configuration is accepted and the board keeps that preset as its default
 - **AND** the stored parsed workflow and the authored YAML agree
 
 #### Scenario: Keep the host default when the field is absent
 
-- **WHEN** an existing legacy board has no root `agent_preset` and no board-default selection metadata
+- **WHEN** an existing legacy board authors no `agents.main`, no root `agent_preset`, and no board-default selection metadata
 - **THEN** the configuration is accepted
-- **AND** the board names no default agent preset of its own and new conversations use the host default
+- **AND** the board names no default agent preset of its own and the main conversation uses the host default
+
+#### Scenario: Accept the legacy root scalar
+
+- **WHEN** a workflow authors no `agents` section and authors a root `agent_preset` scalar
+- **THEN** the board keeps that preset as the default of its main conversation
 
 #### Scenario: Reject an empty preset
 
-- **WHEN** a workflow configures a root `agent_preset` that is empty or blank
+- **WHEN** a workflow configures an agent preset that is empty or blank
 - **THEN** the configuration is rejected as invalid
 - **AND** the last valid workflow remains in effect
 
 #### Scenario: Count a preset change as a workflow change
 
-- **WHEN** a board's workflow differs from another version of that workflow only in its `agent_preset`
+- **WHEN** a board's workflow differs from another version of that workflow only in an agent's preset
 - **THEN** that difference is a change to the workflow's meaning and not a layout difference
 
 #### Scenario: Preserve a stored preset the host no longer offers
 
-- **WHEN** a board stores an `agent_preset` that is absent from the running host's roster
+- **WHEN** a board stores an agent preset that is absent from the running host's roster
 - **THEN** the stored value remains in the workflow
 - **AND** the board configuration does not remove or rewrite it
 
 #### Scenario: Default a new board without rewriting custom YAML
 
-- **WHEN** a new board is created with custom YAML without an authored preset or other explicit selection
+- **WHEN** a new board is created with custom YAML without an authored main agent or other explicit selection
 - **THEN** versioned shareable board metadata selects the workflow operator implicitly
 - **AND** the supplied YAML bytes remain exact and an `expect_sha256` check and dry run use that exact document
 
 #### Scenario: Honor an explicit authored or host-default choice
 
-- **WHEN** a board is created with an authored preset or the user explicitly selects the host default
-- **THEN** that explicit selection takes precedence over the implicit operator default
-- **AND** explicit host default remains distinguishable from legacy absence
+- **WHEN** a board authors `main` with a preset or authors `main` without one
+- **THEN** the authored entry decides the effective choice over the implicit operator default
+- **AND** `main` without a preset remains distinguishable from legacy absence
 
 #### Scenario: Preserve shared and imported defaults
 
@@ -3548,62 +3572,97 @@ For a newly created board without an authored preset or explicit user choice, th
 
 ### Requirement: Board default agent preset configuration
 
-The Defaults sub-section of the board configuration SHALL present the agent preset the board's new
-conversations start on, as a list of the presets the host reports as available, each with its name
-and description, together with an explicit option that keeps the host default preset. Choosing the
-host default preset SHALL remove the root `agent_preset` from the board's authored workflow YAML and persist an explicit host-default choice in board metadata.
-Choosing an available preset SHALL store that preset identity as the root `agent_preset`, replacing any existing authored value. Choosing host default SHALL remove any existing authored preset. The explicit choice and corresponding metadata SHALL be updated atomically with the board's default model in the single guarded, reviewed write defined by Board default model configuration, preserving the text and comments outside the rewritten root fields. No conflicting implicit metadata SHALL override the explicit choice. This settings edit SHALL NOT be confused with new-board creation: creation with supplied custom YAML preserves that document's exact bytes and digest. A stored preset that the host does not report SHALL be presented as unavailable and SHALL be
-kept as the current choice. When the roster cannot be read, the sub-section SHALL report the failure
-with a retry action, SHALL keep presenting the stored preset, and SHALL NOT remove or rewrite it.
+The board configuration SHALL present the board's agents in its own Agents sub-section, with its own draft, its own save action, and its own leave guard; the Defaults sub-section SHALL keep only the MCP tool allowlist. The Agents sub-section SHALL present the agents as one collapsible list with the main agent pinned first and every row closed until the person opens it. A closed row SHALL already name the agent, its model, and its preset. An opened row SHALL present the name, the identifier, the model, and the preset, in that order. The identifier SHALL follow the name until the agent is first saved and SHALL be read-only afterwards. The main agent SHALL NOT be removable, and an agent a stage names SHALL NOT be removed: the row SHALL name the stages that use it. The surface SHALL present the presets the host reports with their names and descriptions and an explicit option that keeps the host default preset, SHALL present the host's native model selector for the main agent, and SHALL present the routes the host catalog reports, with the reasoning effort those routes report, for every other agent; a missing route SHALL mean the main agent's model. A stored preset or model that the host does not report SHALL remain presented and SHALL NOT be removed or rewritten. When the preset roster or the model catalog cannot be read, the surface SHALL report the failure with a retry action, SHALL keep presenting the stored values, and SHALL NOT remove or rewrite them.
+
+Editing this surface SHALL write one guarded workflow document with the revision the form was opened with, and SHALL NOT send a preset-choice hint: the authored `main` entry is the choice. Choosing an available preset SHALL store that identity on the agent; choosing the host default for the main agent SHALL store `main` without a preset; clearing an agent's model SHALL remove its model mapping. The write SHALL preserve the text and comments outside the fields it rewrites, SHALL NOT clear a stored field the person did not edit, and SHALL apply the same validation the board editor enforces. A document that authors no `agents` section SHALL gain one on this edit, materializing the effective main-agent choice and retiring the legacy root fields and the implicit-selection metadata. While the Workflow sub-section holds unsaved edits, the agents controls SHALL remain available for editing, saving SHALL be unavailable with an explanation and a way to open the Workflow sub-section, and nothing SHALL be written. This settings edit SHALL NOT be confused with new-board creation: creation with supplied custom YAML preserves that document's exact bytes and digest.
+
+#### Scenario: List the board's agents
+
+- **WHEN** the Agents sub-section opens for a board that declares a main agent and another agent
+- **THEN** every row is closed and the main agent is listed first and cannot be removed
+- **AND** each closed row names the agent, its model, and its preset
+- **AND** opening a row presents the name, the identifier, the model, and the preset in that order
+
+#### Scenario: Add an agent
+
+- **WHEN** the person adds an agent, types its name, and saves
+- **THEN** the identifier follows the name until that first save
+- **AND** the board's authored workflow YAML declares that agent with that identifier
+- **AND** the text and comments outside the rewritten fields are unchanged
+
+#### Scenario: Remove an agent no stage names
+
+- **WHEN** the person removes an agent that no stage references and saves
+- **THEN** the authored workflow YAML no longer declares that agent
+- **AND** every stage and agent that remains is unchanged
+
+#### Scenario: Refuse to remove the main agent or a referenced agent
+
+- **WHEN** the surface is asked to remove the main agent, or an agent a stage still references
+- **THEN** the removal is unavailable and the surface names the stages that use it
+- **AND** nothing is written
 
 #### Scenario: Choose an available preset
 
-- **WHEN** the user chooses an available preset in the Defaults sub-section and saves
-- **THEN** the board's authored workflow YAML carries that identity as the root `agent_preset`
-- **AND** the text and comments outside that field are unchanged
+- **WHEN** the user chooses an available preset for an agent and saves
+- **THEN** the board's authored workflow YAML carries that identity on that agent
+- **AND** the text and comments outside those fields are unchanged
 
 #### Scenario: Keep the host default preset
 
-- **WHEN** the user chooses the option that keeps the host default preset and saves
-- **THEN** the board's authored workflow YAML no longer carries a root `agent_preset`
-- **AND** the explicit host-default choice is stored in board metadata
-- **AND** the board's new conversations start on the host default preset
+- **WHEN** the user chooses the option that keeps the host default preset for the main agent and saves
+- **THEN** the authored `main` entry carries no preset
+- **AND** the board's main conversation starts on the host default preset
+- **AND** no legacy root `agent_preset` and no implicit selection decides it
 
 #### Scenario: Present a stored preset the host no longer offers
 
-- **WHEN** the board's stored preset is absent from the presets the host reports
-- **THEN** the Defaults sub-section presents the stored identity and states that it is unavailable
-- **AND** the stored preset is neither removed nor rewritten
+- **WHEN** an agent's stored preset or model is absent from what the host reports
+- **THEN** the surface presents the stored identity and states that it is unavailable
+- **AND** the stored value is neither removed nor rewritten
 
 #### Scenario: Report a roster failure with retry
 
-- **WHEN** the host's agent-preset roster cannot be read
-- **THEN** the Defaults sub-section reports the failure and offers a retry action
-- **AND** the stored preset remains presented and unchanged
+- **WHEN** the host's preset roster or model catalog cannot be read
+- **THEN** the surface reports the failure and offers a retry action
+- **AND** the stored values remain presented and unchanged
 
 #### Scenario: Replace an authored preset in settings
 
-- **WHEN** a board already has an authored root `agent_preset` and the user selects another available preset in settings
-- **THEN** one guarded reviewed write replaces the authored value and atomically updates the corresponding metadata
+- **WHEN** a board already authors a main-agent preset and the user selects another available preset and saves
+- **THEN** one guarded reviewed write replaces the authored value
 - **AND** the selected preset is effective without changing other YAML text or comments
 
 #### Scenario: Explicitly select host default over an authored preset
 
-- **WHEN** a board already has an authored root `agent_preset` and the user selects host default in settings
-- **THEN** one guarded reviewed write removes that field and atomically records the explicit host-default metadata
+- **WHEN** a board already authors a main-agent preset and the user selects the host default and saves
+- **THEN** one guarded reviewed write removes that preset from the main agent
 - **AND** new conversations use the host default rather than the removed preset or implicit operator
 
 #### Scenario: Show the effective default and origin
 
-- **WHEN** the Defaults sub-section opens for an implicit operator default, explicit choice, or legacy absence
-- **THEN** it shows the effective selection and its origin
-- **AND** a missing operator preset is reported as unavailable without rewriting the selection
+- **WHEN** the Agents sub-section opens for a document that authors no `main` entry and an implicit operator default, an explicit host default, a named preset, or a legacy root preset
+- **THEN** the main agent row presents the effective preset and model as its draft
+- **AND** a missing preset is presented as unavailable without rewriting the selection
+
+#### Scenario: Migrate a legacy document on this edit
+
+- **WHEN** the person saves this surface for a board whose document authors no `agents` section
+- **THEN** the stored document gains that section with the effective main-agent choice materialized
+- **AND** the legacy root fields and the implicit-selection metadata no longer decide the choice
+
+#### Scenario: Keep the defaults controls while the workflow is dirty
+
+- **WHEN** the Workflow sub-section holds unsaved edits and the user opens Agents
+- **THEN** the agent controls remain editable
+- **AND** saving is unavailable with an explanation and a way to open the Workflow sub-section
+- **AND** no write is sent and the workflow draft is untouched
 
 #### Scenario: Keep existing sessions and other boards unchanged
 
-- **WHEN** the user changes this board's preset choice
-- **THEN** other boards and existing conversations retain their choices
-- **AND** only future conversations use the new effective default
+- **WHEN** the user changes the board's agents
+- **THEN** other boards and existing conversations retain their presets and models
+- **AND** only conversations created afterwards use the new agent choices
 
 ### Requirement: Configuration sections and navigation
 
@@ -3854,3 +3913,102 @@ The board SHALL present a conversation that cannot be observed in the same statu
 
 - **WHEN** the person opens the conversation's card or reads its details
 - **THEN** the status remains presented until an observation of that conversation succeeds
+
+### Requirement: Agent conversation for an instructed stage
+
+When a permitted move, a timed instruction, a card run action, an automatic advance, or an automatic first-execution preparation needs to deliver the entry instruction of a stage that names an agent, the target SHALL be that agent's conversation in the task. The host SHALL create that conversation on first use in the task's current effective directory, with the agent's preset and model selected before its first turn and its native title set to the agent's name, SHALL add it to the task as an ordinary conversation, and SHALL present it in the task drawer. A conversation that already exists for that agent in the task SHALL be reused and SHALL keep its history; a conversation the person closed SHALL be reopened instead of replaced, and a conversation whose agent the workflow no longer names SHALL remain as an ordinary conversation with no binding.
+
+The conversation SHALL remain an ordinary task conversation: it counts for the task's pending user work and activity, it receives the task context and the stage notices every task conversation receives, and it is archived with the task. The stage instruction SHALL reach it as the same stage-instruction context message a shared stage delivers, with the same transition briefing, declared reason, and scripted handoff. Its preset SHALL stay locked after the first turn, so a later workflow edit to that agent's preset SHALL apply only to conversations created afterwards.
+
+The specialist SHALL route as any instructed agent stage does: it declares a transition, auto mode moves the task, or the person moves it. A completed turn of the agent conversation SHALL NOT move the task on its own while auto mode is disabled and no transition was declared.
+
+#### Scenario: Deliver an instructed agent stage to its conversation
+
+- **WHEN** a permitted move enters a stage that names an agent and has an entry instruction
+- **THEN** the instruction is delivered to that agent's conversation
+- **AND** the main conversation receives no instruction for that stage
+
+#### Scenario: Create the agent conversation with the preset and model
+
+- **WHEN** a stage that names an agent with a preset and a model is entered and the task has no conversation for that agent
+- **THEN** one conversation is created in the task's effective directory
+- **AND** it runs the agent's preset and model
+- **AND** its native title is the agent's name
+
+#### Scenario: Present the agent conversation in the drawer
+
+- **WHEN** the agent conversation is created for a stage that starts
+- **THEN** it is presented as a conversation tab of the task and opened in the task drawer
+
+#### Scenario: Reuse the conversation for a later stage that names the same agent
+
+- **WHEN** a task enters a second stage that names an agent it already has a conversation for
+- **THEN** the instruction is delivered to that existing conversation
+- **AND** its history is preserved and no second conversation is created
+
+#### Scenario: Reopen a closed agent conversation
+
+- **WHEN** a stage that names an agent needs its conversation and the person had closed it
+- **THEN** the same conversation is reopened
+- **AND** its history is preserved
+
+#### Scenario: Keep the conversation after the workflow stops naming the agent
+
+- **WHEN** a workflow edit removes or renames the agent a conversation was created for
+- **THEN** the conversation remains an ordinary conversation of the task
+- **AND** it is not closed, archived, or removed by the edit
+
+#### Scenario: Prepare the first execution in an agent initial stage
+
+- **WHEN** a task is created directly in an initial stage that names an agent and the automatic first-execution preparation runs
+- **THEN** the conversation the preparation creates is that agent's conversation
+- **AND** it runs the agent's preset and model
+
+#### Scenario: Do not advance on a completed turn without a declaration
+
+- **WHEN** the agent conversation ends a completed turn, auto mode is disabled, and no transition was declared
+- **THEN** no advance is admitted
+- **AND** the task remains in its current stage
+
+### Requirement: Stage entry held while its agent preset is unavailable
+
+When the conversation a stage entry needs names an agent whose preset the running host does not offer, the host SHALL NOT create the conversation and SHALL NOT deliver the instruction. The entry SHALL remain unresolved, the card's status region SHALL present a status that names the agent and its missing preset, and the stage's run action SHALL remain available to retry. The host SHALL record no automatic-mode pause, SHALL keep auto mode as it was, and SHALL NOT retry automatically.
+
+A retry SHALL apply the same creation and admission rules as the first attempt, and a successful retry SHALL resolve the entry through the ordinary admission, so a failed attempt leaves the entry held rather than lost. When the agent's model is unavailable while its preset is offered, the entry SHALL proceed: the conversation SHALL be created on the main agent's model and then on the deployment default, and the fallback SHALL be reported on the card and in the conversation.
+
+#### Scenario: Hold the entry instead of running another agent
+
+- **WHEN** a task enters a stage whose agent names a preset the running host does not offer
+- **THEN** no conversation is created and no instruction is delivered
+- **AND** the entry remains unresolved
+- **AND** the card presents a status naming the agent and the missing preset
+
+#### Scenario: Retry after the preset is installed
+
+- **WHEN** the person activates the run action after the missing preset becomes available
+- **THEN** the agent conversation is created and the instruction is delivered
+- **AND** the entry is resolved through the ordinary admission
+
+#### Scenario: Record no pause and no automatic retry
+
+- **WHEN** the entry is held for a missing preset
+- **THEN** no automatic-mode pause is recorded
+- **AND** the host does not retry the delivery on its own
+
+#### Scenario: Fall back to the main agent's model
+
+- **WHEN** the agent's preset is available and its declared model is not offered by the running host
+- **THEN** the conversation is created on the main agent's model
+- **AND** the fallback is reported on the card and in the conversation
+
+#### Scenario: Fall back to the deployment default model
+
+- **WHEN** neither the agent's model nor the main agent's model is offered by the running host
+- **THEN** the conversation is created on the deployment default model
+- **AND** the fallback is reported on the card and in the conversation
+
+#### Scenario: Keep the entry after a failed attempt
+
+- **WHEN** a send to an agent stage fails because its agent preset is unavailable
+- **THEN** the entry remains unresolved and the card exposes the run action
+- **AND** the task keeps its stage and auto mode unchanged

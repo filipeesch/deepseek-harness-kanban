@@ -15,6 +15,7 @@ import { DecisionDock } from '../../src/client/decision-dock.js';
 import { DockStrip } from '../../src/client/dock-seat.js';
 import { DecisionWindowController } from '../../src/client/decision-window.js';
 import { StageEditorDialog } from '../../src/client/stage/stage-editor-dialog.js';
+import { BoardConfigurationOverlay } from '../../src/client/settings/boards/board-overlay.js';
 import { AutoRunController } from '../../src/client/auto-run.js';
 import { autoModeView } from '../../src/client/auto-mode.js';
 import { EMPTY_ATTENTION } from '../../src/shared/types.js';
@@ -750,6 +751,69 @@ function PreparingCardScenario() {
   </div>;
 }
 
+/** Two cards of an agent board: one waiting for its agent preset, one reporting a model fallback. */
+function AgentStatusCardsScenario() {
+  const base = harness.snapshot().state.hubs[0]!.tasks[0]!;
+  const column: Column = { id: 'design', name: 'Design', agent: 'designer', onEnterPrompt: 'Design it.' };
+  const waiting: Task = { ...base, id: 'waiting-agent', title: 'Waiting for the designer', columnId: 'design', position: 0, operation: null, pendingTransition: undefined, sessionIds: [], closedSessionIds: [], worktree: null, instructionPending: { columnId: 'design', enteredAt: 7, hold: { code: 'agent-preset-unavailable', agent: 'designer', preset: 'ux-design' } } };
+  const fallback: Task = { ...base, id: 'fallback-agent', title: 'Designer on another model', columnId: 'design', position: 1, operation: null, pendingTransition: undefined, sessionIds: ['s-fallback'], closedSessionIds: [], worktree: null, sessionRoles: { 's-fallback': { agent: 'designer', modelFallback: { requested: { provider: 'deepseek', model: 'reason' }, inUse: { provider: 'deepseek', model: 'chat' } } } } };
+  const [autoRun] = useState(() => new AutoRunController({ run: async () => harness.snapshot() }));
+  return <div className="dsh-kanban" style={{ display: 'grid', gap: 18, alignContent: 'start', padding: 24, width: 460 }}>
+    {[waiting, fallback].map(task => <TaskCard key={task.id} task={task} column={column} projectName="API" attention={EMPTY_ATTENTION} selectionMode={false} selected={false}
+      autoRun={autoRun}
+      autoMode={autoModeView(task, { name: 'Flow', initialColumnId: 'design', columns: [column], groups: [] })}
+      onToggleAutoMode={() => {}} onOpen={() => {}} onToggleSelect={() => {}} onBeginDrag={() => {}} shouldSuppressClick={() => false} />)}
+  </div>;
+}
+
+/** A board whose workflow declares an agent and binds a stage to it. */
+const AGENT_BOARD_YAML = [
+  'name: Agent board',
+  'initial_column: backlog',
+  'agents:',
+  '  - id: main',
+  '    name: Main',
+  '  - id: designer',
+  '    name: UX Design',
+  '    preset: standard',
+  'columns:',
+  '  - id: backlog',
+  '    label: Backlog',
+  '  - id: design',
+  '    label: Design',
+  '    agent: designer',
+  '    on_enter_prompt: |',
+  '      Design the feature and record the result.',
+  '  - id: done',
+  '    label: Done',
+  '',
+].join(String.fromCharCode(10));
+
+/** The stage editor opened on a stage that names an agent. */
+function AgentStageEditorScenario() {
+  const columns: Column[] = [
+    { id: 'design', name: 'Design', agent: 'designer', onEnterPrompt: 'Design the feature and record the result.' },
+    { id: 'done', name: 'Done' },
+  ];
+  return <StageEditorDialog hubId="hub" boardId="board" revision={1} initialStageId="design" column={columns[0]!} columns={columns}
+    agents={[{ id: 'main', name: 'Main' }, { id: 'designer', name: 'UX Design', preset: 'standard' }]}
+    tasks={[]} attention={{}} api={harness.api}
+    run={async () => harness.snapshot()}
+    onClose={() => {}} onSaved={() => {}} />;
+}
+
+/** The board configuration opened on a board that declares an agent. */
+function AgentDefaultsScenario() {
+  const workflow = parseWorkflow(AGENT_BOARD_YAML);
+  const board = { id: 'board', name: 'Agent board', workflowYaml: AGENT_BOARD_YAML, workflow, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+  const hub = { id: 'hub', name: 'Harness Hub', revision: 3, projects: [], boards: [board], tasks: [], notes: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+  const source = useMemo<AgentPresetPortSource>(() => ({ getSnapshot: () => harnessPresetPort, subscribe: () => () => {} }), []);
+  // The real overlay is the faithful frame: its dialog owns the padding, the header, and
+  // the tab row, so a screenshot of the panel alone would misreport the spacing.
+  return <AgentPresetProvider source={source}><BoardConfigurationOverlay boardId={board.id} hub={hub} run={async () => harness.snapshot()} api={harness.api}
+    nativeSeat={stubNativeSeat()} onClose={() => {}} /></AgentPresetProvider>;
+}
+
 /** The stage editor opened on a stage that authors a decision gate. */
 function DecisionEditorScenario() {
   const columns: Column[] = [
@@ -812,6 +876,9 @@ function App() {
   if (scenario === 'board-model' || scenario === 'board-mcp') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario seat={stubNativeSeat()} /></div></>;
   if (scenario === 'board-model-no-seat') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><WorkflowScenario /></div></>;
   if (scenario === 'board-preset' || scenario === 'board-preset-notice') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardModelNoticeScenario /></>;
+  if (scenario === 'agent-stage-editor') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><AgentStageEditorScenario /></>;
+  if (scenario === 'agent-status-cards') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><AgentStatusCardsScenario /></>;
+  if (scenario === 'board-agents') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><AgentDefaultsScenario /></div></>;
   if (scenario === 'board-model-notice') return <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><BoardModelNoticeScenario /></>;
   if (flowScenario) return themed
     ? <><style>{themeFixture}</style><style>{styles}</style><ThemeSync /><div className="dsh-kanban" style={{ height: '100%' }}><BoardView api={harness.api} renderConversation={id => <div data-native={id} />} onMarkAllRead={() => {}} /></div></>

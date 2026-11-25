@@ -12,6 +12,14 @@ import type { WorkflowProblem } from '../domain/workflow-diagnostics.js';
 import { diffWorkflow } from '../domain/workflow-difference.js';
 import { parseWorkflow } from '../domain/workflow.js';
 import { effectiveBoardPreset } from '../domain/board-preset.js';
+import { authoredMainAgent } from '../domain/agents.js';
+import type { AgentAvailability } from '../domain/workflow-warnings.js';
+
+/** The preset the authored main agent names, whichever authored field carries it. */
+function mainAuthoredPreset(workflow: Workflow): string | undefined {
+  const main = authoredMainAgent(workflow);
+  return main === undefined ? workflow.agentPreset : main.preset;
+}
 import type { ScriptedImpactPort } from './scripted-impact.js';
 import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
 import { renameTaskStage } from '../domain/stage-update.js';
@@ -96,6 +104,10 @@ export interface BoardAdministrationOptions {
   readonly impact?: ScriptedImpactPort;
   /** Records each accepted workflow write; absent keeps no local history. */
   readonly revisions?: BoardRevisionPort;
+  /** Runs after an accepted workflow write, so board-scoped task data can follow an edit. */
+  readonly onWorkflowWritten?: (hubId: string, boardId: string) => void | Promise<void>;
+  /** What the running host reports about agents, for the authoring availability warnings. */
+  readonly agentAvailability?: () => Promise<AgentAvailability | undefined>;
 }
 
 /** Who made a workflow write, and through which surface. */
@@ -274,7 +286,10 @@ export class BoardAdministration {
 
   /** Review one composed document against the board it will replace. */
   private async review(input: { hub: HubState; board: Board | undefined; boardId: string; previousText: string | null; nextText: string }): Promise<WorkflowWriteReport> {
-    const review = reviewWorkflowText({ text: input.nextText, previousText: input.previousText, cards: this.cardsOf(input.hub, input.boardId) });
+    let availability: AgentAvailability | undefined;
+    try { availability = await this.options.agentAvailability?.(); }
+    catch (error) { this.options.report?.(error); }
+    const review = reviewWorkflowText({ text: input.nextText, previousText: input.previousText, cards: this.cardsOf(input.hub, input.boardId), ...(availability === undefined ? {} : { availability }) });
     let scripts: ScriptImpact[] = [];
     if (review.valid && review.workflow !== null && input.board !== undefined && this.options.impact !== undefined) {
       scripts = await this.options.impact.describe({ hub: input.hub, board: input.board, before: review.previous, after: review.workflow });
@@ -344,10 +359,10 @@ export class BoardAdministration {
       if (input.workflowYaml !== undefined) operations.saveBoardWorkflow(draft, input.boardId, input.workflowYaml, deps);
       const board = operations.requireBoard(draft, input.boardId);
       if (input.presetChoice === 'host') {
-        invariant(board.workflow.agentPreset === undefined, 'INVALID_INPUT', 'Host default requires no authored agent preset.');
+        invariant(mainAuthoredPreset(board.workflow) === undefined, 'INVALID_INPUT', 'Host default requires no authored agent preset.');
         board.defaultPresetMode = 'host';
       } else if (input.presetChoice === 'named') {
-        invariant(board.workflow.agentPreset !== undefined, 'INVALID_INPUT', 'A named preset requires an authored agent preset.');
+        invariant(mainAuthoredPreset(board.workflow) !== undefined, 'INVALID_INPUT', 'A named preset requires an authored agent preset.');
         delete board.defaultPresetMode;
       }
       if (input.restorePresetMode !== undefined) {
@@ -355,10 +370,16 @@ export class BoardAdministration {
         if (input.restorePresetMode.value === undefined) delete board.defaultPresetMode;
         else board.defaultPresetMode = input.restorePresetMode.value;
       }
+      // Authoring the main agent makes the document the one source of its preset and
+      // model, so the legacy metadata stops deciding even without an explicit choice.
+      if (authoredMainAgent(board.workflow) !== undefined) delete board.defaultPresetMode;
       return board;
     }, input.expectedRevision);
     this.noteLocalChange(located.hubId);
     if ((input.workflowYaml !== undefined || input.restorePresetMode !== undefined || input.presetChoice !== undefined) && input.revision !== false) await this.noteRevision(located.hubId, board.id, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, input.revision);
+    // The workflow-written reconciliation (held messages, detached bindings) completes
+    // before the save reports success, so a reported save has nothing left pending.
+    if (input.workflowYaml !== undefined) await this.workflowWritten(located.hubId, board.id);
     return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
   }
 
@@ -405,6 +426,12 @@ export class BoardAdministration {
       await this.noteRevision(located.hubId, input.boardId, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, input.revision);
       return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
     });
+  }
+
+  /** Tell the host that a board's document changed; a listener failure never fails the write. */
+  private async workflowWritten(hubId: string, boardId: string): Promise<void> {
+    try { await this.options.onWorkflowWritten?.(hubId, boardId); }
+    catch (error) { this.options.report?.(error); }
   }
 
   /** Record one accepted workflow write, reporting a log failure without undoing the write. */
@@ -529,11 +556,12 @@ export class BoardAdministration {
         }
         const nextWorkflow = this.workflowOf(nextText)!;
         invariant(input.restorePresetMode === undefined || input.presetChoice === undefined, 'INVALID_INPUT', 'A restore cannot also select a preset.');
-        if (input.presetChoice === 'host') invariant(nextWorkflow.agentPreset === undefined, 'INVALID_INPUT', 'Host default requires no authored agent preset.');
-        if (input.presetChoice === 'named') invariant(nextWorkflow.agentPreset !== undefined, 'INVALID_INPUT', 'A named preset requires an authored agent preset.');
+        if (input.presetChoice === 'host') invariant(mainAuthoredPreset(nextWorkflow) === undefined, 'INVALID_INPUT', 'Host default requires no authored agent preset.');
+        if (input.presetChoice === 'named') invariant(mainAuthoredPreset(nextWorkflow) !== undefined, 'INVALID_INPUT', 'A named preset requires an authored agent preset.');
         const beforeMode = located.board.defaultPresetMode;
         const afterMode = input.restorePresetMode !== undefined ? input.restorePresetMode.value
-          : input.presetChoice === 'host' ? 'host' : input.presetChoice === 'named' ? undefined : beforeMode;
+          : input.presetChoice === 'host' ? 'host' : input.presetChoice === 'named' ? undefined
+          : authoredMainAgent(nextWorkflow) !== undefined ? undefined : beforeMode;
         const baseReport = this.shaped(report, nextWorkflow, input.detail ?? 'summary');
         // The document digest does not cover board-owned metadata. Report its change
         // separately, even when an authored preset keeps the effective choice unchanged.

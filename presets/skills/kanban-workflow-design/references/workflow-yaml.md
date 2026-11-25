@@ -5,7 +5,7 @@ Load for authoring one board; verify against the installed parser.
 ## Accepted structure
 
 - Root: nonempty `columns`; optional `id`, `name`, `description`, `initial_column`, `default_view`, `groups`, `model`, `agent_preset`, `mcp`, `connections`. Name defaults to `Workflow`; the first column is initial by default.
-- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `allowed_transitions`, `on_enter_prompt`, `scripted`, `decision`, `position`, `size`. Both display aliases must agree if present. `description` is optional: the stage's responsibility for the agent that reads it (see [stage contracts](stage-contracts.md)), not an instruction.
+- Column: required `id` and `label` (alias `name`); optional `key`, `description`, `agent`, `allowed_transitions`, `on_enter_prompt`, `scripted`, `decision`, `position`, `size`. Both display aliases must agree if present. `description` is optional: the stage's responsibility for the agent that reads it (see [stage contracts](stage-contracts.md)), not an instruction.
 - Group: `label` (alias `name`), nonempty `columns` IDs, optional `id` (otherwise `group-1`, etc.). Groups are presentation, not destinations. Each column belongs to at most one group; group IDs are unique and cannot equal column IDs.
 - `model`: nonempty `provider`, `model`, optional nonempty `reasoning_effort`. It sets the board default for **new conversations**, not a stage model, installation default, or existing conversations. Omission means DSH default. Check host routes: the parser validates shape, not availability; an unavailable route can fall back with a notice.
 - `agent_preset`: nonempty roster identity for **new conversations**. An authored preset wins; for absent YAML inspect the effective choice and origin. New-board metadata may select the operator; legacy absence keeps the host default. Shape only; a missing preset can fall back with a notice.
@@ -13,7 +13,7 @@ Load for authoring one board; verify against the installed parser.
 
 IDs: 1–256 characters, ASCII letter/digit first, then letters/digits/`.`/`_`/`:`/`-`; `__proto__`, `prototype`, `constructor` are reserved. `key` is stable stage identity for sharing: preserve across edits/renames; do not add keys merely to reformat unpublished workflows.
 
-Unknown fields are rejected: no WIP limits, stage `auto_mode`, per-stage agents or presets, dependencies, or `metadata`. Use `on_enter_prompt`, not `prompt`; `columns`, not `stages`. Criteria belong in instructions; coordination in prose protocols.
+Unknown fields are rejected: no WIP limits, stage `auto_mode`, per-stage presets/models, dependencies, or `metadata`. Use `on_enter_prompt`, not `prompt`; `columns`, not `stages`. Criteria belong in instructions; coordination in prose protocols.
 
 ## Routes and conditions
 

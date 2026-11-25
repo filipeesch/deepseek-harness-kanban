@@ -29,7 +29,13 @@ export type WorkflowWarning =
   /** A destination without a condition on a stage that authors two or more destinations. */
   | { readonly kind: 'destination-without-condition'; readonly stage: string; readonly destination: string }
   /** A scripted stage, or a stage with an entry instruction, that has no description. */
-  | { readonly kind: 'stage-without-description'; readonly stage: string };
+  | { readonly kind: 'stage-without-description'; readonly stage: string }
+  /** A stage that names an agent and authors no entry instruction, so the agent never starts. */
+  | { readonly kind: 'agent-without-instruction'; readonly stage: string; readonly agent: string }
+  /** An agent whose declared preset the running host does not report as available. */
+  | { readonly kind: 'agent-preset-unavailable'; readonly agent: string; readonly preset: string }
+  /** An agent whose declared model the running host does not report in its catalog. */
+  | { readonly kind: 'agent-model-unavailable'; readonly agent: string; readonly provider: string; readonly model: string };
 
 /** The verb phrases an instruction uses to cite a destination stage. */
 const ROUTE_CITATION = /\b(?:declare|route\s+to|transition\s+to|move\s+to|advance\s+to|go\s+to)\s+`?([a-z][a-z0-9_-]{1,63})`?/gi;
@@ -256,9 +262,18 @@ function contractWarnings(workflow: Workflow): WorkflowWarning[] {
  * routing defect. Repeated observations are grouped with their occurrence count.
  * Warnings never block a write; the write report presents them.
  */
+/** What the running host reports, so an authoring warning names what it cannot offer. */
+export interface AgentAvailability {
+  /** Preset identities the host's roster supplies; absent leaves availability unknown. */
+  readonly presets?: readonly string[];
+  /** Whether the host's catalog offers one route; absent leaves availability unknown. */
+  readonly model?: (selection: { readonly provider: string; readonly model: string }) => boolean;
+}
+
 export function workflowWarnings(
   workflow: Workflow,
   cards: readonly { readonly id: string; readonly columnId: string; readonly parameters?: readonly string[] }[] = [],
+  availability?: AgentAvailability,
 ): WorkflowWarning[] {
   const warnings: WorkflowWarning[] = [];
   const graph = workflowGraph(workflow);
@@ -284,5 +299,30 @@ export function workflowWarnings(
   warnings.push(...undeclaredParameterWarnings(workflow));
   warnings.push(...cardParameterWarnings(workflow, cards));
   warnings.push(...contractWarnings(workflow));
+  warnings.push(...agentWarnings(workflow, availability));
+  return warnings;
+}
+
+/**
+ * The agent observations a composed document earns: a stage whose agent never
+ * starts, and an agent whose preset or model this host does not report. An unknown
+ * roster or catalog produces no availability warning rather than a false one.
+ */
+function agentWarnings(workflow: Workflow, availability: AgentAvailability | undefined): WorkflowWarning[] {
+  const warnings: WorkflowWarning[] = [];
+  const knownPresets = availability?.presets === undefined ? undefined : new Set(availability.presets);
+  for (const column of workflow.columns) {
+    const agent = column.agent;
+    if (agent === undefined || agent === 'main') continue;
+    if (column.onEnterPrompt === undefined) warnings.push({ kind: 'agent-without-instruction', stage: column.id, agent });
+  }
+  for (const agent of workflow.agents ?? []) {
+    if (agent.preset !== undefined && knownPresets !== undefined && !knownPresets.has(agent.preset)) {
+      warnings.push({ kind: 'agent-preset-unavailable', agent: agent.id, preset: agent.preset });
+    }
+    if (agent.model !== undefined && availability?.model !== undefined && !availability.model(agent.model)) {
+      warnings.push({ kind: 'agent-model-unavailable', agent: agent.id, provider: agent.model.provider, model: agent.model.model });
+    }
+  }
   return warnings;
 }

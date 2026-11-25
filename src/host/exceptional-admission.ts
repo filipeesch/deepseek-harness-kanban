@@ -4,7 +4,7 @@ import { blocksAdvance } from '../domain/auto-mode-hold.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { resolveExceptionalTransition, type ExceptionalTransitionIdentity } from '../domain/transition-route.js';
 import { declaredParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
-import { firstOpenSessionId, openSessionIds } from '../shared/conversations.js';
+import { ownsStage } from '../domain/conversation-role.js';
 import type { PendingTransition, Task } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import type { AdvanceAdmissionDeps } from './advance-admission.js';
@@ -34,7 +34,6 @@ export async function admitExceptionalTurnAdvance(
     const destination = resolveExceptionalTransition(located.board.workflow, located.task, expected);
     if (!isObserved() || blocksAdvance(located.task) || !destination) return false;
     const instruction = entryInstruction(destination);
-    const sessionId = instruction === undefined ? undefined : firstOpenSessionId(located.task) ?? await deps.resolveSession(located.task);
     const latest = deps.locate(taskId);
     if (!isObserved() || blocksAdvance(latest.task) || !resolveExceptionalTransition(latest.board.workflow, latest.task, expected)) return false;
     let pending;
@@ -49,7 +48,7 @@ export async function admitExceptionalTurnAdvance(
       mode: instruction === undefined ? 'move' : 'run', status: 'waiting', origin: 'agent',
       transitionOverride: true, exceptionUnfinalized: expected.id, reason,
       ...(values === undefined ? {} : { parameters: values }),
-      ...(instruction === undefined ? {} : { text: instruction, sessionId: sessionId! }),
+      ...(instruction === undefined ? {} : { text: instruction }),
     };
     transitionId = transition.id;
     const matches = (task: Task, workflow: typeof latest.board.workflow): boolean => {
@@ -63,7 +62,8 @@ export async function admitExceptionalTurnAdvance(
     await deps.transact(latest.hubId, draft => {
       const task = draft.tasks.find(value => value.id === taskId);
       const board = task && draft.boards.find(value => value.id === task.boardId);
-      if (!task || !board || !isObserved() || blocksAdvance(task) || (sessionId !== undefined && !openSessionIds(task).includes(sessionId))) return;
+      if (!task || !board || !isObserved() || blocksAdvance(task)) return;
+      if (!ownsStage(task, board.workflow, task.columnId, expected.sessionId)) return;
       if (!matches(task, board.workflow)) return;
       task.pendingTransition = transition;
       prepared = true;
@@ -78,7 +78,7 @@ export async function admitExceptionalTurnAdvance(
       const task = draft.tasks.find(value => value.id === taskId);
       const board = task && draft.boards.find(value => value.id === task.boardId);
       if (!task || !board || !isObserved() || task.pendingTransition?.id !== transition.id || task.pendingTransition.exceptionUnfinalized !== expected.id) return;
-      if (sessionId !== undefined && !openSessionIds(task).includes(sessionId)) return;
+      if (!ownsStage(task, board.workflow, task.columnId, expected.sessionId)) return;
       const withoutPrepared = { ...task }; delete withoutPrepared.pendingTransition;
       if (blocksAdvance(withoutPrepared) || !matches(task, board.workflow)) return;
       // Linearization point: once this callback finalizes, subsequent native

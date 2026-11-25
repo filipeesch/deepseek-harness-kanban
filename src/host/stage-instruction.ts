@@ -4,7 +4,7 @@ import type { StageInstructionDelivery } from '../shared/ports.js';
 import { invariant } from '../shared/errors.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { buildTransitionBriefing } from './stage-briefing.js';
-import { buildStageInstructionDelivery } from './stage-message.js';
+import { buildStageInstructionDelivery, modelFallbackNotice } from './stage-message.js';
 import { recordScriptedHandoff } from '../domain/task-history/record.js';
 
 /** The task scope an admission needs; the host resolves it from its task locator. */
@@ -13,8 +13,10 @@ export interface StageInstructionTarget { hubId: string; task: HubTask; board: B
 export interface StageInstructionDeps {
   locate(taskId: string): StageInstructionTarget;
   transact(hubId: string, change: (draft: HubState) => void): Promise<unknown>;
-  /** The first open conversation, creating one when every tab is closed. */
-  resolveSession(task: HubTask): Promise<string>;
+  /** The conversation the destination stage owns, creating it when the task has none. */
+  resolveSession(task: HubTask, columnId: string): Promise<string>;
+  /** Release the messages this stage entry held, after its own instruction is delivered. */
+  releaseHeld?(taskId: string, columnId: string): Promise<void>;
   assertExecutionContext(sessionId: string): Promise<void>;
   /** Deliver the composed instruction as the plugin-sourced message that starts the turn. */
   deliver(sessionId: string, delivery: StageInstructionDelivery): Promise<void>;
@@ -81,7 +83,7 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
   } else {
     invariant(instruction.trim().length > 0, 'EMPTY_PROMPT', 'A task execution requires a non-empty instruction.');
   }
-  const sessionId = request.sessionId ?? await deps.resolveSession(task);
+  const sessionId = request.sessionId ?? await deps.resolveSession(task, request.columnId);
   await deps.assertExecutionContext(sessionId);
   // Both awaits above can let the task, the workflow, or the recording change, so
   // the send re-reads them. The message still belongs to the requested stage, and
@@ -101,8 +103,12 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
       fromStageName: target.board.workflow.columns.find(value => value.id === request.transition!.fromColumnId)?.name ?? request.transition.fromColumnId,
       reason: request.transition.reason,
     };
+    // The route a conversation fell back from is a durable fact of that conversation's
+    // binding, reported while the conversation runs instead of only until delivery.
+    const fallback = target.task.sessionRoles?.[sessionId]?.modelFallback;
     return buildStageInstructionDelivery({
       instruction,
+      ...(fallback === undefined ? {} : { notice: modelFallbackNotice({ agent: target.task.sessionRoles?.[sessionId]?.agent ?? request.columnId, model: fallback }) }),
       ...(transition === undefined ? {} : { transition }),
       ...(handoff === undefined ? {} : { handoff }),
       ...(briefing === undefined ? {} : { briefing }),
@@ -131,5 +137,8 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
     const failed = current.pendingTransition;
     if (failed !== undefined && failed.origin !== undefined && failed.status === 'failed' && failed.columnId === request.columnId) delete current.pendingTransition;
   });
+  // The stage's messages wait for its instruction, so they are released only after it
+  // was delivered. A release failure is reported by the host and never undoes the entry.
+  try { await deps.releaseHeld?.(request.taskId, request.columnId); } catch { /* reported by the port */ }
   return sessionId;
 }

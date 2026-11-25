@@ -69,6 +69,8 @@ export interface SessionPort extends SessionTopologyPort {
   /** Cancel a background job owned by this conversation; absent when the host exposes no job registry. */
   cancelJob?(sessionId: string, jobId: string): Promise<'requested' | 'already-finished'>;
   send(sessionId: string, text: string, requestId?: string): Promise<void>;
+  /** Set one conversation's native title; absent when the host exposes no rename. */
+  title?(sessionId: string, title: string): Promise<void>;
   /** Deliver one stage instruction as a plugin-sourced message that starts the turn. */
   deliverStageInstruction(sessionId: string, delivery: StageInstructionDelivery): Promise<void>;
   archive(sessionId: string): Promise<void>;

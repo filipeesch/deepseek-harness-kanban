@@ -16,6 +16,16 @@ import { AdvanceStageIcon, AlertIcon, ClockIcon } from './icons.js';
 import { DecisionCountdown, useDecisionWindowEntry } from './decision-panel.js';
 import type { DecisionWindowController } from './decision-window.js';
 
+/** The route the current stage's agent conversation fell back from, if it did. */
+function stageAgentFallback(task: Task, column: Column): { agent: string; model: { requested: { provider: string; model: string }; inUse?: { provider: string; model: string } } } | undefined {
+  const agent = column.agent;
+  if (agent === undefined) return undefined;
+  for (const role of Object.values(task.sessionRoles ?? {})) {
+    if (role.agent === agent && role.modelFallback !== undefined) return { agent, model: role.modelFallback };
+  }
+  return undefined;
+}
+
 export interface TaskCardProps {
   task: Task;
   column: Column;
@@ -135,7 +145,7 @@ export function TaskCard({ task, column, projectName, attention, selectionMode, 
     </button>
     <CardContext taskId={task.id} title={task.title} projectName={projectName} attention={presenceAttention} selectionMode={selectionMode} selected={selected} onToggleSelect={onToggleSelect} onActivate={activate} />
     <CardActivity attention={attention} label={task.title} controls={controls} script={script && !awaitingApproval ? scriptCardLabel(script) : undefined} {...(script?.hold === undefined || awaitingApproval ? {} : { scriptTitle: scriptLabel(script) })} scriptHeld={script?.hold !== undefined && !awaitingApproval} />
-    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses, sessionObservation, decision?.label), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
+    <CardStatus parameters={script !== undefined && (column.scripted?.params?.length ?? 0) > 0 ? <CardScriptParameters task={task} column={column} selectionMode={selectionMode} /> : undefined} entries={[...cardStatusEntries(task, runFailure, autoMode.status, autoMode.secondaryStatuses, sessionObservation, decision?.label, stageAgentFallback(task, column)), ...(awaitingApproval ? [{ key: 'script-approval', tone: 'pending' as const, label: 'Awaiting approval' }] : []), ...(script?.error ? [{ key: 'script-error', tone: 'danger' as const, label: script.error.message.slice(0, 512), alert: true }] : [])]} />
     {arrivalToken !== undefined && <span key={arrivalToken} className="kb-card-arrival" aria-hidden="true" onAnimationEnd={() => onArrivalEnd?.(task.id, arrivalToken)} />}
   </article>;
 }

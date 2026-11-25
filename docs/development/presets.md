@@ -22,6 +22,8 @@ The operator is the default for a new board that authors no preset. Keep its PTC
 
 An explicit board preset wins, and a host that does not offer the operator falls back to the host default without blocking conversation creation. New-board preset provenance and authored descriptions are not publishable while the providers cannot exclude older writers; [Team sharing](../user/team-sharing.md) states the refusal.
 
+The workflow architect's design tools include the agent authoring writes `set_agent`, `remove_agent`, and `set_stage_agent`, kept behind the same architect gate as the stage writers; no other role receives them.
+
 ## Boundaries between the roles
 
 Preserve the architect, planner, and manager boundaries and the existing tool authorization rules. Parent-child and cross-board protocols are agent conventions, not native dependency scheduling, permission grants, or a cross-board transaction.

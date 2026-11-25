@@ -62,7 +62,6 @@ function fixture(overrides: Partial<AdvanceAdmissionDeps> = {}, seed: { board?: 
   const deps: ExceptionalAdmissionDeps = {
     locate: (): LocatedTask => ({ hubId: 'hub', hub: state.hub, board: state.hub.boards[0]!, project, task: state.hub.tasks[0]! }),
     transact: async (_hubId, change) => { change(state.hub); },
-    resolveSession: async () => { created.push('session-2'); return 'session-2'; },
     pending: async () => pending[pending.length - 1]!,
     ready: async () => !pending[pending.length - 1]!.kinds.length && pending[pending.length - 1]!.queuedPrompts === 0,
     reconcileFinalization: async () => 'prepared',
@@ -238,7 +237,10 @@ describe('turn-end advance admission', () => {
     const f = fixture();
     await admitAuto(f.deps, 'task', plan());
     const value = f.state.hub.tasks[0]!;
-    expect(value.pendingTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'plan', mode: 'run', status: 'waiting', origin: 'auto', text: 'Plan it.', sessionId: 's1' });
+    // The target conversation is resolved at delivery, after the placement, so the
+    // admitted record carries the instruction and not a conversation identity.
+    expect(value.pendingTransition).toMatchObject({ fromColumnId: 'backlog', columnId: 'plan', mode: 'run', status: 'waiting', origin: 'auto', text: 'Plan it.' });
+    expect(value.pendingTransition!.sessionId).toBeUndefined();
     expect(f.dispatched).toHaveLength(1);
     expect(f.created).toHaveLength(0);
   });
@@ -258,8 +260,8 @@ describe('turn-end advance admission', () => {
     const f = fixture();
     f.state.hub.tasks[0] = task({ closedSessionIds: ['s1'] });
     await admitAuto(f.deps, 'task', plan());
-    expect(f.created).toEqual(['session-2']);
-    expect(f.state.hub.tasks[0]!.pendingTransition).toMatchObject({ mode: 'run', sessionId: 'session-2' });
+    expect(f.state.hub.tasks[0]!.pendingTransition).toMatchObject({ mode: 'run' });
+    expect(f.state.hub.tasks[0]!.pendingTransition!.sessionId).toBeUndefined();
   });
 
   it('re-reads pending user work right before the durable decision', async () => {

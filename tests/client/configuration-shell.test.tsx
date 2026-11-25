@@ -96,7 +96,7 @@ describe('Boards section', () => {
     const { user, board } = mount({ initial: 'Boards' });
     await user.click(screen.getByRole('button', { name: 'Edit board ' + board.name }));
     expect(overlay(board.name)).toBeTruthy();
-    for (const name of ['General', 'Projects', 'Defaults', 'Workflow', 'Danger zone']) {
+    for (const name of ['General', 'Projects', 'Agents', 'MCP', 'Workflow', 'Danger zone']) {
       expect(boardTabs().getByRole('tab', { name })).toBeTruthy();
     }
     // The board overlay is the wide surface; the list keeps the narrower one behind it.

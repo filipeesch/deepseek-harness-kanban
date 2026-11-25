@@ -1,7 +1,8 @@
 import { parseDocument } from 'yaml';
 import { parseScriptedDefinition } from './scripted-definition.js';
 import { parseDecisionDefinition } from './decision-definition.js';
-import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, ModelSelection, StagePosition, StageSize, Workflow, WorkflowView } from '../shared/types.js';
+import type { Column, ColumnGroup, ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, ModelSelection, StagePosition, StageSize, Workflow, WorkflowAgent, WorkflowView } from '../shared/types.js';
+import { MAIN_AGENT_ID } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { createYamlFields, invalidWorkflow } from './yaml-fields.js';
 import { STAGE_MIN_SIZE, STAGE_SIZE_LIMIT } from './stage-size.js';
@@ -33,7 +34,8 @@ export const WORKFLOW_TEXT_LIMIT = 1_000_000;
 
 const { record, keys, text, id, ids, rules } = createYamlFields(invalidWorkflow);
 
-const COLUMN_NOTE = 'WIP and agent-engine settings are not supported.';
+const COLUMN_NOTE = 'WIP settings are not supported.';
+const AGENT_NOTE = 'Only id, name, preset, and model are supported.';
 const POSITION_NOTE = 'Only x and y are supported.';
 const SIZE_NOTE = 'Only width and height are supported.';
 const ANCHOR_NOTE = 'Only side and at are supported.';
@@ -124,6 +126,16 @@ function modelSelection(value: unknown, context: string): ModelSelection {
   return selection;
 }
 
+/** One agent the board declares: its identity, its display name, and its conversation settings. */
+function workflowAgent(value: unknown, context: string): WorkflowAgent {
+  const map = record(value, context);
+  keys(map, ['id', 'name', 'preset', 'model'], context, AGENT_NOTE);
+  const agent: WorkflowAgent = { id: id(map.id, context + ' id'), name: text(map.name, context + ' name') };
+  if (map.preset !== undefined) agent.preset = text(map.preset, context + ' preset');
+  if (map.model !== undefined) agent.model = modelSelection(map.model, context + ' model');
+  return agent;
+}
+
 function label(value: Record<string, unknown>, context: string): string {
   if (value.label !== undefined && value.name !== undefined && value.label !== value.name) {
     invalidWorkflow(context + ' cannot have conflicting label and name values.');
@@ -152,17 +164,18 @@ export function parseWorkflow(yaml: string): Workflow {
     invalidWorkflow('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
   const input = record(raw, 'Workflow');
-  keys(input, ['id', 'name', 'description', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'mcp', 'connections'], 'workflow', COLUMN_NOTE);
+  keys(input, ['id', 'name', 'description', 'initial_column', 'default_view', 'columns', 'groups', 'model', 'agent_preset', 'agents', 'mcp', 'connections'], 'workflow', COLUMN_NOTE);
   if (input.id !== undefined) id(input.id, 'Workflow ID');
   const name = input.name === undefined ? 'Workflow' : text(input.name, 'Workflow name');
   if (!Array.isArray(input.columns) || input.columns.length === 0) invalidWorkflow('Workflow requires at least one column.');
   const columns: Column[] = input.columns.map((item, index) => {
     const value = record(item, 'Column ' + index);
-    keys(value, ['id', 'key', 'label', 'name', 'description', 'allowed_transitions', 'on_enter_prompt', 'scripted', 'deterministic', 'decision', 'position', 'size'], 'column', COLUMN_NOTE);
+    keys(value, ['id', 'key', 'label', 'name', 'description', 'agent', 'allowed_transitions', 'on_enter_prompt', 'scripted', 'deterministic', 'decision', 'position', 'size'], 'column', COLUMN_NOTE);
     const column: Column = { id: id(value.id, 'Column ID'), name: label(value, 'Column') };
     const description = optionalDescription(value.description, 'Column description');
     if (description !== undefined) column.description = description;
     if (value.key !== undefined) column.key = id(value.key, 'Column ' + column.id + ' key');
+    if (value.agent !== undefined) column.agent = id(value.agent, 'Column ' + column.id + ' agent');
     if (value.allowed_transitions !== undefined) column.allowedTransitions = rules(value.allowed_transitions, 'allowed_transitions');
     if (value.on_enter_prompt !== undefined && value.on_enter_prompt !== null) {
       if (typeof value.on_enter_prompt !== 'string') invalidWorkflow('on_enter_prompt must be text or null.');
@@ -175,10 +188,12 @@ export function parseWorkflow(yaml: string): Workflow {
     if (authored !== undefined) {
       column.scripted = parseScriptedDefinition(authored);
       if (column.onEnterPrompt !== undefined || column.allowedTransitions !== undefined) invalidWorkflow('A scripted stage cannot also configure an entry prompt or allowed_transitions.');
+      if (column.agent !== undefined) invalidWorkflow('A scripted stage cannot also name an agent.');
     }
     if (value.decision !== undefined) {
       if (column.scripted !== undefined) invalidWorkflow('Column ' + column.id + ' authors both a decision and a scripted configuration. Keep one mode.');
       if (column.onEnterPrompt !== undefined || column.allowedTransitions !== undefined) invalidWorkflow('A decision stage cannot also configure an entry prompt or allowed_transitions.');
+      if (column.agent !== undefined) invalidWorkflow('A decision stage cannot also name an agent.');
       column.decision = parseDecisionDefinition(value.decision);
     }
     if (value.position !== undefined) column.position = stagePosition(value.position, 'Column ' + column.id + ' position');
@@ -187,6 +202,13 @@ export function parseWorkflow(yaml: string): Workflow {
   });
   const columnIds = new Set(columns.map(column => column.id));
   if (columnIds.size !== columns.length) invalidWorkflow('Column IDs must be unique.');
+  if (input.agents !== undefined && !Array.isArray(input.agents)) invalidWorkflow('Workflow agents must be an array.');
+  const agents: WorkflowAgent[] = ((input.agents ?? []) as unknown[]).map((item, index) => workflowAgent(item, 'Agent ' + index));
+  if (new Set(agents.map(agent => agent.id)).size !== agents.length) invalidWorkflow('Agent IDs must be unique.');
+  const agentIds = new Set([MAIN_AGENT_ID, ...agents.map(agent => agent.id)]);
+  for (const column of columns) {
+    if (column.agent !== undefined && !agentIds.has(column.agent)) invalidWorkflow('Column ' + column.id + ' references unknown agent ' + column.agent + '.');
+  }
   const columnKeys = columns.flatMap(column => (column.key === undefined ? [] : [column.key]));
   if (new Set(columnKeys).size !== columnKeys.length) invalidWorkflow('Column keys must be unique.');
   for (const column of columns) {
@@ -230,6 +252,7 @@ export function parseWorkflow(yaml: string): Workflow {
   if (input.default_view !== undefined) workflow.defaultView = view(input.default_view);
   if (input.model !== undefined) workflow.model = modelSelection(input.model, 'Workflow model');
   if (input.agent_preset !== undefined) workflow.agentPreset = text(input.agent_preset, 'Workflow agent_preset');
+  if (agents.length > 0) workflow.agents = agents;
   if (input.mcp !== undefined) workflow.mcp = normalizeMcpAllowlist(input.mcp, invalidWorkflow);
   if (input.connections !== undefined) {
     if (!Array.isArray(input.connections)) invalidWorkflow('Workflow connections must be an array.');

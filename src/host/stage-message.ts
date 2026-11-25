@@ -43,6 +43,8 @@ export interface DeclaredTransitionNote {
 export interface StageInstructionInput {
   /** The entry instruction exactly as admitted. */
   readonly instruction: string;
+  /** A host fact about this entry the conversation must know, such as a model fallback. */
+  readonly notice?: string;
   /** The reason the declared transition carried, when this delivery follows one. */
   readonly transition?: DeclaredTransitionNote;
   /** A program result is evidence, not a reason declared by the destination agent. */
@@ -85,6 +87,21 @@ export function transitionNoteBlock(note: DeclaredTransitionNote): string {
   return 'Transition reason (from ' + note.fromStageName + '):\n' + note.reason;
 }
 
+/** The route a model selection reads as, for a host notice. */
+function routeText(selection: { provider: string; model: string }): string {
+  return selection.provider + ' · ' + selection.model;
+}
+
+/**
+ * The notice a stage instruction carries when its agent conversation could not use
+ * the declared model. It names what was asked for and what the conversation runs on,
+ * so the fallback is visible in the conversation and not only on the card.
+ */
+export function modelFallbackNotice(fallback: { agent: string; model: { requested: { provider: string; model: string }; inUse?: { provider: string; model: string } } }): string {
+  return 'Model notice: the ' + fallback.agent + ' agent could not use ' + routeText(fallback.model.requested)
+    + '. This conversation runs on ' + (fallback.model.inUse === undefined ? 'the deployment default route' : routeText(fallback.model.inUse)) + '.';
+}
+
 /** Bound for the model-facing sent-parameter section, separate from the accepted value limits. */
 export const HANDOFF_PARAMETER_CONTEXT_MAX_BYTES = 4 * 1024;
 
@@ -104,7 +121,7 @@ export function scriptedHandoffBlock(handoff: ScriptedHandoff): string {
 
 export function buildStageInstructionDelivery(input: StageInstructionInput): StageInstructionDelivery {
   const orientation = orientStage(input.workflow, input.task.columnId);
-  const blocks = [...(orientation === undefined ? [] : [renderOrientationBlock(orientation)]), input.instruction];
+  const blocks = [...(orientation === undefined ? [] : [renderOrientationBlock(orientation)]), input.instruction, ...(input.notice === undefined ? [] : [input.notice])];
   if (input.transition !== undefined) blocks.push(transitionNoteBlock(input.transition));
   if (input.handoff !== undefined) blocks.push(scriptedHandoffBlock(input.handoff));
   if (input.briefing !== undefined) blocks.push(input.briefing);

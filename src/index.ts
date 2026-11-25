@@ -235,6 +235,23 @@ export async function apply(ctx:Context):Promise<void>{
  const teamFiles=new TeamFiles({store:hubId=>sharing.service.fileStoreFor(hubId),exclusive:(hubId,operation)=>sharing.service.exclusive(hubId,operation)});
  const sessionModels=createSessionModelPort(ctx);
  const sessionPresets=createSessionPresetPort(ctx);
+ // What this host reports about agents, read once per workflow review. An unavailable
+ // roster or catalog is unknown, never an unavailable preset, so no warning is invented.
+ const agentAvailability=async():Promise<import('./domain/workflow-warnings.js').AgentAvailability|undefined>=>{
+  let presets: readonly string[];
+  try{
+   const service=ctx.get('agentPresets') as {list?:()=>Promise<ReadonlyArray<{id?:unknown}>>|ReadonlyArray<{id?:unknown}>}|undefined;
+   const rows=service?.list===undefined?undefined:await service.list();
+   if(rows===undefined)return undefined;
+   presets=rows.flatMap(row=>typeof row.id==='string'?[row.id]:[]);
+  }catch{return undefined;}
+  let routes: Set<string>;
+  try{
+   const catalog=await sessionModels.catalog();
+   routes=new Set(catalog.providers.flatMap(provider=>provider.models.map(model=>provider.id+'/'+model.id)));
+  }catch{return {presets};}
+  return {presets,model:selection=>routes.has(selection.provider+'/'+selection.model)};
+ };
  // The board's tool policy needs the app's task lookup, and the app needs the
  // policy port. One deferred hop keeps the dependency one-directional.
  let applyBoardToolPolicy:(sessionId:string)=>Promise<void>=async()=>undefined;
@@ -242,7 +259,8 @@ export async function apply(ctx:Context):Promise<void>{
  // scripted lease both live under the DSH profile, outside every project checkout.
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  const scriptedLease=profile&&isAbsolute(profile.dir)?createScriptedLease(join(profile.dir,'kanban-private','scripted')):undefined;
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,...(scriptedLease===undefined?{}:{scriptedLease}),...(profile&&isAbsolute(profile.dir)?{taskAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","attachments")),answerAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","answer-files"))}:{}),models:sessionModels,presets:sessionPresets,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ const taskMessageDelivery=createNativeTaskMessageDelivery(ctx,history);
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,...(scriptedLease===undefined?{}:{scriptedLease}),...(profile&&isAbsolute(profile.dir)?{taskAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","attachments")),answerAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","answer-files"))}:{}),models:sessionModels,presets:sessionPresets,taskMessageDelivery,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,agentAvailability,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  // The repair is composed here so the app keeps no file-system or format dependency:
  // it delegates to a pipeline whose safety rules are its own.
  app.attachSessionRepair(createHostSessionRepair({
@@ -278,7 +296,7 @@ export async function apply(ctx:Context):Promise<void>{
   });
   ctx.effect(()=>()=>runtimeFiber.dispose(),'kanban.optionalScriptedRuntime');
  }
- const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),delivery:createNativeTaskMessageDelivery(ctx,history),activity:task=>app.taskActivity(task)});
+ const taskMessages=new InterCardMessaging({locateBySession:id=>app.locator.bySession(id),locate:id=>app.locator.byTask(id),prepare:id=>app.prepareMessageConversation(id),hold:(taskId,message)=>app.holdMessage(taskId,message),agentConversation:(taskId,agent)=>app.conversationForAgent(taskId,agent),delivery:taskMessageDelivery,activity:task=>app.taskActivity(task)});
  sharing.setNotify(()=>app.sharingChanged());
  const scheduleRuns=new ScheduleRunRegistry({storage:schedules.storage,now:()=>new Date().toISOString(),onChange:()=>app.activityChanged(),report});
  const scheduleWatcher=new ScheduleArchiveWatcher({

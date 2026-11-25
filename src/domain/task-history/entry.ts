@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AUTO_MODE_HISTORY_ACTIONS, WORKTREE_HISTORY_ACTIONS, type TaskHistoryEntry } from '../../shared/task-history.js';
+import { AUTO_MODE_HISTORY_ACTIONS, HELD_MESSAGE_DISCARD_REASONS, WORKTREE_HISTORY_ACTIONS, type TaskHistoryEntry } from '../../shared/task-history.js';
 import { parameterValuesSchema } from '../scripted-state.js';
 import { DECISION_LIMITS } from '../decision-definition.js';
 import { isDomainId } from '../validation.js';
@@ -24,6 +24,10 @@ export const taskHistoryEntrySchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('worktree'), at: moment, action: z.enum(WORKTREE_HISTORY_ACTIONS),
     path: z.string().min(1).optional(), branch: z.string().min(1).optional(), error: failure.optional(),
+  }),
+  z.strictObject({
+    kind: z.literal('held-message'), at: moment, action: z.literal('discarded'),
+    columnId: identifier, agent: identifier.optional(), reason: z.enum(HELD_MESSAGE_DISCARD_REASONS),
   }),
 ]);
 

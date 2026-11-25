@@ -99,6 +99,7 @@ function stageFields(before: Column, after: Column): FieldChange[] {
   add('key', before.key, after.key);
   add('name', before.name, after.name);
   add('description', before.description, after.description);
+  add('agent', before.agent, after.agent);
   add('onEnterPrompt', before.onEnterPrompt, after.onEnterPrompt);
   add('allowedTransitions', rulesOf(before), rulesOf(after));
   add('scripted', canonicalScripted(before.scripted), canonicalScripted(after.scripted));
@@ -139,6 +140,7 @@ export function diffWorkflow(before: Workflow | null, after: Workflow): Workflow
   addWorkflow('initialColumnId', before.initialColumnId, after.initialColumnId);
   addWorkflow('defaultView', before.defaultView, after.defaultView);
   addWorkflow('model', before.model, after.model);
+  addWorkflow('agents', before.agents, after.agents);
 
   const beforeColumns = new Map(before.columns.map(column => [column.id, column]));
   const afterColumns = new Map(after.columns.map(column => [column.id, column]));

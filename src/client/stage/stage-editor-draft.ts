@@ -30,6 +30,8 @@ export interface StageEditorDraft {
   readonly transitions: readonly StageTransitionDraft[];
   readonly initial: boolean;
   readonly id: string;
+  /** The agent the stage runs with; undefined means the main conversation. */
+  readonly agent?: string;
 }
 
 
@@ -55,6 +57,7 @@ export function stageDraft(column: Column): StageEditorDraft {
     transitions: (transitions ?? []).map(rule => ({ to: rule.to, when: rule.when ?? '' })),
     initial: false,
     id: column.id,
+    ...(column.agent === undefined || column.agent === 'main' ? {} : { agent: column.agent }),
   };
 }
 
@@ -62,6 +65,7 @@ export function stageDraft(column: Column): StageEditorDraft {
 export function draftChanged(draft: StageEditorDraft, column: Column): boolean {
   const stored = stageDraft(column);
   if (draft.name !== stored.name || draft.description !== stored.description || draft.onEnterPrompt !== stored.onEnterPrompt || draft.id !== stored.id || draft.initial) return true;
+  if ((draft.agent ?? '') !== (stored.agent ?? '')) return true;
   if ((draft.execution ?? 'agent') !== (stored.execution ?? 'agent')) return true;
   if (draft.execution === 'scripted') return !scriptedEqual(scriptedDefinition(draft.scripted ?? scriptedDraft()), column.scripted);
   if (draft.execution === 'decision') return decisionDraftChanged(draft.decision ?? emptyDecisionDraft(), column.decision);
@@ -127,12 +131,15 @@ export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch 
   if (instruction !== storedInstruction) patch.onEnterPrompt = instruction.trim().length === 0 ? null : instruction;
   if (draft.id !== column.id) patch.id = draft.id;
   if (draft.initial) patch.initial = true;
+  if ((draft.agent ?? '') !== (column.agent ?? '')) patch.agent = draft.agent ?? null;
   if (draft.execution === 'scripted') {
     const wanted = scriptedDefinition(draft.scripted ?? scriptedDraft());
     if (!scriptedEqual(wanted, column.scripted)) patch.scripted = wanted;
     if (column.onEnterPrompt !== undefined) patch.onEnterPrompt = null;
     if (column.allowedTransitions !== undefined) patch.allowedTransitions = null;
     if (column.decision !== undefined) patch.decision = null;
+    // A scripted stage starts no agent turn, so it cannot keep an agent binding.
+    if (column.agent !== undefined) patch.agent = null;
     return patch;
   }
   if (draft.execution === 'decision') {
@@ -141,6 +148,7 @@ export function stagePatch(draft: StageEditorDraft, column: Column): StagePatch 
     if (column.onEnterPrompt !== undefined) patch.onEnterPrompt = null;
     if (column.allowedTransitions !== undefined) patch.allowedTransitions = null;
     if (column.scripted !== undefined) patch.scripted = null;
+    if (column.agent !== undefined) patch.agent = null;
     return patch;
   }
   if (column.scripted !== undefined) patch.scripted = null;

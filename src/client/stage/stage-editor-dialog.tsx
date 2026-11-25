@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { Attention, ClientApi, Column, Task } from '../../shared/types.js';
+import type { Attention, ClientApi, Column, Task, WorkflowAgent } from '../../shared/types.js';
 import { ErrorNotice, Modal, Tabs, type RunCommand } from '../ui.js';
 import { useScriptReview } from '../script-review-provider.js';
 import { IdentitySection } from './identity-section.js';
+import { AgentSection } from './agent-section.js';
 import { InitialSection } from './initial-section.js';
 import { InstructionSection } from './instruction-section.js';
 import { ProgramSection } from './program-section.js';
@@ -29,6 +30,8 @@ export interface StageEditorDialogProps {
   readonly initialStageId: string;
   readonly column: Column;
   readonly columns: readonly Column[];
+  /** The board's declared agents, offered as the stage's conversation; absent offers the main one only. */
+  readonly agents?: readonly WorkflowAgent[];
   readonly tasks: readonly Task[];
   readonly attention: Readonly<Record<string, Attention>>;
   readonly api: ClientApi;
@@ -46,7 +49,7 @@ export interface StageEditorDialogProps {
  * contributes only the fields it owns. One width and one height hold across tabs, so
  * selecting another tab never resizes the overlay and only the panel scrolls.
  */
-export function StageEditorDialog({ hubId, boardId, revision, initialStageId, column, columns, tasks, attention, api, run, initialTab, onClose, onSaved }: StageEditorDialogProps) {
+export function StageEditorDialog({ hubId, boardId, revision, initialStageId, column, columns, agents = [], tasks, attention, api, run, initialTab, onClose, onSaved }: StageEditorDialogProps) {
   const id = useId();
   const openReview = useScriptReview();
   const review = useStageReview({ api, boardId, initialStageId: column.id });
@@ -137,6 +140,13 @@ export function StageEditorDialog({ hubId, boardId, revision, initialStageId, co
           onDescription={value => editor.change('description', value)}
           onId={value => editor.change('id', value)}
         />
+        {execution === 'agent' && <AgentSection
+          agents={agents}
+          value={draft.agent}
+          disabled={editor.pending}
+          problem={problem}
+          onChange={value => editor.change('agent', value)}
+        />}
         <fieldset className="kb-fieldset">
           <legend>Behavior</legend>
           <label className="kb-field">Execution mode<select className="kb-input" aria-label="Execution mode" disabled={editor.pending} value={execution} onChange={event => editor.change('execution', event.target.value as 'agent' | 'scripted' | 'decision')}><option value="agent">Agent instruction or manual</option><option value="scripted">Scripted step</option><option value="decision">Decision step</option></select></label>

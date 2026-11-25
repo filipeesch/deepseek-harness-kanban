@@ -504,7 +504,9 @@ describe('automatic advance gates', () => {
     await delay(100);
     expect(f.store.requireTask(task.id).columnId).toBe('backlog');
     f.sessions.busy.delete(second);
-    await endTurn(f.app, second, 2);
+    // Only the main conversation arms the advance; the task-wide idle check still
+    // waits for the side conversation to stop running.
+    await endTurn(f.app, first, 2);
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('plan');
     await expect.poll(() => f.sessions.sent.length).toBe(1);
     expect(f.sessions.sent.map(message => message.id)).toEqual([first]);

@@ -38,8 +38,8 @@ export function useStageEditor({ hubId, boardId, revision, column, columns, task
       if (key !== 'execution') return { ...current, [key]: value };
       // A mode switch owns the stage: the other mode's authored fields are cleared
       // in the same draft, so saving never composes a conflicting stage.
-      if (value === 'scripted') return { ...current, execution: 'scripted', scripted: current.scripted ?? scriptedDraft(), onEnterPrompt: '', mode: 'any', transitions: [] };
-      if (value === 'decision') return { ...current, execution: 'decision', decision: current.decision ?? emptyDecisionDraft(), onEnterPrompt: '', mode: 'any', transitions: [] };
+      if (value === 'scripted') return { ...current, execution: 'scripted', scripted: current.scripted ?? scriptedDraft(), onEnterPrompt: '', mode: 'any', transitions: [], agent: undefined };
+      if (value === 'decision') return { ...current, execution: 'decision', decision: current.decision ?? emptyDecisionDraft(), onEnterPrompt: '', mode: 'any', transitions: [], agent: undefined };
       return { ...current, execution: 'agent' };
     });
   }, []);

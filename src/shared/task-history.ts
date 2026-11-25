@@ -48,7 +48,22 @@ export type TaskHistoryEntry =
     readonly branch?: string;
     /** Present only for a failed operation. */
     readonly error?: Problem;
+  }
+  | {
+    readonly kind: 'held-message';
+    readonly at: string;
+    readonly action: 'discarded';
+    /** The stage the message waited for. */
+    readonly columnId: string;
+    /** The agent conversation the message was for; absent means the main conversation. */
+    readonly agent?: string;
+    /** Why the stage could never release it. */
+    readonly reason: HeldMessageDiscardReason;
   };
+
+/** Why a message held for a later stage can never be delivered. */
+export const HELD_MESSAGE_DISCARD_REASONS = ['stage-removed', 'task-terminal'] as const;
+export type HeldMessageDiscardReason = (typeof HELD_MESSAGE_DISCARD_REASONS)[number];
 
 /** One task's ordered flow record; absent on a task that recorded nothing yet. */
 export type TaskHistory = TaskHistoryEntry[];

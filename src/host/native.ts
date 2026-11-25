@@ -314,6 +314,10 @@ export function createNativePorts(ctx: Context, options: NativePortsOptions = {}
       try { await done; }
       finally { if (admissions.get(key)?.done === done) admissions.delete(key); }
     },
+    async title(id, value) {
+      invariant(value.trim() !== '' && !value.includes('\0'), 'INVALID_TITLE', 'A conversation title must be nonempty text.');
+      await ctx.sessionController.rename({ sessionId: SessionId(id), title: value.trim() });
+    },
     async deliverStageInstruction(id, delivery) {
       await stageDelivery(id, delivery);
     },
