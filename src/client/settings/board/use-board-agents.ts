@@ -101,7 +101,8 @@ export function useBoardAgents(options: {
   useEffect(() => {
     if (dirty) return;
     setDraft(baseline);
-    setExpanded(new Set());
+    // The open rows are the person's context: a save must not collapse the row they
+    // were editing, and the modes follow the saved document.
     setMainSpecific(baseline.mainModel !== undefined);
     setSpecificAgents(new Set(baseline.others.flatMap((agent, index) => agent.model === undefined ? [] : [index])));
   }, [baselineKey, dirty]);
