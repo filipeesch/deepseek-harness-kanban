@@ -37,6 +37,7 @@ export function stageTabOfField(field: StageProblem['field']): StageEditorTab {
   switch (field) {
     case 'name':
     case 'id':
+    case 'agent':
     case 'execution':
       return 'stage';
     case 'transitions':

@@ -26,14 +26,14 @@ import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js
 /** How many lines of an authored document one read returns before the caller asks for more. */
 const READ_LINE_LIMIT = 400;
 
-const intent = 'Use ONLY when the user explicitly requests this board change. ';
+export const intent = 'Use ONLY when the user explicitly requests this board change. ';
 
-const preserveNote = ' Only the named fields are rewritten; comments, key order, quoting, and every other authored character stay as they are.';
+export const preserveNote = ' Only the named fields are rewritten; comments, key order, quoting, and every other authored character stay as they are.';
 
 /** The one revision parameter every board write names, with the rebase rule it obeys. */
 export const revisionParameter = { type: 'integer', description: 'Hub revision from a prior read. A composed write is reapplied to the current document when every anchor still matches; a whole-document replacement refuses a stale revision.' } as const;
 
-const reportNote = ' The change is local; publishing it to a team stays a manual action in the interface. The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the reviewed authorization of every scripted stage for the board, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report.';
+export const reportNote = ' The change is local; publishing it to a team stays a manual action in the interface. The result carries the digest of the exact document stored and a write report: the changed stages and their changed field names, the graph warnings, the reviewed authorization of every scripted stage for the board, and the affected cards. The report is a summary by default and the per-field values only when detail is full. A refused write saves nothing and returns the same report.';
 
 /** The document, stage, and write surface the authoring tools need. */
 export interface WorkflowAuthoringPort {
@@ -42,7 +42,7 @@ export interface WorkflowAuthoringPort {
   saveWorkflowReviewed(input: ComposeBoardWorkflowInput, policy?: BoardPublishingPolicy): Promise<WorkflowWriteOutcome>;
 }
 
-interface WriteArgs extends ToolArgs {
+export interface WriteArgs extends ToolArgs {
   readonly board_id: string;
   readonly expected_revision?: number;
   readonly expect_sha256?: string;
@@ -175,13 +175,13 @@ function mergeDecisionPatch(current: DecisionDefinition | undefined, patch: Deci
 }
 
 /** The authored document one write is composed from, as the port reports it. */
-function authored(port: WorkflowAuthoringPort, args: WriteArgs): { view: BoardView; workflow: Workflow } {
+export function authored(port: WorkflowAuthoringPort, args: WriteArgs): { view: BoardView; workflow: Workflow } {
   const view = port.read(args.board_id, args.hub_id);
   return { view, workflow: parseWorkflow(view.board.workflowYaml) };
 }
 
 /** Run one reviewed write, returning the report on success and on refusal alike. */
-async function write(port: WorkflowAuthoringPort, args: WriteArgs, exec: ToolRunContext, compose: (current: string) => string): Promise<unknown> {
+export async function write(port: WorkflowAuthoringPort, args: WriteArgs, exec: ToolRunContext, compose: (current: string) => string): Promise<unknown> {
   try {
     const value = await port.saveWorkflowReviewed({
       boardId: args.board_id,

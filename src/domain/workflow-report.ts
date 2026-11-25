@@ -2,7 +2,7 @@ import type { Workflow } from '../shared/types.js';
 import { parseWorkflow } from './workflow.js';
 import { workflowProblems, type WorkflowProblem } from './workflow-diagnostics.js';
 import { diffWorkflow, type WorkflowDifference } from './workflow-difference.js';
-import { workflowWarnings, type WorkflowWarning } from './workflow-warnings.js';
+import { workflowWarnings, type AgentAvailability, type WorkflowWarning } from './workflow-warnings.js';
 import { transitionAccess } from './transitions.js';
 import { stageSize, type StageSizeFact } from './workflow-size.js';
 
@@ -76,6 +76,8 @@ export interface WorkflowReviewInput {
   /** The document the board holds now; null when the board has no workflow yet. */
   readonly previousText: string | null;
   readonly cards?: readonly WorkflowCardReference[];
+  /** What the running host reports, for the authoring availability warnings. */
+  readonly availability?: AgentAvailability;
 }
 
 function parseOrNull(text: string | null): Workflow | null {
@@ -137,7 +139,7 @@ export function reviewWorkflowText(input: WorkflowReviewInput): WorkflowReview {
     valid: true,
     problems: [],
     difference: diffWorkflow(previous, workflow),
-    warnings: workflowWarnings(workflow, input.cards ?? []),
+    warnings: workflowWarnings(workflow, input.cards ?? [], input.availability),
     affectedCards: affectedCards(previous, workflow, input.cards ?? []),
     workflow,
     previous,

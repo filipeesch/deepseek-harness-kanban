@@ -1,6 +1,5 @@
 import { entryInstruction } from '../domain/stage-entry.js';
 import { planFirstExecution } from '../domain/first-execution.js';
-import { firstOpenSessionId } from '../shared/conversations.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { ConversationModelOutcome, ConversationPresetOutcome, CreateWorktreeInput } from '../shared/types.js';
 import type { LocatedTask } from './hub-repository.js';
@@ -9,8 +8,10 @@ import type { LocatedTask } from './hub-repository.js';
 export interface FirstExecutionPorts {
   locate(taskId: string): LocatedTask;
   createWorktree(taskId: string, draft: CreateWorktreeInput): Promise<void>;
-  /** Create the task's first conversation and report what it became, model included. */
-  createConversation(taskId: string): Promise<FirstExecutionConversation>;
+  /** The open conversation the instructed stage already owns, when it has one. */
+  existingConversation(taskId: string, columnId: string): string | undefined;
+  /** Create the conversation the instructed stage owns and report what it became. */
+  createConversation(taskId: string, columnId: string): Promise<FirstExecutionConversation>;
 }
 
 /**
@@ -69,7 +70,9 @@ function validateEntry(located: LocatedTask, request: FirstExecutionRequest): vo
 export async function prepareFirstExecution(ports: FirstExecutionPorts, request: FirstExecutionRequest): Promise<FirstExecutionPreparation> {
   const located = ports.locate(request.taskId);
   validateEntry(located, request);
-  const existing = firstOpenSessionId(located.task);
+  // The stage owns the target conversation: an agent stage must not send its
+  // instruction into the main conversation merely because that one is open.
+  const existing = ports.existingConversation(located.task.id, request.columnId);
   if (existing !== undefined) return { sessionId: existing };
   const plan = planFirstExecution({
     task: located.task,
@@ -90,5 +93,5 @@ export async function prepareFirstExecution(ports: FirstExecutionPorts, request:
   }
   // The created conversation carries its own outcomes, so nothing here decides
   // what a refused model or preset costs: the receipt announces it, the board decides.
-  return await ports.createConversation(located.task.id);
+  return await ports.createConversation(located.task.id, request.columnId);
 }

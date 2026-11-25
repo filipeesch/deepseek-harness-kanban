@@ -554,6 +554,7 @@ export function BoardView({ api, renderConversation, pageState, sessionTitles, c
       initialStageId={stageEditor.initialStageId}
       column={stageEditor.column}
       columns={stageEditor.columns}
+      agents={activeBoard!.workflow.agents ?? []}
       tasks={state?.tasks ?? []}
       attention={snapshot?.attention ?? {}}
       api={api}

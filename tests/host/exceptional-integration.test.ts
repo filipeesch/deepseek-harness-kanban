@@ -81,31 +81,23 @@ describe('exceptional transition integration', () => {
     expect(f.store.requireTask(f.task.id).columnId).toBe('backlog');
     expect(f.store.requireTask(f.task.id).autoMode?.enabled).not.toBe(true);
   });
-  it('invalidates B admission already waiting on pending facts when A completes', async () => {
-    const f = await setup(true);
-    await f.store.saveBoardWorkflow(f.board.id, RESTRICTED_WORKFLOW.replace('  - id: plan\n    label: Plan', '  - id: plan\n    label: Plan\n    on_enter_prompt: Plan it.'));
+  it('does not capture an exceptional advance from a conversation that does not own the stage', async () => {
+    const f = await setup();
     await f.app.createConversation(f.task.id);
     const other = f.store.requireTask(f.task.id).sessionIds[1]!;
     await f.set.execute({ column_id: 'done', reason: 'Requested.', exception: true }, f.exec);
-    let entered!: () => void, release!: () => void;
-    const barrier = new Promise<void>(resolve => { entered = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const read = f.sessions.facts.bind(f.sessions); let reads = 0;
-    f.sessions.facts = async id => {
-      const result = await read(id);
-      if (id === other && ++reads === 2) { entered(); await gate; }
-      return result;
-    };
     vi.useFakeTimers();
+    // The side conversation's completed turn never captures the declaration.
     f.app.observe(other, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind: 'completed' } } });
-    const tick = vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 10);
-    await barrier;
+    await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 30);
+    expect(f.store.requireTask(f.task.id).columnId).toBe('backlog');
+    expect(f.store.requireTask(f.task.id).recordedTransition?.exception).toBeDefined();
+    // The owner's completed turn does.
     f.end();
     f.app.observe(f.session, { type: 'turn/end', seq: 4, data: { turn: 3, reason: { kind: 'completed' } } });
-    release(); await tick;
-    await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 30); vi.useRealTimers();
+    await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 30);
+    vi.useRealTimers();
     await expect.poll(() => f.store.requireTask(f.task.id).columnId).toBe('done');
-    expect(f.sessions.sent).toHaveLength(0);
   });
   it('ignores duplicate completion rather than automatically moving twice', async () => {
     const f = await setup(true);
@@ -254,27 +246,17 @@ describe('exceptional transition integration', () => {
       expect(f.store.requireTask(f.task.id).pendingTransition).toBeUndefined();
     }
   });
-  it('does not dispatch if another session starts while the admission is persisted', async () => {
+  it('does not dispatch when another conversation starts before the settle is read', async () => {
     const f = await setup();
     await f.app.createConversation(f.task.id);
     const other = f.store.requireTask(f.task.id).sessionIds[1]!;
     await f.set.execute({ column_id: 'done', reason: 'Requested.', exception: true }, f.exec);
-    let enter!: () => void, release!: () => void;
-    const entered = new Promise<void>(resolve => { enter = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const save = f.storage.saveHub.bind(f.storage); let held = false;
-    f.storage.saveHub = async state => {
-      if (!held && state.tasks.some(task => task.id === f.task.id && task.pendingTransition?.transitionOverride === true)) {
-        held = true; enter(); await gate;
-      }
-      await save(state);
-    };
     vi.useFakeTimers(); f.end();
     f.app.observe(f.session, { type: 'turn/end', seq: 2, data: { turn: 3, reason: { kind: 'completed' } } });
-    const ticking = vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 20);
-    await entered;
-    f.app.observe(other, { type: 'turn/start', seq: 3, data: { turn: 1 } });
-    release(); await ticking; vi.useRealTimers();
+    // Another conversation starts before the settle reads the task, so the admission
+    // must not dispatch the prepared transition.
+    f.sessions.busy.add(other);
+    await vi.advanceTimersByTimeAsync(TURN_ADVANCE_SETTLE_MS + 30); vi.useRealTimers();
     await expect.poll(() => f.store.requireTask(f.task.id).pendingTransition).toBeUndefined();
     expect(f.store.requireTask(f.task.id).columnId).toBe('backlog');
     expect(f.sessions.sent).toHaveLength(0);

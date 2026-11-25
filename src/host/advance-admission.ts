@@ -4,17 +4,15 @@ import { hasPendingUserWork } from '../domain/pending-user-work.js';
 import { blocksAdvance } from '../domain/auto-mode-hold.js';
 import { entryInstruction } from '../domain/stage-entry.js';
 import { advanceArmedFor, declaredTransitionReason, resolveAdvanceRoute, routesThroughDeterministicStage } from '../domain/transition-route.js';
-import { firstOpenSessionId } from '../shared/conversations.js';
 import { KanbanError, invariant } from '../shared/errors.js';
 import type { AdvanceOrigin, Column, HubState, PendingTransition, PendingUserWork, Task, Workflow } from '../shared/types.js';
+import { ownsStage } from '../domain/conversation-role.js';
 import type { LocatedTask } from './hub-repository.js';
 
 /** The task scope and the ports one advance admission needs. */
 export interface AdvanceAdmissionDeps {
   locate(taskId: string): LocatedTask;
   transact(hubId: string, change: (draft: HubState) => void): Promise<unknown>;
-  /** The first open conversation, creating one when every tab is closed. */
-  resolveSession(task: Task): Promise<string>;
   /** Pending user work across every conversation of the task, read fresh. */
   pending(task: Task): Promise<PendingUserWork>;
   dispatch(): Promise<void>;
@@ -77,14 +75,13 @@ function requireArmed(origin: AdvanceOrigin, workflow: Workflow, task: Task): vo
  * the transaction committed, throws and the coordinator records the admission
  * failure instead of retrying silently.
  */
-export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin, isCurrent: () => boolean = () => true): Promise<void> {
+export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin, isCurrent: () => boolean = () => true, ownerSessions?: readonly string[]): Promise<void> {
   if (!isCurrent()) return;
   const located = deps.locate(taskId);
   if (blocked(located, origin) || located.task.columnId !== plan.fromColumnId) return;
   requireSameDestination(located, plan);
   const destination = plan.destination!;
   const instruction = entryInstruction(destination);
-  const sessionId = instruction === undefined ? undefined : firstOpenSessionId(located.task) ?? await deps.resolveSession(located.task);
   const latest = deps.locate(taskId);
   if (!isCurrent() || blocked(latest, origin) || latest.task.columnId !== plan.fromColumnId) return;
   requireSameDestination(latest, plan);
@@ -105,7 +102,7 @@ export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: strin
     id: randomUUID(), fromColumnId: plan.fromColumnId, columnId: destination.id, mode: instruction !== undefined ? 'run' : 'move', status: 'waiting', origin,
     ...(reason === undefined ? {} : { reason }),
     ...(parameters === undefined ? {} : { parameters: { ...parameters } }),
-    ...(instruction !== undefined ? { text: instruction, sessionId: sessionId! } : {}),
+    ...(instruction !== undefined ? { text: instruction } : {}),
   };
   let accepted = false;
   await deps.transact(latest.hubId, draft => {
@@ -117,6 +114,9 @@ export async function admitTurnAdvance(deps: AdvanceAdmissionDeps, taskId: strin
     const board = draft.boards.find(candidate => candidate.id === value.boardId);
     invariant(board !== undefined, 'INVALID_TARGET', 'The automatic advance destination changed.');
     requireArmed(origin, board.workflow, value);
+    // The conversation that ended the turn must still own the stage in the transaction
+    // that moves it; a role change between settle and admission drops the advance.
+    if (ownerSessions !== undefined && !ownerSessions.some(sessionId => ownsStage(value, board.workflow, value.columnId, sessionId))) return;
     requireRoute(destination, board.workflow, value);
     value.pendingTransition = transition;
     if (value.autoMode?.pause !== undefined) delete value.autoMode.pause;

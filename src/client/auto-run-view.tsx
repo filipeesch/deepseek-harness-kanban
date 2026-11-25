@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Column, Task } from '../shared/types.js';
-import { firstOpenSessionId } from '../shared/conversations.js';
+import { agentConversationId, mainConversationId } from '../domain/conversation-role.js';
 import { entryInstruction, hasUnresolvedEntry } from '../domain/stage-entry.js';
 import { AUTO_RUN_DELAY_MS, autoRunEntryForColumn, RUN_FAILURE_FALLBACK, type AutoRunController, type AutoRunEntry, type AutoRunInput } from './auto-run.js';
 import { conversationLabel, type SessionTitleSource } from './conversation-label.js';
@@ -85,8 +85,13 @@ export function DrawerAutoRunNotice({ task, controller, columns, sessionTitles }
   if (!entry) return null;
   const column = columns.find(value => value.id === entry.columnId);
   const stage = column?.name ?? entry.columnId;
-  const open = firstOpenSessionId(task);
-  const target = open === undefined ? 'a new conversation' : conversationLabel(task, open, sessionTitles);
+  // The countdown names the conversation the stage will actually reach: the agent's
+  // own conversation when the stage names one, and the main conversation otherwise.
+  const stageAgent = column?.agent;
+  const targetSession = stageAgent === undefined || stageAgent === 'main'
+    ? mainConversationId(task)
+    : agentConversationId(task, stageAgent);
+  const target = targetSession === undefined ? 'a new conversation' : conversationLabel(task, targetSession, sessionTitles);
   if (entry.status === 'preparing') return <div className="kb-drawer-autorun kb-drawer-autorun-preparing" data-status="preparing">
     <p role="status">Preparing the first execution for the {stage} instruction…</p>
   </div>;

@@ -174,6 +174,16 @@ export function updateStage({ text, stageId, patch }: StageUpdateInput): StageUp
     writeColumn(stageId, ['on_enter_prompt'], (_existing, indent, key, flow) => instruction === null || instruction.trim().length === 0 ? null : textField(key, instruction, indent, flow));
   }
 
+  if (patch.agent !== undefined) {
+    const agent = patch.agent;
+    if (agent !== null) {
+      if (!isDomainId(agent)) invalid('An agent must be a nonempty safe identifier.');
+      const declared = new Set(['main', ...(workflow.agents ?? []).map(value => value.id)]);
+      if (!declared.has(agent)) invalid('Agent ' + agent + ' is not declared by this workflow.');
+    }
+    writeColumn(stageId, ['agent'], () => agent === null || agent === 'main' ? null : 'agent: ' + authoredScalar(agent));
+  }
+
   if (patch.scripted !== undefined && (patch.scripted === null || !scriptedEqual(stage.scripted, patch.scripted))) {
     const definition = patch.scripted === null ? null : parseScriptedDefinition(patch.scripted);
     if (definition !== null && stage.scripted !== undefined) next = updateScriptedFields(next, stageId, stage.scripted, definition);

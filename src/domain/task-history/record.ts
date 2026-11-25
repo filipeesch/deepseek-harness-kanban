@@ -12,6 +12,11 @@ import type { StageEntryOrigin, TaskHistoryEntry } from '../../shared/task-histo
 /** The task field an append writes; the caller keeps the rest of the task. */
 type RecordTarget = Pick<Task, 'history'>;
 
+/** One discarded held message; a repeated discard of the same message is not recorded twice. */
+export function recordHeldMessageDiscard(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'held-message' }>, 'kind'>): void {
+  append(target, { kind: 'held-message', ...entry });
+}
+
 /** Append each logical execution outcome once, never starts, attempts, or polling output. */
 export function recordScriptedExecution(target: RecordTarget, entry: Omit<Extract<TaskHistoryEntry, { kind: 'scripted-execution' }>, 'kind'>): void {
   if (target.history?.some(value => value.kind === 'scripted-execution' && value.executionId === entry.executionId)) return;

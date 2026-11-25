@@ -87,6 +87,38 @@ columns:
 
 A stage can run code instead of an agent instruction; see [Scripted steps](scripted-steps.md) for the fields that replace a stage's instruction and transitions.
 
+## Agents and stage conversations
+
+A board declares the agents its stages run with: an `agents` list at the document root, and an optional `agent` on each stage. The `main` agent is always available and cannot be removed; a document that declares none keeps the board default preset and model described in [Presets](presets.md).
+
+```yaml
+agents:
+  - id: main
+    name: Main
+    preset: kanban-workflow-operator
+  - id: designer
+    name: UX Design
+    preset: ux-design
+    model: { provider: anthropic, model: claude-sonnet-5 }
+columns:
+  - id: design
+    label: Design
+    agent: designer
+    on_enter_prompt: |
+      Design the feature and record the result in a shared note.
+      Then read list_allowed_transitions and declare the next stage with set_next_transition.
+```
+
+Each agent carries an `id`, a display `name` used as the conversation tab title, an optional `preset`, and an optional `model`. A stage that names an agent runs its entry instruction in that agent's own conversation; a stage that names none runs in the main conversation. Several stages may name the same agent, and they share one conversation and its history. A scripted or decision stage cannot name an agent. An agent change is a change to the workflow's meaning, not to its layout.
+
+The specialist routes like any agent stage: its instruction asks it to declare the transition, otherwise auto mode or your own move carries the task forward. The host never advances on its own. Its preset must not hide the Kanban product tools it needs to declare that transition and to send a message.
+
+When the agent's preset is not installed on this host, the stage does not start: no conversation is created, the card names the missing preset, and its run action retries once the preset is available. When the preset exists but its model does not, the conversation runs on the main agent's model and then on the deployment default, and the fallback is reported on the card and in the conversation. A conversation keeps the preset it started with.
+
+**Configuration → Boards → Edit → Defaults** lists the board's agents: the main agent first and pinned, with the preset and model controls below it, then every other agent with its identifier, name, preset, and model, plus the actions that add and remove one. The main agent and an agent a stage still names cannot be removed. Saving that surface writes the `agents` section, materializes the effective main-agent choice, and retires the legacy root `agent_preset` and `model` fields; a board migrates the first time you edit its agents or defaults, and no other edit rewrites the document's shape. A stored preset or model the host does not offer is presented as unavailable and is never rewritten. [Conversations](conversations.md) describes the surface the specialist works in and [Agent tools](agent-tools.md) the tools it uses.
+
+A workflow document that declares agents requires a build that understands the section. An older installation blocks that board with its validation problem rather than dropping the fields, so every installation on a team must be updated before such a board is published.
+
 ## Decision gates
 
 A stage can stop the flow for a person's explicit choice instead of running an agent instruction or a program. In the stage editor choose **Decision** on the Stage tab; the Decision tab carries the question, optional Markdown context, and one to twelve options. Each option has an **Id** (the identity a recorded choice keeps), a **Title**, an optional **Description**, and a **Destination** stage; several options may share a destination. One option is a valid explicit confirmation. A decision stage cannot also author an instruction, an allowed-transition list, or a scripted program: switching to **Decision** clears the other mode.

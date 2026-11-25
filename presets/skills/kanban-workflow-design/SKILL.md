@@ -23,6 +23,8 @@ For multiple workflows, design one integrated architecture: board responsibiliti
 
 Offer a concise summary and impacts: affected boards, stage/instruction/route changes, automation, coordination, retained model/layout, execution side effects, and publishing scope. Obtain approval for concrete writes; full YAML is available on request. If scope or impact changes during reconciliation, renew approval.
 
+Declare a specialist once at the root with `agents` and bind the stages it runs with `agent`; see [agents](references/agents-and-stage-conversations.md). Its instruction must ask for `set_next_transition`, and its preset must not mask the tools it needs.
+
 Prefer the structured tools over literal edits: `set_stage_prompt`, `set_stage_routes`, `set_stage_script`, `set_stage_decision`, `set_layout`, `add_stage`, and `remove_stage` rewrite only what they name and preserve every other authored character. Use `edit_board_yaml` for spans those tools do not cover, scoping each edit to a stage and field when the same text appears twice. Every write reports the digest it stored, the changed stages and field names, graph warnings, the reviewed authorization of each scripted stage once for the board, the affected cards, and instruction sizes — `detail: full` adds field values, `expect_sha256` refuses a mismatch, and `dry_run` returns the report without saving. Read it before the next write, and use `revert_board` when a change must be undone.
 
 Preview before saving when the shape matters: `render_workflow_diagram` draws the saved or proposed document with the same geometry the workflow view draws, and `layout_metrics` reports crossings, segments through stages, overlapping stages, covered labels, folds, and total route length.

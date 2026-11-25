@@ -204,6 +204,12 @@ function present(entry: TaskHistoryEntry, columns: readonly Pick<Column, 'id' | 
     case 'intent': return { event: 'Next stage recorded', detail: transition(entry.fromColumnId, entry.columnId, columns), tone: 'neutral' };
     case 'auto-mode': return autoModeRow(entry);
     case 'worktree': return worktreeRow(entry);
+    case 'held-message': return {
+      event: 'Held message discarded',
+      detail: stageName(columns, entry.columnId) + ' · ' + (entry.agent === undefined ? 'Main conversation' : 'Agent ' + entry.agent)
+        + ' · ' + (entry.reason === 'stage-removed' ? 'The stage no longer exists' : 'The task reached a terminal stage'),
+      tone: 'warning',
+    };
   }
 }
 

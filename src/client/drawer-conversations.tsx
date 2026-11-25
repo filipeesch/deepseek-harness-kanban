@@ -45,6 +45,8 @@ export interface DrawerConversationsProps {
   onDismissPresetNotice?: (sessionId: string) => void;
   /** Reveal one Session in the host's main chat; used by a branch the task could not adopt. */
   onOpenInMain?: ((sessionId: string) => void) | undefined;
+  /** The open conversation of the agent the current stage names, when it names one. */
+  stageConversation?: string | undefined;
 }
 
 type CommandScope = 'create' | 'close' | 'reopen';
@@ -52,7 +54,7 @@ type CommandScope = 'create' | 'close' | 'reopen';
 const NO_DISMISSED_NOTICES: readonly string[] = [];
 
 /** The Conversations section: task conversation tabs, the native surface, and the transient peek. */
-export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice, boardDefaultPreset, presetNoticeDismissed = NO_DISMISSED_NOTICES, onDismissPresetNotice, onOpenInMain }: DrawerConversationsProps) {
+export function DrawerConversations({ task, run, renderConversation, viewState, sessionTitles, conversationAttention = {}, worktreeDecisionRequired = false, projectUnavailable = false, modelNoticeDismissed = NO_DISMISSED_NOTICES, onDismissModelNotice, boardDefaultPreset, presetNoticeDismissed = NO_DISMISSED_NOTICES, onDismissPresetNotice, onOpenInMain, stageConversation }: DrawerConversationsProps) {
   const open = openSessionIds(task);
   const closed = closedSessionIds(task);
   const noConversations = task.sessionIds.length === 0;
@@ -104,6 +106,14 @@ export function DrawerConversations({ task, run, renderConversation, viewState, 
   const canSelectDefault = !creation.creating && creation.error === null && !selectionRequiredOf(view);
   const resolved = resolveConversation(view, open, canSelectDefault);
   const active = conversationOf(resolved) ?? undefined;
+  // Present the agent conversation once when its stage starts, and never again after
+  // the person switches away: the follow is keyed by the conversation, not by the tab.
+  const followed = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (stageConversation === undefined || active === stageConversation || followed.current === stageConversation) return;
+    followed.current = stageConversation;
+    chooseView(stageConversation);
+  }, [stageConversation, active, chooseView]);
   const peek = peekOf(resolved);
   const selectionRequired = selectionRequiredOf(resolved);
   const createBlocked = Boolean(creation.error || selectionRequired || surfaceBlocked);

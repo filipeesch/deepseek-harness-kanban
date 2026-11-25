@@ -1,0 +1,59 @@
+# Tasks
+
+## 1. Workflow document contract
+
+- [x] 1.1 Add the agent types to the workflow model — an agent with `id`, `name`, `preset`, and optional `model`, the root `agents` list, and the optional stage `agent` reference — in `src/shared/types.ts` and the parser in `src/domain/workflow.ts`, and verify the new parser tests accept an agents list with a stage reference and keep the parsed workflow equal to the authored YAML.
+- [x] 1.2 Enforce the validation rules: unique identifiers, the workflow identifier rules, reserved words, an unknown stage reference, an empty identifier/name/preset, and an agent model mapping validated like the board default model; verify each rejection leaves the last valid workflow in effect.
+- [x] 1.3 Project the agent list with the implicit `main` agent and resolve a stage's agent in a pure domain module (`src/domain/agents.ts`), including the legacy main resolution from the root `agent_preset`, the root `model`, the board metadata, and the host default; verify unit tests cover every combination and that a document without agents behaves exactly as today.
+- [x] 1.4 Route the board default preset and the board default model through the main agent (`src/domain/board-preset.ts`) so an authored `agents.main` wins, `main` without a preset is an explicit host default, and the legacy fields still decide when no agents section exists; verify the existing default-preset tests still pass with the new resolution cases added.
+- [x] 1.5 Report agents in the workflow write report and in the workflow diagnostics: a changed agent or stage binding is a workflow-meaning difference, a stage with an agent and no entry instruction is observed, and an unavailable preset or model is observed with the running host's roster; verify report tests cover each observation and that an unavailable preset never refuses the write.
+- [x] 1.6 Include the stage's agent in the single-stage read and the board document read; verify the read tests show the authored reference exactly and still reject an unknown stage.
+- [x] 1.7 Write the agents section and the stage binding from the authoring path with a text-preserving writer: replace only the `agents` block (inserting it at the root in authored key order when absent) and the named stage field, keep every other authored character, parse the result before returning, and preserve comments and quoting outside the written fields; verify writer tests cover insertion, replacement, clearing, and an unchanged document with comments.
+- [x] 1.8 Expose `set_agent`, `remove_agent`, and `set_stage_agent` behind the existing workflow-architect gate, refusing `main`, a referenced agent, and an undeclared identifier, accepting an expected Hub revision, and reusing the composed-document write path; verify tool tests cover each refusal, the stale revision, and a call from a role outside the gate.
+
+## 2. Conversation roles and target resolution
+
+- [x] 2.1 Store the conversation binding on the task: the agent per session and the held-message queue, with the schema, the store operations, and the read path for a task stored before the change; verify store tests add a bound session, close and reopen it, and read a legacy task as all-main with no held messages.
+- [x] 2.2 Add the pure conversation-role helpers over the task's session lists and bindings: the main conversation (first open session without a binding), an agent's conversation, and the conversation that owns a stage; verify unit tests cover closed conversations, a task with only agent conversations, and a task with no conversation.
+- [x] 2.3 Build the one host conversation resolver over the app's ports (create when missing, main agent for the main conversation, the agent for an agent conversation) and replace every current first-open lookup with it — the card run action, the timed instruction, the advance dispatch, the exceptional admission, the scripted handoff, the cross-card delivery, and the drawer run notice; verify each call site's test targets the resolver's conversation and that no direct `firstOpenSessionId` target remains in the host.
+
+## 3. Stage entry delivery for an agent stage
+
+- [x] 3.1 Extend conversation creation to accept an agent and apply the agent's preset and then its model before the first turn, recording the binding in the same transaction that adds the session to the task; verify creation tests cover the preset-then-model order, the effective directory, and the binding recorded with the session.
+- [x] 3.2 Implement the held entry for an unavailable agent preset: no conversation created, the unnamed session archived, the entry left unresolved, no pause recorded, no automatic retry, and a card status naming the agent and the missing preset; verify host tests show the hold, the archived session, the untouched auto mode, and the successful retry once the preset is available.
+- [x] 3.3 Implement the model fallback chain for an available preset: the agent's model, then the main agent's model, then the deployment default, reported on the card and in the conversation; verify tests cover each step of the chain and that a successful selection reports nothing.
+- [x] 3.4 Deliver an instructed agent stage to its conversation on every path — the card run action, the timed instruction after a move, the automatic advance, the confirmed transition, and the automatic first-execution preparation — with the same context message, orientation, briefing, reason, and scripted handoff a shared stage delivers; verify each path's test names the agent conversation as the target and asserts the main conversation receives nothing.
+- [x] 3.5 Title the agent conversation with the agent name at creation, present it as a conversation tab, open it when its stage starts, reopen it when it was closed, reuse it on a later stage that names the same agent, and keep it as an ordinary conversation when the workflow stops naming the agent; verify host and client tests cover each case and that closing the tab does not remove the binding.
+- [x] 3.6 Do not arm the five-second countdown for an entry held by a missing preset, and keep the run action available for the unresolved entry; verify the timed-instruction tests cover the held case and that canceling or failing a send restores the run action.
+
+## 4. Advance ownership
+
+- [x] 4.1 Arm the turn-end advance only from the conversation that owns the current stage in the advance coordinator, and re-read the same owner inside the admission; verify tests show the owning conversation advances, a side conversation arms nothing, a reply to a finished agent conversation arms nothing, and the task-wide running and pending-work holds still apply.
+- [x] 4.2 Keep the agent stage's routing unchanged: a declared transition advances the task, auto mode advances it, and a completed turn without a declaration and without auto mode leaves the task in place; verify tests for the three cases on an agent stage.
+
+## 5. Messages between conversations of one task
+
+- [x] 5.1 Extend `send_task_message` with the optional target task, the optional agent identifier, and the optional destination stage, accepting the sending task as a target and rejecting an agent or stage that names another task or is unknown; verify tool tests cover the immediate delivery to the main conversation, to an agent conversation, the creation of a missing agent conversation, the unavailable-preset rejection, and each rejection case.
+- [x] 5.2 Name the sender's agent in the model-facing message text so a reply can address it, and accept an agent in a reply; verify message tests show the header naming the agent and a reply reaching the agent conversation.
+- [x] 5.3 Implement the held-message queue: idempotent write per delivery identity, release in the placement transaction when the task first enters the destination stage, delivery with the destination instruction when the conversation matches and as its own message otherwise, release at most once, and no effect on pending user work or the advance; verify tests cover each ordering and the single release.
+- [x] 5.4 Discard a held message whose destination stage was removed or that the flow never reached, and record the discard in the task history naming the conversation it was for and the stage it waited for; verify history tests show the entry and that nothing is delivered.
+
+## 6. Authoring surfaces
+
+- [x] 6.1 Build the board agents surface in the Defaults sub-section: the main agent pinned and non-removable, the other agents with identifier, name, preset, and model, add and remove actions, the host preset roster and native model selector, unavailable preset and model presentation, and the roster or catalog failure with retry; verify component tests cover each state and that no removal is offered for the main or a referenced agent.
+- [x] 6.2 Save that surface as one guarded workflow write with the revision the form opened with, materializing the `agents` section for a legacy board and retiring the legacy fields and implicit metadata, while the workflow draft is dirty and while a save is rejected; verify host and client tests cover the migration, the preserved text outside the written fields, and the dirty-workflow refusal.
+- [x] 6.3 Add the agent selection to the stage editor's Stage tab, storing the binding in the draft, saving it with the guarded write, keeping the entry instruction, and presenting the main conversation only when no other agent exists; verify component tests cover binding, clearing, cancel, and a rejected save.
+- [x] 6.4 Present the agent conversation and the delivery target in the client: the tab title, the stage-start opening, the card run notice target, and the held-entry status; verify component tests cover a shared stage and an agent stage.
+
+## 7. Presets, skills, and documentation
+
+- [x] 7.1 Update the workflow-architect preset and its design skill references for the agents section, the stage binding, the new tools, the migration gesture, and the requirement that an agent preset must not mask the product tools it needs to declare and message; verify the preset and skill tests pass and both stay within their size ceilings.
+- [x] 7.2 Update the product documentation: `docs/user/workflows.md` for the agents section and the stage binding, `docs/user/conversations.md` for agent conversations, `docs/user/agent-tools.md` for the message tool and the agent authoring tools, `docs/user/presets.md` for the board agents, and `docs/development/presets.md` where the architect's role changed; verify `pnpm run check` passes its documentation gate.
+- [x] 7.3 Note the compatibility boundary where the docs already describe workflow portability: a board that authors agents needs every installation on a team to be updated, and an older build refuses that board instead of dropping the field; verify the documentation gate passes and the statement sits in the document that owns workflow sharing.
+
+## 8. Integration verification
+
+- [x] 8.1 Run `pnpm run typecheck`, `pnpm test`, and `pnpm run check`, and verify they pass with the new tests included.
+- [x] 8.2 Run `pnpm run test:browser` and capture the screenshots of the board agents surface, the stage editor agent selection, and an agent conversation tab under the ignored `.verification/` directory; verify each captured file exists and is not committed.
+- [ ] 8.3 Walk the product once through the installed bundle: declare an agent on a test board, bind a stage to it, run the stage, send its result to the main conversation with a destination stage, let the flow continue, and verify the agent conversation, the held message, and the advance behave as the specs state.
+- [x] 8.4 Verify an existing board and task created before the change still open, run, and advance exactly as before, and that the first agents-or-defaults save migrates the board without touching its other authored text.

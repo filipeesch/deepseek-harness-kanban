@@ -263,8 +263,10 @@ describe('auto-advance coordinator', () => {
     f.coordinator.observe('s1', turnEnd(1));
     await f.scheduler.flush();
     expect(f.admitted).toHaveLength(0);
+    // Only the main conversation arms the advance; the task-wide idle check still
+    // holds the settle while another conversation runs.
     f.facts.set('s2', idle);
-    f.coordinator.observe('s2', turnEnd(2));
+    f.coordinator.observe('s1', turnEnd(2));
     await f.scheduler.flush();
     expect(f.admitted).toHaveLength(1);
   });
@@ -277,7 +279,7 @@ describe('auto-advance coordinator', () => {
     await f.scheduler.flush();
     expect(f.admitted).toHaveLength(0);
     f.facts.set('s2', idle);
-    f.coordinator.observe('s2', turnEnd(2));
+    f.coordinator.observe('s1', turnEnd(2));
     await f.scheduler.flush();
     expect(f.admitted).toHaveLength(1);
   });

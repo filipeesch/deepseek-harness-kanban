@@ -3,7 +3,7 @@ import { captureStageTargets, ensureLocalStageIdentity, reconcileLocalStageIdent
 import { openSessionIds } from '../shared/conversations.js';
 import { declaredParameterNames, validateParameterValues } from './scripted-parameters.js';
 import { KanbanError, invariant } from '../shared/errors.js';
-import type { AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, TaskAttachment, Workflow } from '../shared/types.js';
+import type { AgentModelFallback, AutoModePause, AutoModeState, Board, BoardSettings, HubRelation, HubRelationType, HubSchedule, HubState, HubTask, Note, Project, ProjectInput, ModelSelection, StagePatch, TaskAttachment, Workflow } from '../shared/types.js';
 import { assertId, isAbsolutePath } from './validation.js';
 import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
@@ -732,13 +732,19 @@ export function editTask(hub: HubState, taskId: string, patch: TaskTextPatch, de
  * the caller aligned the conversation for, so a directory switch that completed
  * in between cannot attach a conversation to the wrong directory.
  */
-export function addSession(hub: HubState, taskId: string, sessionId: string, deps: OperationDeps, expectedEffectiveCwd?: string): HubTask {
+export function addSession(hub: HubState, taskId: string, sessionId: string, deps: OperationDeps, expectedEffectiveCwd?: string, agent?: string, fallback?: AgentModelFallback): HubTask {
   assertId(sessionId, 'Session ID');
   const task = requireTask(hub, taskId);
   invariant(!task.operation, 'TASK_BUSY', 'Cannot add a conversation during a context operation.');
   invariant(expectedEffectiveCwd === undefined || task.effectiveCwd === expectedEffectiveCwd, 'CONTEXT_CHANGED', 'The task directory changed before the conversation was attached.');
   assertAvailableSession(hub, sessionId);
   task.sessionIds.push(sessionId);
+  // The agent binding is part of the attachment: a conversation never joins a task
+  // without the role that decides which conversation the task's stages talk to.
+  // The route outcome lands with the binding: the card and the instruction read one
+  // durable record, and a failed later write cannot separate them.
+  if (agent !== undefined) task.sessionRoles = { ...(task.sessionRoles ?? {}), [sessionId]: { agent, ...(fallback === undefined ? {} : { modelFallback: fallback }) } };
+  else if (task.sessionRoles !== undefined) delete task.sessionRoles[sessionId];
   task.updatedAt = timestamp(deps);
   hub.updatedAt = task.updatedAt;
   return task;

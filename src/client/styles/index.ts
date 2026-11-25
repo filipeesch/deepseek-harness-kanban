@@ -15,6 +15,7 @@ import { scriptedStyles } from './scripted.js';
 import { workspaceStyles } from './workspace.js';
 import { taskFileStyles } from './task-files.js';
 import { attachmentCss } from '../../attachments/styles.js';
+import { agentsStyles } from './agents.js';
 
 /** Every plugin style module in cascade order; the board mounts this one string. */
-export const styles = [tokenStyles, baseStyles, headerStyles, cardStyles, activityStyles, motionStyles, sharingStyles, drawerHeaderStyles, scheduleStyles, stageStyles, historyStyles, relationStyles, scriptedStyles, workspaceStyles, taskFileStyles, attachmentCss, workflowViewStyles].join(String.fromCharCode(10));
+export const styles = [tokenStyles, baseStyles, headerStyles, cardStyles, activityStyles, motionStyles, sharingStyles, drawerHeaderStyles, scheduleStyles, stageStyles, historyStyles, relationStyles, scriptedStyles, workspaceStyles, taskFileStyles, attachmentCss, agentsStyles, workflowViewStyles].join(String.fromCharCode(10));

@@ -110,23 +110,37 @@ export const connectionLayout = z.strictObject({
   from: id, to: id, source: connectionAnchor.optional(), target: connectionAnchor.optional(), segments: z.array(connectionSegment).optional(),
 });
 export const column = z.strictObject({
-  id, key: id.optional(), name: nonempty, description: nonempty.optional(), scripted: scriptedDefinitionSchema.optional(), decision: decisionDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
+  id, key: id.optional(), name: nonempty, description: nonempty.optional(), agent: id.optional(), scripted: scriptedDefinitionSchema.optional(), decision: decisionDefinitionSchema.optional(), onEnterPrompt: z.string().optional(), allowedTransitions: z.array(transitionRule).optional(), position: stagePosition.optional(), size: stageSize.optional(),
 });
 export const group = z.strictObject({ id, name: nonempty, columnIds: z.array(id).min(1) });
 /** One model route: a provider, the provider-owned model, and an optional adapter-owned effort. */
 export const modelSelection = z.strictObject({ provider: nonempty, model: nonempty, reasoningEffort: nonempty.optional() });
 /** One authored MCP allowlist entry: a server, or one `server/tool` pair. */
 export const mcpAllowlistEntry = z.string().refine(value => parseMcpAllowlistEntry(value) !== undefined, 'Expected a server or server/tool entry.');
+/** One agent a board declares; `main` is always resolvable even when the document omits it. */
+export const workflowAgent = z.strictObject({
+  id, name: nonempty, preset: nonempty.optional(), model: modelSelection.optional(),
+});
 export const workflow = z.strictObject({
   name: nonempty, description: nonempty.optional(), initialColumnId: id, defaultView: z.enum(['board', 'workflow']).optional(), columns: z.array(column).min(1), groups: z.array(group),
   model: modelSelection.optional(),
   agentPreset: nonempty.optional(),
+  agents: z.array(workflowAgent).optional(),
   mcp: z.array(mcpAllowlistEntry).optional(),
   connections: z.array(connectionLayout).optional(),
 }).superRefine((value, context) => {
   const ids = new Set(value.columns.map(column => column.id));
+  const agentIds = new Set(['main', ...(value.agents ?? []).map(agent => agent.id)]);
+  if (new Set((value.agents ?? []).map(agent => agent.id)).size !== (value.agents ?? []).length) {
+    context.addIssue({ code: 'custom', path: ['agents'], message: 'Agent IDs must be unique.' });
+  }
   value.columns.forEach((column, index) => {
-    if (column.scripted === undefined) return;
+    if (column.agent !== undefined && !agentIds.has(column.agent)) context.addIssue({ code: 'custom', path: ['columns', index, 'agent'], message: 'A stage agent must name a declared agent.' });
+    if (column.scripted === undefined) {
+      if (column.decision !== undefined && column.agent !== undefined) context.addIssue({ code: 'custom', path: ['columns', index, 'agent'], message: 'A decision stage cannot name an agent.' });
+      return;
+    }
+    if (column.agent !== undefined) context.addIssue({ code: 'custom', path: ['columns', index, 'agent'], message: 'A scripted stage cannot name an agent.' });
     if (column.onEnterPrompt?.trim() || column.allowedTransitions !== undefined) context.addIssue({code: 'custom', path: ['columns', index, 'scripted'], message: 'Scripted execution cannot be combined with prompt or allowed transitions.'});
     for (const target of Object.values(column.scripted.exits)) if (target === column.id || !ids.has(target)) context.addIssue({code: 'custom', path: ['columns', index, 'scripted', 'exits'], message: 'A scripted target must name another existing stage.'});
   });
@@ -210,16 +224,21 @@ export const baseTask = z.strictObject({
   stageEntry: taskStageEntrySchema.optional(), scripted: scriptedControlSchema.optional(), scriptedHandoff: scriptedHandoffSchema.optional(),
   id, projectId: id, title: nonempty, description: z.string(), columnId: id, position: z.number().finite(),
   sessionIds: z.array(id), closedSessionIds: z.array(id), effectiveCwd: absolutePath,
+  sessionRoles: z.record(id, z.strictObject({ agent: id, modelFallback: z.strictObject({ requested: modelSelection, inUse: modelSelection.optional() }).optional() })).optional(),
+  heldMessages: z.array(z.strictObject({ id, fromSessionId: id, agent: id.optional(), columnId: id, body: z.string(), at: timestamp })).optional(),
+  releasedMessages: z.array(id).optional(),
   worktree: z.strictObject({ path: absolutePath, branch: nonempty, owned: z.boolean(), status: z.enum(['preparing', 'ready', 'error']), error: problem.optional() }).nullable(),
   worktreeDismissed: z.boolean().optional(),
   unclaimedWorktrees: z.array(z.strictObject({ path: absolutePath, branch: nonempty, error: problem })).optional(),
   worktreeWorkspaceId: id.optional(), worktreeWorkspaceOwned: z.boolean().optional(),
-  operation: operation.nullable(), pendingTransition: pendingTransition.optional(), instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite() }).optional(), autoMode: autoMode.optional(),
+  operation: operation.nullable(), pendingTransition: pendingTransition.optional(),
+  instructionPending: z.strictObject({ columnId: id, enteredAt: z.number().finite(), hold: z.strictObject({ code: z.literal('agent-preset-unavailable'), agent: id, preset: nonempty.optional() }).optional() }).optional(),
+  autoMode: autoMode.optional(),
   recordedTransition: z.strictObject({ fromColumnId: id, columnId: id, at: timestamp, reason: nonempty.optional(), parameters: parameterValuesSchema.optional(), exception: z.strictObject({ id, sessionId: id, turn: z.number().int().nonnegative(), entryId: id }).optional() }).optional(), history: taskHistorySchema.optional(), createdAt: timestamp, updatedAt: timestamp,
 });
 
 /** The task fields the shared invariant check reads. */
-export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending' | 'recordedTransition'>;
+export type TaskCheckValue = Pick<Task, 'projectId' | 'columnId' | 'sessionIds' | 'closedSessionIds' | 'operation' | 'pendingTransition' | 'instructionPending' | 'recordedTransition'> & Partial<Pick<Task, 'sessionRoles'>>;
 
 /** The authored connection layouts in a stable order, so identity does not depend on edit order. */
 function sortedConnections(value: readonly ConnectionLayout[] | undefined): ConnectionLayout[] {
@@ -244,7 +263,7 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     defaultView: value.defaultView,
     initialColumnId: value.initialColumnId,
     columns: value.columns.map(item => ({
-      id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, description: item.description, onEnterPrompt: item.onEnterPrompt,
+      id: item.id, ...(includeIdentity ? { key: item.key } : {}), name: item.name, description: item.description, agent: item.agent, onEnterPrompt: item.onEnterPrompt,
       scripted: canonicalScripted(item.scripted),
       decision: canonicalDecision(item.decision),
       allowedTransitions: item.allowedTransitions?.map(rule => normalizeTransitionRule(rule.to, rule.when)),
@@ -253,6 +272,10 @@ function workflowShape(value: Workflow, includeLayout: boolean, includeIdentity 
     groups: value.groups.map(item => ({ id: item.id, name: item.name, columnIds: item.columnIds })),
     model: value.model === undefined ? undefined : { provider: value.model.provider, model: value.model.model, reasoningEffort: value.model.reasoningEffort },
     agentPreset: value.agentPreset,
+    agents: value.agents === undefined ? undefined : value.agents.map(agent => ({
+      id: agent.id, name: agent.name, preset: agent.preset,
+      model: agent.model === undefined ? undefined : { provider: agent.model.provider, model: agent.model.model, reasoningEffort: agent.model.reasoningEffort },
+    })),
     mcp: value.mcp === undefined ? undefined : [...value.mcp],
     ...(includeLayout ? { connections: sortedConnections(value.connections).map(shapeConnection) } : {}),
   });
@@ -317,6 +340,9 @@ export function createTaskInvariantChecker(projectIds: ReadonlySet<string>, issu
       unique(value.sessionIds, ['tasks', index, 'sessionIds']);
       unique(value.closedSessionIds, ['tasks', index, 'closedSessionIds']);
       const sessions = new Set(value.sessionIds);
+      for (const sessionId of Object.keys(value.sessionRoles ?? {})) {
+        if (!sessions.has(sessionId)) issue(['tasks', index, 'sessionRoles'], 'A conversation role must name a conversation of the task.');
+      }
       for (const sessionId of value.sessionIds) {
         if (sessionOwners.has(sessionId)) issue(['tasks', index, 'sessionIds'], 'A native session cannot belong to multiple tasks.');
         sessionOwners.add(sessionId);

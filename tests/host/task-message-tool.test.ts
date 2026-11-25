@@ -26,6 +26,8 @@ function messaging(input: { targetOpen?: string[]; hubId?: string } = {}) {
     locateBySession: id => id === 'task-session' ? sender : undefined,
     locate: id => id === 'target' ? target : id === 'sender' ? sender : undefined,
     prepare: async () => ({ sessionId: 'prepared-session', createdConversation: true }),
+    hold: vi.fn(async () => {}),
+    agentConversation: vi.fn(async () => 'agent-session'),
     delivery,
   });
   return { service, delivery };
@@ -45,8 +47,10 @@ describe('send_task_message tool', () => {
     const definition = tool(productToolDefinitions(f.app, f.app.boards, service), 'send_task_message');
     const schema = definition.parameters as unknown as { type: string; properties: Record<string, unknown>; required: string[] };
     expect(schema.type).toBe('object');
-    expect(Object.keys(schema.properties).sort()).toEqual(['message', 'task_id']);
-    expect([...schema.required].sort()).toEqual(['message', 'task_id']);
+    expect(Object.keys(schema.properties).sort()).toEqual(['agent', 'deliver_at', 'message', 'task_id']);
+    expect([...schema.required].sort()).toEqual(['message']);
+    expect(schema.properties.agent).toMatchObject({ type: 'string' });
+    expect(schema.properties.deliver_at).toMatchObject({ type: 'string' });
     expect(schema.properties.task_id).toMatchObject({ type: 'string' });
     expect(schema.properties.message).toMatchObject({ type: 'string' });
     expect(definition.description).toContain('explicitly requests');
@@ -82,15 +86,22 @@ describe('send_task_message tool', () => {
       .rejects.toMatchObject({ code: 'MISSING_TASK_CONTEXT' });
   });
 
-  it('rejects the sending task, a cross-Hub target, and an empty body', async () => {
+  it('accepts the sending task and rejects a cross-Hub target and an empty body', async () => {
     const f = await setup();
     const { service } = messaging();
     const definition = tool(productToolDefinitions(f.app, f.app.boards, service), 'send_task_message');
-    await expect(definition.execute({ task_id: 'sender', message: 'Hi' }, execution())).rejects.toMatchObject({ code: 'SELF_MESSAGE' });
+    await expect(definition.execute({ task_id: 'sender', message: 'Hi' }, execution())).resolves.toMatchObject({ delivered: true, target: { taskId: 'sender' } });
     const crossHub = messaging({ hubId: 'other' });
     const crossHubDefinition = tool(productToolDefinitions(f.app, f.app.boards, crossHub.service), 'send_task_message');
     await expect(crossHubDefinition.execute({ task_id: 'target', message: 'Hi' }, execution())).rejects.toMatchObject({ code: 'CROSS_HUB_MESSAGE' });
     await expect(definition.execute({ task_id: 'target', message: '   ' }, execution())).rejects.toMatchObject({ code: 'EMPTY_MESSAGE' });
+  });
+
+  it('passes the address and the destination stage to the messaging policy', async () => {
+    const f = await setup();
+    const { service } = messaging();
+    const definition = tool(productToolDefinitions(f.app, f.app.boards, service), 'send_task_message');
+    await expect(definition.execute({ message: 'Summary.', deliver_at: 'todo' }, execution())).resolves.toMatchObject({ delivered: false, held: { columnId: 'todo' } });
   });
 
   it('delegates an accepted call with the sender, target, body, and call identity', async () => {

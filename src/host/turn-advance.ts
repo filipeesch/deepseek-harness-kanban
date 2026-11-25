@@ -3,6 +3,7 @@ import { KanbanError } from '../shared/errors.js';
 import { openSessionIds } from '../shared/conversations.js';
 import { resolveAdvanceDecision, type AutoAdvancePlan } from '../domain/auto-advance.js';
 import { advanceArmed, resolveAdvanceRoute } from '../domain/transition-route.js';
+import { ownsStage } from '../domain/conversation-role.js';
 
 /** Delay before a completed turn is evaluated, so the native activity projection has settled. */
 export const TURN_ADVANCE_SETTLE_MS = 250;
@@ -51,7 +52,7 @@ export interface TurnAdvancePorts {
    * latest for the task, so an admission queued behind a pause or resume drops the
    * turn it no longer owns.
    */
-  admit(taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin, isCurrent: () => boolean): Promise<void>;
+  admit(taskId: string, plan: AutoAdvancePlan, origin: AdvanceOrigin, isCurrent: () => boolean, ownerSessions: readonly string[]): Promise<void>;
   pause(taskId: string, reason: AutoModePauseReason, message: string | undefined, expectedColumnId: string): Promise<void>;
   schedule(callback: () => void): unknown;
   cancel(handle: unknown): void;
@@ -84,6 +85,10 @@ export class TurnAdvanceCoordinator {
     if (kind === undefined || key === undefined) return;
     const located = this.ports.locateBySession(sessionId);
     if (!located || !openSessionIds(located.task).includes(sessionId)) return;
+    // Only the conversation that owns the current stage arms an advance: a side
+    // conversation, a reply to a finished agent, or a cross-card message turn never
+    // moves the task, while every conversation still counts for the holds below.
+    if (!ownsStage(located.task, located.board.workflow, located.task.columnId, sessionId)) return;
     if (!advanceArmed(located.board.workflow, located.task)) return;
     if (this.handled.has(key)) return;
     this.handled.add(key);
@@ -156,6 +161,10 @@ export class TurnAdvanceCoordinator {
         if (decision.kind === 'busy') continue;
         // Pending user work is a hold, not a retry: nothing is admitted, nothing is recorded.
         if (decision.kind === 'pending') continue;
+        // The owner is re-read after the facts: a task that moved while the turn was
+        // settling must not be advanced by a conversation that no longer owns its stage.
+        const owns = [...entry.sessions].some(sessionId => ownsStage(located.task, located.board.workflow, located.task.columnId, sessionId));
+        if (!owns) continue;
         if (decision.kind === 'running') {
           if (decision.sessions.some(sessionId => entry.sessions.has(sessionId))
             && entry.attempts + 1 < TURN_ADVANCE_SETTLE_ATTEMPTS) {
@@ -164,7 +173,7 @@ export class TurnAdvanceCoordinator {
           }
           continue;
         }
-        await this.advance(located.task, located.board, entry.generation);
+        await this.advance(located.task, located.board, entry.generation, [...entry.sessions]);
       } catch (error) {
         this.ports.report(error);
       }
@@ -183,7 +192,7 @@ export class TurnAdvanceCoordinator {
     }
   }
 
-  private async advance(task: HubTask, board: Board, generation: number): Promise<void> {
+  private async advance(task: HubTask, board: Board, generation: number, ownerSessions: readonly string[]): Promise<void> {
     if (this.disposed) return;
     const route = resolveAdvanceRoute(board.workflow, task);
     if (route.kind === 'none') return;
@@ -202,7 +211,7 @@ export class TurnAdvanceCoordinator {
     try {
       // The admission runs behind the command lane, so it re-reads this predicate
       // right before it decides; a forget after the settle still wins.
-      await this.ports.admit(task.id, route.plan, origin, () => (this.generations.get(task.id) ?? 0) === generation);
+      await this.ports.admit(task.id, route.plan, origin, () => (this.generations.get(task.id) ?? 0) === generation, ownerSessions);
     } catch (error) {
       this.ports.report(error);
       if (task.autoMode?.enabled !== true) return;

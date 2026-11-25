@@ -319,7 +319,7 @@ The task drawer SHALL be resizable within defined minimum and maximum bounds and
 
 ### Requirement: Nested native conversation tabs
 
-A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that follows a first-execution move or run action and its worktree question, including the automatic first-execution preparation on task creation, by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance, or by a cross-card message delivery that needs a conversation and finds none open. When an execution preparation creates the first conversation, it SHALL do so after the worktree is ready and after the move or run action is applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset; conversations created by the execution preparation, including the automatic creation preparation, by a stage instruction, or by a cross-card message delivery use the board's default model when the board names one and the deployment default otherwise, and SHALL use the board's default agent preset when the board names one and the host default preset otherwise.
+A task SHALL begin with no native DSH conversation in its Conversations section. The section SHALL provide an explicit start action, presented as the agent-preset cards, that creates the first distinct native DSH conversation as a tab within the same task, and a plus action that opens the same preset choice to create another distinct native DSH conversation. The first conversation SHALL be created only by that explicit choice, by the execution preparation that follows a first-execution move or run action and its worktree question, including the automatic first-execution preparation on task creation, by a stage instruction that needs a conversation and finds none open, including a stage instruction dispatched from a card, a confirmed transition, or an automatic advance, or by a cross-card message delivery that needs a conversation and finds none open. When an execution preparation creates the first conversation, it SHALL do so after the worktree is ready and after the move or run action is applied, and the conversation SHALL use that directory. For a Git-backed task without a worktree, the explicit start action SHALL remain unavailable until the worktree choice is resolved as defined by `worktree-management`. The first conversation SHALL use the task's current effective directory at creation time. A conversation created from a card SHALL receive the card's preset. A conversation created for a stage that names an agent SHALL use that agent's preset and model, and SHALL be created only when the host offers that preset. The remaining conversations — created by the execution preparation for a stage that names no agent, by a stage instruction that names no agent, or by a cross-card message delivery — use the board's default model when the board names one and the deployment default otherwise, and SHALL use the board's default agent preset when the board names one and the host default preset otherwise.
 
 A scripted entry SHALL NOT create a conversation, select a preset or model, or start a model turn solely to execute code. A task whose first execution is scripted SHALL remain able to have zero native conversations. When that execution later selects an agent destination whose instruction needs a conversation, the host SHALL create or resolve only the conversation required by that instruction using the normal directory and board-model and board-preset rules; the scripted handoff SHALL accompany the instruction. A script or manual destination SHALL receive or retain its handoff without creating a conversation.
 
@@ -399,6 +399,13 @@ A scripted entry SHALL NOT create a conversation, select a preset or model, or s
 - **WHEN** a newly created task enters a scripted initial stage
 - **THEN** its script-only execution has no native conversation tab
 - **AND** the normal explicit native conversation actions remain available under their existing preconditions
+
+#### Scenario: Create the agent conversation of an instructed stage
+
+- **WHEN** a stage instruction names an agent and the task has no conversation for that agent
+- **THEN** one native DSH conversation is created in the task's current effective directory
+- **AND** it runs that agent's preset and model
+- **AND** the stage instruction is sent to it
 
 #### Scenario: Create a conversation only for a downstream agent instruction
 
@@ -1399,7 +1406,8 @@ After every awaited resume, execution-context, or durable-history read, actual n
 ### Requirement: Board default agent preset applies to every new conversation
 
 The system SHALL start every new conversation created for a task on the default agent preset of that
-task's board, as defined by Board default agent preset in `kanban-board`. This SHALL cover the first
+task's board, as defined by Board default agent preset in `kanban-board`. A conversation created for a
+stage that names an agent SHALL start on that agent's preset and model instead. This SHALL cover the first
 conversation created by the execution preparation, a later conversation added to a task that already
 has one, the conversation created by the automatic first-execution preparation on task creation, a
 conversation created through an agent tool, and a conversation created by a cross-card message
@@ -1412,6 +1420,13 @@ SHALL leave that conversation on the host default preset and SHALL NOT block its
 chosen inside a conversation SHALL apply to that conversation and SHALL NOT be written back to the
 board. A schedule occurrence SHALL NOT inherit a board's default agent preset, because a schedule
 targets a project rather than a board. A conversation that already exists SHALL keep its preset.
+
+#### Scenario: Start an agent conversation on its agent's preset
+
+- **WHEN** a conversation is created for a stage that names an agent with a preset and a model
+- **THEN** that conversation runs that agent's preset and model
+- **AND** the installation's default preset is unchanged
+- **AND** a conversation created afterwards for a stage that names no agent uses the board's default preset again
 
 #### Scenario: Start the first conversation on the board's preset
 
@@ -1634,3 +1649,39 @@ When an attach the drawer awaited fails, the client SHALL leave the task's conve
 - **WHEN** a claim is repeated for a fork the task already retains
 - **THEN** the task's conversation tabs are unchanged
 - **AND** no second conversation is created
+
+### Requirement: Agent conversations of a task
+
+A task SHALL record, for a conversation created for a stage that names an agent, the agent that conversation belongs to. A conversation with no such record is the main conversation. The main conversation SHALL be the first open conversation that carries no agent record; when no such conversation is open, one SHALL be created for the board's main agent when a stage that names no agent, a cross-card message, or the person needs it. The task SHALL NOT record a separate primary-conversation pointer beside its conversation list, so the main conversation is always derived from the conversations the task actually owns. An agent conversation that the workflow stops declaring SHALL become an ordinary conversation of the task, keeping its history and its native identity, instead of impersonating the removed agent.
+
+An agent conversation SHALL be an ordinary conversation of the task: it appears as a tab in the Conversations section, it carries the native session title the host sets to the agent's name at creation, it can be renamed like any tab, it is closed and reopened through the existing conversation actions, and closing it SHALL NOT remove its agent record. The section SHALL NOT present a separate agent list, an agent picker, or a badge that replaces the native conversation presentation.
+
+#### Scenario: Derive the main conversation from the records
+
+- **WHEN** a task owns one conversation for an agent and one conversation with no agent record
+- **THEN** the conversation with no agent record is the main conversation
+- **AND** the agent conversation is not treated as the main one
+
+#### Scenario: Create the main conversation when only an agent conversation exists
+
+- **WHEN** a stage that names no agent needs the main conversation and the task owns only agent conversations
+- **THEN** the main conversation is created for the board's main agent
+- **AND** the agent conversation is left unchanged
+
+#### Scenario: Title the agent conversation with the agent name
+
+- **WHEN** an agent conversation is created
+- **THEN** its native session title is the agent's name
+- **AND** the tab presents that title
+
+#### Scenario: Close and reopen an agent conversation
+
+- **WHEN** the person closes an agent conversation and later the task needs it again
+- **THEN** the same conversation is reopened with its history
+- **AND** its agent record is unchanged
+
+#### Scenario: Present no separate agent surface
+
+- **WHEN** the Conversations section presents a task that owns agent conversations
+- **THEN** they are presented as ordinary conversation tabs
+- **AND** no agent picker or separate agent list is presented

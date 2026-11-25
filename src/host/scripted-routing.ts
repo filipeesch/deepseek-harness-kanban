@@ -16,6 +16,8 @@ export interface ScriptedRoutingPorts {
   pending(task: Task): Promise<PendingUserWork>;
   reserved?(taskId: string): boolean;
   notify?(): void;
+  /** Report one accepted placement, so the host can release or discard its held messages. */
+  placed?(taskId: string, columnId: string): void;
   now?(): string;
 }
 function sameContext(left: LocatedTask, right: LocatedTask): boolean {
@@ -93,6 +95,7 @@ export function createScriptedRouter(ports: ScriptedRoutingPorts): (request: Sup
     if (!afterPending || request.signal.aborted || !sameContext(initial, afterPending)) return { status: 'held' };
     const heldAfterReads = evaluateScriptedHold(holdInput(afterPending, request, pending.kinds, conversations, now(), reserved()));
     if (heldAfterReads) return held(heldAfterReads);
+    let placedColumnId: string | undefined;
     const outcome = await ports.hubs.transact(initial.hubId, hub => {
       const task = hub.tasks.find(value => value.id === taskId);
       const board = task && hub.boards.find(value => value.id === task.boardId);
@@ -122,6 +125,7 @@ export function createScriptedRouter(ports: ScriptedRoutingPorts): (request: Sup
       // route records itself as such.
       const origin: StageEntryOrigin = result.synthetic === true ? `error:${result.exit}` : `script:${result.exit}`;
       placeTask(hub, taskId, destination.id, 'start', Date.parse(at), { at, origin, ...(Object.keys(bound.values).length === 0 ? {} : { parameters: bound.values }) });
+      placedColumnId = destination.id;
       // The result receipt and destination entry/handoff share this one task transaction.
       // The handoff keeps every sent value for context and history; only declared
       // names were written to the entry above.
@@ -131,7 +135,7 @@ export function createScriptedRouter(ports: ScriptedRoutingPorts): (request: Sup
         ...(instruction === undefined ? {} : { instruction }) };
       return { status: 'accepted' } as const;
     });
-    if (outcome.status === 'accepted') ports.notify?.();
+    if (outcome.status === 'accepted') { ports.notify?.(); if (placedColumnId !== undefined) ports.placed?.(taskId, placedColumnId); }
     return outcome;
   };
 }

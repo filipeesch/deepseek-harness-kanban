@@ -101,6 +101,22 @@ export function defaultDestination(workflow: Workflow, fromColumnId: string): Co
   return next && next.id !== fromColumnId ? next : undefined;
 }
 
+/**
+ * Whether the workflow defines any onward route from one stage, by any kind of
+ * routing: authored transitions, a script's named exits, a decision gate's options,
+ * or the workflow order when the stage authors no list. A stage with no onward route
+ * at all is terminal; a stage whose route is merely not an automatic default (a
+ * decision gate, a script, an explicitly empty list) is not.
+ */
+export function hasOnwardRoute(workflow: Workflow, columnId: string): boolean {
+  const column = workflow.columns.find(value => value.id === columnId);
+  if (column === undefined) return false;
+  if (column.scripted !== undefined) return Object.keys(column.scripted.exits).length > 0;
+  if (column.decision !== undefined) return column.decision.options.length > 0;
+  if (column.allowedTransitions !== undefined) return column.allowedTransitions.length > 0;
+  return defaultDestination(workflow, columnId) !== undefined;
+}
+
 /** Every workflow stage in workflow order, paired with its access from `from`. */
 export function transitionDestinations(workflow: Workflow, from: string): TransitionDestination[] {
   return workflow.columns.map(column => ({ column, access: transitionAccess(workflow, from, column.id) }));

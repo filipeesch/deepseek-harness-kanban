@@ -56,6 +56,8 @@ function messaging(f: Fixture, delivered: Delivered[]): InterCardMessaging {
     locateBySession: sessionId => f.app.locator.bySession(sessionId),
     locate: taskId => f.app.locator.byTask(taskId),
     prepare: async () => { throw new Error('the composition test always has an open conversation'); },
+    hold: async () => {},
+    agentConversation: async () => { throw new Error('the composition test addresses another task'); },
     delivery: { deliver: async (sessionId, delivery) => { delivered.push({ sessionId, delivery }); } },
   });
 }

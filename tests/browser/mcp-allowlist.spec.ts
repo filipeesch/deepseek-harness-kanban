@@ -19,7 +19,7 @@ test('presents the board MCP allowlist in both appearances', async ({ page }) =>
   await page.goto(HARNESS + '?scenario=board-mcp');
   await page.getByRole('button', { name: /^Edit board / }).click();
   await boardTabs(page).waitFor();
-  await boardTabs(page).getByRole('tab', { name: 'Defaults' }).click();
+  await boardTabs(page).getByRole('tab', { name: 'MCP' }).click();
   const form = page.getByRole('form', { name: 'Board defaults' });
   const fieldset = form.getByRole('group', { name: 'Board MCP tool allowlist' });
   await expect(fieldset).toBeVisible();
@@ -46,7 +46,7 @@ test('keeps an explicit empty selection distinct from every server', async ({ pa
   await page.goto(HARNESS + '?scenario=board-mcp');
   await page.getByRole('button', { name: /^Edit board / }).click();
   await boardTabs(page).waitFor();
-  await boardTabs(page).getByRole('tab', { name: 'Defaults' }).click();
+  await boardTabs(page).getByRole('tab', { name: 'MCP' }).click();
   const form = page.getByRole('form', { name: 'Board defaults' });
   const fieldset = form.getByRole('group', { name: 'Board MCP tool allowlist' });
   await fieldset.getByRole('radio', { name: 'Selected servers' }).check();

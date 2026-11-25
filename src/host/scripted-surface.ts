@@ -1,6 +1,5 @@
 import { invariant, problem } from '../shared/errors.js';
 import { recordScriptedHandoff } from '../domain/task-history/record.js';
-import { firstOpenSessionId } from '../shared/conversations.js';
 import { scriptedEqual } from '../domain/scripted-definition.js';
 import type { ScriptedSummary } from '../shared/scripted.js';
 import type { HubTask } from '../shared/types.js';
@@ -26,8 +25,8 @@ export interface ScriptedSurfacePorts {
   supervisor(): { reconcile(taskId: string): void } | undefined;
   /** Mutate one task inside its Hub transaction. */
   transact(taskId: string, mutate: (task: HubTask | undefined) => void): Promise<void>;
-  /** Create the task's first conversation and answer its identity. */
-  ensureConversation(taskId: string): Promise<string>;
+  /** The conversation the given stage owns, creating it when the task has none. */
+  ensureConversation(taskId: string, columnId: string): Promise<string>;
   /** Admit the destination instruction into one native conversation. */
   admit(input: { taskId: string; columnId: string; instruction: string; sessionId: string; requestId: string; entryId: string }): Promise<void>;
   /** Run the pending-transition dispatch after a reservation is released. */
@@ -134,7 +133,7 @@ export class ScriptedSurface {
         try {
           let current = this.ports.locate(task.id);
           if (current?.task.stageEntry?.id !== handoff.entryId || current.project.operation) return;
-          const sessionId = handoff.sessionId ?? firstOpenSessionId(current.task) ?? await this.ports.ensureConversation(task.id);
+          const sessionId = handoff.sessionId ?? await this.ports.ensureConversation(task.id, current.task.columnId);
           current = this.ports.locate(task.id);
           if (current?.task.stageEntry?.id !== handoff.entryId) return;
           await this.ports.transact(task.id, value => {

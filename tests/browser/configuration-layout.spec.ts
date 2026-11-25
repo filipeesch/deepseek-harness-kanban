@@ -46,11 +46,11 @@ test('opens one board overlay above the list with its sub-sections and one size'
   await page.goto(HARNESS + '?scenario=board-model');
   await openBoard(page);
   await expect(overlay(page)).toHaveClass(/kb-dialog-settings-wide/);
-  for (const name of ['General', 'Projects', 'Defaults', 'Workflow', 'Danger zone']) {
+  for (const name of ['General', 'Projects', 'Agents', 'MCP', 'Workflow', 'Danger zone']) {
     await expect(boardTabs(page).getByRole('tab', { name })).toBeVisible();
   }
   const first = (await overlay(page).boundingBox())!;
-  for (const name of ['Projects', 'Defaults', 'Workflow', 'Danger zone', 'General']) {
+  for (const name of ['Projects', 'Agents', 'MCP', 'Workflow', 'Danger zone', 'General']) {
     await boardTabs(page).getByRole('tab', { name }).click();
     await page.waitForTimeout(120);
     const next = (await overlay(page).boundingBox())!;

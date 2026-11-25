@@ -34,6 +34,10 @@ It still reads repositories and runs shell commands under a session pinned to th
 
 **Kanban Project Manager** (`kanban-project-manager`) coordinates a project's cards. It has no file, shell, web, delegation, or MCP tool, and no product tool that creates, edits, deletes, or relates a card: it reads the board, writes shared notes, messages other cards, declares its own card's next transition, and pauses or resumes its own automatic advance. A change of scope or requirements goes to the planner, never to a card the manager edits itself.
 
+## Board agents
+
+A board's agents carry the preset and model each of its conversations starts on, as [Workflows](workflows.md) describes. The main agent is always present and cannot be removed, and it is the conversation every stage that names no agent uses. **Configuration → Boards → Edit → Defaults** edits the agents beside the board's default model and MCP allowlist, and the main agent's preset and model are the same controls described as the board defaults.
+
 ## How a role receives its tools
 
 Each role declares the product tools it receives in its own preset row, and every product tool outside that list is absent from the agent rather than refused when called.

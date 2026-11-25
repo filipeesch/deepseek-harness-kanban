@@ -6,15 +6,16 @@ import { Tabs, type RunCommand } from '../ui.js';
 import type { NativeSeat } from '../native-slot-host.js';
 import { BoardDangerPanel } from './board/board-danger-panel.js';
 import { BoardDefaultsPanel } from './board/board-defaults-panel.js';
+import { BoardAgentsPanel } from './board/board-agents-panel.js';
 import { BoardGeneralPanel } from './board/board-general-panel.js';
 import { BoardProjectsPanel } from './board/board-projects-panel.js';
 import { BoardWorkflowPanel } from './board/board-workflow-panel.js';
 
-const SECTIONS = ['General', 'Projects', 'Defaults', 'Workflow', 'Danger zone'] as const;
+const SECTIONS = ['General', 'Projects', 'Agents', 'MCP', 'Workflow', 'Danger zone'] as const;
 export type BoardSection = (typeof SECTIONS)[number];
 
 /** Which panels can hold a draft the container's leave guard must protect. */
-const DRAFT_SECTIONS: ReadonlySet<BoardSection> = new Set(['General', 'Projects', 'Defaults']);
+const DRAFT_SECTIONS: ReadonlySet<BoardSection> = new Set(['General', 'Projects', 'Agents', 'MCP']);
 
 export interface BoardSettingsProps {
   state: BoardState;
@@ -47,7 +48,7 @@ export function BoardSettings({ state, hub, board, run, api, sharing, onDeleted,
   const id = useId();
   const [active, setActive] = useState<BoardSection>('General');
   const [pending, setPending] = useState<BoardSection | null>(null);
-  const [dirty, setDirty] = useState<Record<BoardSection, boolean>>({ General: false, Projects: false, Defaults: false, Workflow: false, 'Danger zone': false });
+  const [dirty, setDirty] = useState<Record<BoardSection, boolean>>({ General: false, Projects: false, Agents: false, MCP: false, Workflow: false, 'Danger zone': false });
   const share = useSharingActions(api);
   const onShare = hub !== null && api !== undefined && canPublishBoard(sharing, board.id) ? async () => {
     const failure = await share.run('publish-board', { type: 'sharing.publishBoard', hubId: hub.id, boardId: board.id });
@@ -81,11 +82,16 @@ export function BoardSettings({ state, hub, board, run, api, sharing, onDeleted,
   if (hub === null) return null;
   const panel = active === 'General' ? <BoardGeneralPanel hub={hub} board={board} run={run} onDirtyChange={mark('General')} />
     : active === 'Projects' ? <BoardProjectsPanel state={state} hub={hub} board={board} run={run} onDirtyChange={mark('Projects')} />
-    : active === 'Defaults' ? <BoardDefaultsPanel
+    : active === 'Agents' ? <BoardAgentsPanel
         hub={hub} board={board} run={run} {...(api === undefined ? {} : { api })}
         yaml={state.workflowYaml} baseRevision={state.revision} workflowEditing={workflowEditing}
-        onOpenWorkflow={() => request('Workflow')} onDirtyChange={mark('Defaults')}
+        onDirtyChange={mark('Agents')}
         {...(nativeSeat === undefined ? {} : { seat: nativeSeat })}
+      />
+    : active === 'MCP' ? <BoardDefaultsPanel
+        hub={hub} board={board} run={run} {...(api === undefined ? {} : { api })}
+        yaml={state.workflowYaml} baseRevision={state.revision} workflowEditing={workflowEditing}
+        onOpenWorkflow={() => request('Workflow')} onDirtyChange={mark('MCP')}
       />
     : active === 'Workflow' ? <BoardWorkflowPanel
         state={state} run={run} hubId={hub.id} boardId={board.id}

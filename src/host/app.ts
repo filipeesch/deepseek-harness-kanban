@@ -3,7 +3,7 @@ import { assertAttachmentRemoval, requireTaskAttachment, taskAttachments } from 
 import { QuestionAttachments, TaskAttachments, type ReadTaskAttachment } from './task-attachments/service.js';
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { canTransition, transitionAccess } from '../domain/transitions.js';
+import { canTransition, hasOnwardRoute, transitionAccess } from '../domain/transitions.js';
 import { resolveTaskConversationModel } from '../domain/model-preference.js';
 import type { SessionModelPort } from './session-model.js';
 import type { SessionPresetPort } from './session-preset.js';
@@ -22,10 +22,11 @@ import { openTurnIdentity, type TurnBoundaryPort } from './turn-identity.js';
 import { admitTurnAdvance } from './advance-admission.js';
 import { readPendingUserWork, withQuestionPending } from './pending-source.js';
 import type { ConversationFactsSource } from './native-facts.js';
-import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, SessionInspection, SessionRepairResult, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SharingCommand, SnapshotRequest, AttachmentCleanupWarning, StoredQuestionDraft, Task, TaskAttachment, WorktreeDefaults } from '../shared/types.js';
+import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command, ConversationFacts, ConversationModelOutcome, ConversationPresetOutcome, FirstExecutionOutcome, FullHostSnapshot, HeldMessage, HostSnapshot, HubState, HubTask, LocalDriveRequest, LocalDriveResult, ModelSelection, NewTask, PendingTransition, Project, ProjectInput, ProjectLocation, QuestionDraftContent, QuestionRound, RetainedCheckout, RetainedCheckoutReason, SessionInspection, SessionRepairResult, SharingCommand, SnapshotRequest, AttachmentCleanupWarning, StoredQuestionDraft, Task, TaskAttachment, WorkflowAgent, WorktreeDefaults } from '../shared/types.js';
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
-import type { GitPort, ProjectProbe, SessionPort, WorkspacePort } from '../shared/ports.js';
+import type { GitPort, ProjectProbe, SessionPort, TaskMessageDeliveryPort, WorkspacePort } from '../shared/ports.js';
+import { buildSameTaskMessageText, buildTaskMessageSummary, buildTaskMessageText } from '../shared/task-message.js';
 import type { QuestionDraftStore, QuestionStore } from './question-storage.js';
 import { QuestionDraftContentSchema } from '../remote.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -55,7 +56,10 @@ import { createsDefaultWorktree, requiresWorktreeDecision, unresolvedWorktreeBin
 import { worktreePolicy } from '../shared/worktree-policy.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import { BoardAdministration, type BoardRevisionPort, type BoardSharingPort } from './board-administration.js';
-import { effectiveBoardPreset } from '../domain/board-preset.js';
+import { effectiveBoardModel, effectiveBoardPreset } from '../domain/board-preset.js';
+import { agentFor, authoredMainAgent, stageAgent } from '../domain/agents.js';
+import { agentConversationId, conversationAgent, mainConversationId, ownerConversationId, ownsStage, stageConversationId } from '../domain/conversation-role.js';
+import { addHeldMessage, dropHeldMessages, heldMessagesFor, recordReleased, takeHeldMessage, wasReleased } from '../domain/held-message.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
 import { QuestionIndex } from '../questions/indexer.js';
@@ -70,6 +74,7 @@ import { WorkspaceCoordinator } from './workspace-coordinator.js';
 import { resolveCanonicalPath } from './path-resolution.js';
 import type { ScheduleRuntimePort } from './schedule-port.js';
 import type { ModelCatalog } from '../shared/types.js';
+import { MAIN_AGENT_ID } from '../shared/types.js';
 import type { ScriptedRuntime } from './scripted/ports.js';
 import type { ScriptedStageReview, ScriptedSummary } from '../shared/scripted.js';
 import { ScriptedSupervisor } from './scripted-supervisor.js';
@@ -83,7 +88,7 @@ import type { ScriptedDefinition } from '../shared/scripted.js';
 import { declaredParameterNames, validateParameterValues } from '../domain/scripted-parameters.js';
 import { composeDecisionReason, normalizeDecisionNote } from '../domain/decision-definition.js';
 import { ensureLocalStageIdentity } from '../domain/stage-identity.js';
-import { recordScriptedHandoff } from '../domain/task-history/record.js';
+import { recordHeldMessageDiscard, recordScriptedHandoff } from '../domain/task-history/record.js';
 import { testStageScript, type ScriptTestInput, type ScriptTestResult } from './script-test.js';
 import { ConversationObservationIndex, createObservedFactsSource } from './conversation-observation.js';
 import { classifySessionFailure } from '../domain/session-observation.js';
@@ -160,7 +165,7 @@ export interface HostCommandPolicy {
 }
 /** One created conversation and, when its board named defaults, how the model and preset fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
-export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
+export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; /** Delivers one message held for a later stage; absent discards held messages instead. */ taskMessageDelivery?:TaskMessageDeliveryPort; /** What the running host reports about agent presets and models; absent skips availability warnings. */ agentAvailability?:()=>Promise<import('../domain/workflow-warnings.js').AgentAvailability|undefined>; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -238,7 +243,7 @@ export class KanbanApp {
    locate:taskId=>this.locator.byTask(taskId),
    supervisor:()=>this.scriptedRuntime,
    transact:async(taskId,mutate)=>{const located=this.locator.byTask(taskId);if(!located)return;await this.hubs.hub(located.hubId).transact(draft=>mutate(draft.tasks.find(task=>task.id===taskId)));},
-   ensureConversation:async taskId=>(await this.createConversationNow(taskId,{allowUndecided:true})).sessionId,
+   ensureConversation:async(taskId,columnId)=>this.ensureStageConversation(taskId,columnId),
    admit:async input=>{await admitStageInstruction(this.stageInstructionDeps(),{taskId:input.taskId,columnId:input.columnId,instruction:input.instruction,sessionId:input.sessionId,requestId:input.requestId,expectedEntryId:input.entryId,isCurrent:()=>!this.closing});},
    dispatchPending:()=>{void this.dispatchPending().catch(error=>this.options.report?.(error));},
    live:()=>!this.disposed&&this.initialized,
@@ -249,7 +254,7 @@ export class KanbanApp {
   this.retainedCheckoutExists=options.retainedCheckoutExists??entryExists;
   this.retainedCheckoutPruneIntervalMs=options.retainedCheckoutPruneIntervalMs??15000;
   if(options.teamFiles)this.teamFiles=options.teamFiles;
-  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)},impact:createScriptedImpact(()=>this.nativeScripted),...(options.revisions?{revisions:options.revisions}:{})});
+  this.boards=new BoardAdministration({hubs,...(options.sharing?{sharing:boardSharingPort(options.sharing)}:{}),...(options.report?{report:options.report}:{}),activity:{inFlight:(hubId,boardId)=>this.boardActivity(hubId,boardId)},impact:createScriptedImpact(()=>this.nativeScripted),...(options.revisions?{revisions:options.revisions}:{}),onWorkflowWritten:async(hubId,boardId)=>{try{await this.reconcileBoardWorkflow(hubId,boardId);}catch(error){this.options.report?.(error);}},...(options.agentAvailability?{agentAvailability:options.agentAvailability}:{})});
   this.observations=new ConversationObservationIndex({...(options.report===undefined?{}:{report:options.report}),onChange:()=>this.markChanged()});
   this.factsSource=withQuestionPending(createObservedFactsSource({source:{read:id=>this.sessions.facts(id)},index:this.observations}),this.questions);
   if(workspaces)this.workspaceCoordinator=new WorkspaceCoordinator({
@@ -271,7 +276,7 @@ export class KanbanApp {
    locateBySession:sessionId=>{const located=this.locator.bySession(sessionId);return located?{task:located.task,board:located.board}:undefined;},
    locate:taskId=>{const located=this.locator.byTask(taskId);return located?{task:located.task,board:located.board}:undefined;},
    facts:sessionId=>this.factsSource.read(sessionId),
-   admit:(taskId,plan,origin,isCurrent)=>this.admitTurnAdvance(taskId,plan,origin,isCurrent),
+   admit:(taskId,plan,origin,isCurrent,ownerSessions)=>this.admitTurnAdvance(taskId,plan,origin,isCurrent,ownerSessions),
    pause:(taskId,reason,message,expectedColumnId)=>this.pauseAutoMode(taskId,reason,message,expectedColumnId),
    schedule:callback=>setTimeout(callback,TURN_ADVANCE_SETTLE_MS),
    cancel:handle=>clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -381,7 +386,7 @@ export class KanbanApp {
   // could not verify ownership, so the composition is refused here instead.
   invariant(this.scriptedLease!==undefined,'EXECUTION_LEASE_UNVERIFIABLE','Wiring scripted execution requires the filesystem lease reader, or an agent deletion cannot verify native ownership.');
   this.nativeScripted=nativeRuntime;
-  const route=createScriptedRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.scriptedSurface.isReserved(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchScriptedHandoffs().catch(error=>this.options.report?.(error));}});
+  const route=createScriptedRouter({hubs:this.hubs,sessions:this.sessions,pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),reserved:id=>this.scriptedSurface.isReserved(id)||this.contextAdmissions.has(id),notify:()=>{void this.dispatchScriptedHandoffs().catch(error=>this.options.report?.(error));},placed:(taskId,columnId)=>{void this.onStagePlaced(taskId,columnId).catch(error=>this.options.report?.(error));}});
   const transact=<T>(taskId:string,change:(task:HubTask,located:LocatedTask)=>T):Promise<T>=>{
    const found=this.locatedTask(taskId);
    return this.hubs.hub(found.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);invariant(task,'TASK_NOT_FOUND','The task no longer exists.');const board=draft.boards.find(value=>value.id===task.boardId)!;const project=draft.projects.find(value=>value.id===task.projectId)!;return change(task,{hubId:draft.id,hub:draft,board,project,task});});
@@ -963,7 +968,11 @@ export class KanbanApp {
   const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
   if(questionChanged){this.schedulePersist(sessionId);this.scheduleDraftPrune(sessionId);}
   const taskRelevant=this.locator.hasSession(sessionId);
-  if(taskRelevant&&!this.exceptionalTurn.observe(sessionId,event))this.turnAdvance.observe(sessionId,event);
+  // The exceptional capture is the same ownership rule as the ordinary coordinator: a
+  // conversation that does not own the current stage never captures a transition.
+  const taskLocated=taskRelevant?this.locator.bySession(sessionId):undefined;
+  const owns=taskLocated!==undefined&&ownsStage(taskLocated.task,taskLocated.board.workflow,taskLocated.task.columnId,sessionId);
+  if(taskRelevant&&!(owns&&this.exceptionalTurn.observe(sessionId,event)))this.turnAdvance.observe(sessionId,event);
   if(taskRelevant)this.attention.touch(sessionId);
   if(taskRelevant&&!questionChanged)this.markChanged();
  }
@@ -1144,8 +1153,27 @@ export class KanbanApp {
   * action cannot create a second conversation.
   */
  prepareMessageConversation(taskId:string):Promise<TaskMessagePreparation>{return this.serial(()=>this.prepareMessageConversationNow(taskId));}
+ /** Write one message held for a later stage; idempotent per message identity. */
+ holdMessage(taskId:string,message:HeldMessage):Promise<void>{return this.serial(async()=>{
+  const located=this.locatedTask(taskId);
+  await this.hubs.hub(located.hubId).transact(draft=>{
+   const task=draft.tasks.find(value=>value.id===taskId);
+   if(task===undefined)return;
+   const board=draft.boards.find(value=>value.id===task.boardId);
+   invariant(board!==undefined,'INVALID_TARGET','The task board no longer exists.');
+   // The stage and the agent are validated against the live workflow, not the call site:
+   // a concurrent edit can make the addressed stage or agent disappear.
+   invariant(board.workflow.columns.some(column=>column.id===message.columnId),'STAGE_NOT_FOUND','The workflow no longer defines the stage this message waits for.');
+   invariant(message.agent===undefined||agentFor(board.workflow,message.agent)!==undefined,'AGENT_NOT_FOUND','The workflow no longer declares the agent this message is for.');
+   if(wasReleased(task,message.id))return;
+   if((task.heldMessages??[]).some(entry=>entry.id===message.id))return;
+   invariant(addHeldMessage(task,message),'HELD_MESSAGE_LIMIT','This task already holds the maximum number of messages for later stages.');
+  });
+ });}
+ /** The sending task's agent conversation, created with its preset and model when missing. */
+ conversationForAgent(taskId:string,agent:string):Promise<string>{return this.serial(()=>this.ensureAgentConversation(taskId,agent));}
  private async prepareMessageConversationNow(taskId:string):Promise<TaskMessagePreparation>{
-  const located=this.locatedTask(taskId);const existing=firstOpenSessionId(located.task);
+  const located=this.locatedTask(taskId);const existing=mainConversationId(located.task);
   if(existing!==undefined)return {sessionId:existing,createdConversation:false};
   const decision=worktreeDecision(located.task,located.project);
   invariant(decision!=='blocked','WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before messaging this task.');
@@ -1158,7 +1186,7 @@ export class KanbanApp {
    createdWorktree=current.task.worktree?{path:current.task.worktree.path,branch:current.task.worktree.branch}:{path:defaults.path,branch:defaults.branchName};
   }
   // A concurrent path may have created a conversation while the worktree was prepared.
-  const reopened=firstOpenSessionId(this.locatedTask(taskId).task);
+  const reopened=mainConversationId(this.locatedTask(taskId).task);
   if(reopened!==undefined)return {sessionId:reopened,createdConversation:false,...(createdWorktree===undefined?{}:{createdWorktree})};
   const sessionId=(await this.createConversationNow(taskId,{ensureFirst:true})).sessionId;
   return {sessionId,createdConversation:true,...(createdWorktree===undefined?{}:{createdWorktree})};
@@ -1206,7 +1234,7 @@ export class KanbanApp {
   */
  private async applyBoardDefaultModel(board:Board,sessionId:string):Promise<ConversationModelOutcome|undefined>{
   const models=this.options.models;
-  const requested=resolveTaskConversationModel({boardModel:board.workflow.model});
+  const requested=resolveTaskConversationModel({boardModel:effectiveBoardModel(board.workflow)});
   if(models===undefined||requested===undefined)return undefined;
   try{
    const outcome=await models.apply(sessionId,requested);
@@ -1417,12 +1445,13 @@ export class KanbanApp {
    return {requested,applied:false,reason:'failed'};
   }
  }
- private async createConversationNow(taskId:string,options:{allowUndecided?:boolean;ensureFirst?:boolean}={}):Promise<CreatedConversation>{
+ private async createConversationNow(taskId:string,options:{allowUndecided?:boolean;ensureFirst?:boolean;agent?:WorkflowAgent;columnId?:string}={}):Promise<CreatedConversation>{
   this.assertContext(taskId);let located=this.locatedTask(taskId);const store=this.hubs.hub(located.hubId);let before=located.task;const project=located.project;
   this.assertProjectRelocation(project,'creating a conversation');
   // A first-start request queued behind a message preparation must reuse the
   // conversation that preparation created; an explicit plus action never sets this.
-  if(options.ensureFirst===true){const existing=firstOpenSessionId(before);if(existing!==undefined)return {sessionId:existing};}
+  // An agent conversation is never the main one, so it never joins that reuse.
+  if(options.ensureFirst===true&&options.agent===undefined){const existing=mainConversationId(before);if(existing!==undefined)return {sessionId:existing};}
   invariant(!(options.allowUndecided===true&&before.sessionIds.length===0&&unresolvedWorktreeBinding(before,project)),'WORKTREE_BINDING_UNRESOLVED','Resolve the worktree binding in the Git section before starting the first conversation.');
   invariant(options.allowUndecided===true||!requiresWorktreeDecision(before,project),'WORKTREE_DECISION_REQUIRED','Choose whether to create a worktree or continue in the base project before starting the first conversation.');
   // A project whose policy always creates a worktree resolves that choice itself, so an
@@ -1437,13 +1466,199 @@ export class KanbanApp {
   const projectDirectory=requireProjectPath(project);const workspaceId=await this.workspaceCoordinator?.ensureTaskWorkspace(located.hubId,before,project);const id=await this.sessions.create(projectDirectory,workspaceId);
   try{
    if(before.effectiveCwd!==projectDirectory)await this.sessions.setDirectory(id,before.effectiveCwd);
+   const agent=options.agent;
+   // The conversation's name is its tab title, set before it can be read: the agent's
+   // for a specialist, the authored main agent's for the main conversation.
+   const title=agent===undefined?authoredMainAgent(located.board.workflow)?.name:agent.name;
+   if(title!==undefined&&this.sessions.title!==undefined){try{await this.sessions.title(id,title);}catch(error){this.options.report?.(error);}}
    // The preset recomposes the Agent, so it is selected before the model, which is a
    // per-session selection applied afterwards.
-   const preset=await this.applyBoardDefaultPreset(located.board,id);
-   const model=await this.applyBoardDefaultModel(located.board,id);
-   this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');await store.addSession(taskId,id);await this.applyBoardToolPolicy(id);
+   const preset=agent===undefined?await this.applyBoardDefaultPreset(located.board,id):await this.applyAgentPreset(agent,id);
+   const model=agent===undefined?await this.applyBoardDefaultModel(located.board,id):await this.applyAgentModel(located.board,agent,id);
+   this.assertContext(taskId);const current=store.requireTask(taskId);invariant(current.effectiveCwd===before.effectiveCwd,'CONTEXT_CHANGED','Task directory changed while the conversation was being created.');
+   // The binding and the route it fell back from are one durable record, written with
+   // the attachment; the card and the instruction read it instead of a second field.
+   const fallback=agent!==undefined&&model!==undefined&&!model.applied?{requested:model.requested,...(model.inUse===undefined?{}:{inUse:model.inUse})}:undefined;
+   await store.addSession(taskId,id,undefined,agent?.id,fallback);await this.applyBoardToolPolicy(id);
    return {...(preset===undefined?{}:{preset}),...(model===undefined?{}:{model}),sessionId:id};}
-  catch(error){try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}throw error;}
+  catch(error){
+   // A creation that failed after the session existed leaves no task reference: the
+   // native conversation is archived and the id and binding are rolled back.
+   try{await this.sessions.archive(id);}catch(archiveError){this.options.report?.(archiveError);}
+   try{await store.transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);if(!task)return;
+    const at=task.sessionIds.indexOf(id);if(at>=0)task.sessionIds.splice(at,1);
+    const closed=task.closedSessionIds.indexOf(id);if(closed>=0)task.closedSessionIds.splice(closed,1);
+    if(task.sessionRoles!==undefined){delete task.sessionRoles[id];if(Object.keys(task.sessionRoles).length===0)delete task.sessionRoles;}
+   });}catch(cleanupError){this.options.report?.(cleanupError);}
+   throw error;}
+ }
+ /**
+  * Select the preset a stage's agent declares. A preset the host does not offer is a
+  * refusal, not a fallback: the conversation is archived and the entry is held, so the
+  * stage never runs on an agent nobody chose.
+  */
+ private async applyAgentPreset(agent:WorkflowAgent,sessionId:string):Promise<ConversationPresetOutcome|undefined>{
+  const requested=agent.preset;
+  if(requested===undefined)return undefined;
+  const presets=this.options.presets;
+  if(presets===undefined)throw new KanbanError('AGENT_PRESET_UNAVAILABLE','The agent preset cannot be selected in this host.',{agent:agent.id,preset:requested});
+  const outcome=await presets.apply(sessionId,requested);
+  if(!outcome.applied)throw new KanbanError('AGENT_PRESET_UNAVAILABLE','The stage agent preset is not available on this host.',{agent:agent.id,preset:requested,reason:outcome.reason});
+  return {requested,applied:true};
+ }
+ /**
+  * Put an agent conversation on its model: the agent's route, then the main agent's
+  * route, then the deployment default. The fallback is recorded on the task so the card
+  * and the stage instruction can report it.
+  */
+ private async applyAgentModel(board:Board,agent:WorkflowAgent,sessionId:string):Promise<ConversationModelOutcome|undefined>{
+  const models=this.options.models;
+  if(models===undefined)return undefined;
+  const mainModel=effectiveBoardModel(board.workflow);
+  const requested=agent.model??mainModel;
+  if(requested===undefined)return undefined;
+  try{
+   const primary=await models.apply(sessionId,requested);
+   if(primary.applied)return {requested,applied:true};
+   if(agent.model!==undefined&&mainModel!==undefined){
+    const fallback=await models.apply(sessionId,mainModel);
+    if(fallback.applied)return {requested,applied:false,reason:primary.reason,inUse:mainModel};
+   }
+   return {requested,applied:false,reason:primary.reason,...(primary.inUse===undefined?{}:{inUse:primary.inUse})};
+  }catch(error){this.options.report?.(error);return {requested,applied:false,reason:'failed'};}
+ }
+ /** Hold one stage entry because its agent preset is unavailable, without pausing auto mode. */
+ private async recordAgentPresetHold(taskId:string,columnId:string,agent:WorkflowAgent):Promise<void>{
+  const located=this.locatedTask(taskId);
+  await this.hubs.hub(located.hubId).transact(draft=>{
+   const task=draft.tasks.find(value=>value.id===taskId);const marker=task?.instructionPending;
+   if(!task||!marker||marker.columnId!==columnId)return;
+   marker.hold={code:'agent-preset-unavailable',agent:agent.id,...(agent.preset===undefined?{}:{preset:agent.preset})};
+  });
+ }
+ /**
+  * The conversation a stage's instruction is delivered to: the declared agent's
+  * conversation, created with its preset and model on first use, or the main
+  * conversation when the stage names no agent. A closed agent conversation is reopened
+  * rather than replaced, so its history survives the close.
+  */
+ private async ensureStageConversation(taskId:string,columnId:string,options:{allowUndecided?:boolean}={}):Promise<string>{
+  const located=this.locatedTask(taskId);
+  const agent=stageAgent(located.board.workflow,columnId);
+  if(agent===undefined)return this.ensureMainConversation(taskId);
+  return this.ensureAgentConversation(taskId,agent.id,columnId);
+ }
+ /** The main conversation, created for the board's main agent when none is open. */
+ private async ensureMainConversation(taskId:string):Promise<string>{
+  const located=this.locatedTask(taskId);
+  const main=mainConversationId(located.task);
+  if(main!==undefined)return main;
+  return (await this.createConversationNow(taskId,{allowUndecided:true})).sessionId;
+ }
+ /** One agent's conversation, created with the agent's preset and model when missing. */
+ private async ensureAgentConversation(taskId:string,agentId:string,columnId?:string):Promise<string>{
+  const located=this.locatedTask(taskId);
+  const open=agentConversationId(located.task,agentId);
+  if(open!==undefined)return open;
+  const closed=located.task.sessionIds.find(sessionId=>located.task.closedSessionIds.includes(sessionId)&&conversationAgent(located.task,sessionId)===agentId);
+  if(closed!==undefined){await this.hubs.hub(located.hubId).reopenSession(taskId,closed);return closed;}
+  const agent=agentFor(located.board.workflow,agentId);
+  invariant(agent!==undefined,'AGENT_NOT_FOUND','The workflow does not declare that agent.');
+  try{
+   return (await this.createConversationNow(taskId,{allowUndecided:true,agent,...(columnId===undefined?{}:{columnId})})).sessionId;
+  }catch(error){
+   if(error instanceof KanbanError&&error.code==='AGENT_PRESET_UNAVAILABLE'&&columnId!==undefined)await this.recordAgentPresetHold(taskId,columnId,agent);
+   throw error;
+  }
+ }
+ /**
+  * Deliver the messages held for one stage, now that the task enters it. The
+  * destination's instruction is delivered first by its own path, so this runs after it;
+  * each message is released once and removed from the task only after its delivery.
+  */
+ private async releaseHeldMessages(taskId:string,columnId:string):Promise<void>{
+  for(;;){
+   const located=this.locatedTask(taskId);
+   const message=heldMessagesFor(located.task,columnId)[0];
+   if(message===undefined)return;
+   try{
+    const sessionId=message.agent===undefined?await this.ensureMainConversation(taskId):await this.ensureAgentConversation(taskId,message.agent);
+    await this.deliverHeldMessage(taskId,sessionId,message);
+   }catch(error){this.options.report?.(error);return;}
+   await this.hubs.hub(located.hubId).transact(draft=>{const task=draft.tasks.find(value=>value.id===taskId);if(task){takeHeldMessage(task,message.id);recordReleased(task,message.id);}});
+  }
+ }
+ /** Deliver one held message as the plugin-sourced context message the message path uses. */
+ private async deliverHeldMessage(taskId:string,sessionId:string,message:HeldMessage):Promise<void>{
+  const delivery=this.options.taskMessageDelivery;
+  invariant(delivery!==undefined,'MESSAGE_DELIVERY_UNAVAILABLE','This host cannot deliver a held message.');
+  const located=this.locatedTask(taskId);
+  const sender=conversationAgent(located.task,message.fromSessionId);
+  const text=buildSameTaskMessageText({
+   ...(sender===undefined?{}:{agent:sender,agentName:agentFor(located.board.workflow,sender)?.name}),
+   ...(located.board.workflow.columns.find(column=>column.id===message.columnId)?.name===undefined?{}:{stageName:located.board.workflow.columns.find(column=>column.id===message.columnId)?.name!}),
+  },message.body);
+  await delivery.deliver(sessionId,{requestId:message.id,senderSessionId:message.fromSessionId,senderTaskId:taskId,text,summary:buildTaskMessageSummary(located.task.title)});
+ }
+ /**
+  * Drop the messages a workflow edit made undeliverable and record each discard, so a
+  * message never waits for a stage the board no longer defines.
+  */
+ /**
+  * Reconcile the task state a workflow edit affects: a held message that waits for a
+  * stage the board stopped defining is discarded, and a conversation bound to an agent
+  * the board stopped declaring becomes an ordinary conversation again.
+  */
+ private async reconcileBoardWorkflow(hubId:string,boardId:string):Promise<void>{
+  const hub=this.hubs.requireHub(hubId);
+  const board=hub.boards.find(value=>value.id===boardId);
+  if(board===undefined)return;
+  const columns=new Set(board.workflow.columns.map(column=>column.id));
+  const stranded=(task:HubTask):boolean=>(task.heldMessages??[]).some(message=>!columns.has(message.columnId));
+  const detached=(task:HubTask):boolean=>task.sessionRoles!==undefined
+    &&Object.entries(task.sessionRoles).some(([,role])=>role.agent!==MAIN_AGENT_ID&&agentFor(board.workflow,role.agent)===undefined);
+  // A workflow write is not a task write: an edit that strands nothing must not bump
+  // the Hub revision, or a second board save would conflict with it.
+  if(!hub.tasks.some(task=>task.boardId===boardId&&(stranded(task)||detached(task))))return;
+  await this.hubs.hub(hubId).transact(draft=>{
+   const current=draft.boards.find(value=>value.id===boardId);if(current===undefined)return;
+   const defined=new Set(current.workflow.columns.map(column=>column.id));
+   for(const task of draft.tasks){
+    if(task.boardId!==boardId)continue;
+    if(task.sessionRoles!==undefined){
+     for(const [sessionId,role] of Object.entries(task.sessionRoles)){
+      if(role.agent!==MAIN_AGENT_ID&&agentFor(current.workflow,role.agent)===undefined)delete task.sessionRoles[sessionId];
+     }
+     if(Object.keys(task.sessionRoles).length===0)delete task.sessionRoles;
+    }
+    if(task.heldMessages===undefined)continue;
+    for(const message of dropHeldMessages(task,value=>!defined.has(value.columnId)))recordHeldMessageDiscard(task,{at:new Date().toISOString(),action:'discarded',columnId:message.columnId,reason:'stage-removed',...(message.agent===undefined?{}:{agent:message.agent})});
+   }
+  });
+ }
+ /** Drop every held message once the task reaches a stage no route leaves. */
+ /** Run the stage-entry consequences of one placement: release or discard held messages. */
+ private async onStagePlaced(taskId:string,columnId:string):Promise<void>{
+  const located=this.locatedTask(taskId);
+  if(located.task.columnId!==columnId)return;
+  const stage=located.board.workflow.columns.find(column=>column.id===columnId);
+  if(!hasOnwardRoute(located.board.workflow,columnId)){await this.discardHeldMessagesAtTerminal(taskId);return;}
+  // An instructed stage releases its messages when that instruction is delivered, so
+  // a manual or timed entry never hands them over before the stage's own instruction.
+  if(entryInstruction(stage)!==undefined)return;
+  await this.releaseHeldMessages(taskId,columnId);
+ }
+ /** Drop every held message once the task reaches a stage no route of any kind leaves. */
+ private async discardHeldMessagesAtTerminal(taskId:string):Promise<void>{
+  const located=this.locatedTask(taskId);
+  if(located.task.heldMessages===undefined)return;
+  // A stage without an automatic default route is not terminal when it routes by a
+  // script's exits, a decision gate's options, or explicit transitions.
+  if(hasOnwardRoute(located.board.workflow,located.task.columnId))return;
+  await this.hubs.hub(located.hubId).transact(draft=>{
+   const task=draft.tasks.find(value=>value.id===taskId);if(!task||task.heldMessages===undefined)return;
+   for(const message of dropHeldMessages(task,()=>true))recordHeldMessageDiscard(task,{at:new Date().toISOString(),action:'discarded',columnId:message.columnId,reason:'task-terminal',...(message.agent===undefined?{}:{agent:message.agent})});
+  });
  }
  createTask(input:NewTask){return this.serial(()=>this.createTaskNow(input));}
  private async createTaskNow(input:NewTask&{hubId?:string;attachmentUploads?:readonly {name:string;origin:'upload'|'clipboard';data:string}[]}){
@@ -1537,7 +1752,8 @@ export class KanbanApp {
     const settled=this.locatedTask(value);
     if(settled.task.worktree?.status!=='ready')throw settled.task.operation?.error??new KanbanError('WORKTREE_NOT_READY','The worktree creation did not complete; resolve it in the Git section before starting the first execution.');
    },
-   createConversation:value=>this.serial(()=>this.createConversationNow(value,{ensureFirst:true})),
+   existingConversation:(value,columnId)=>{const task=this.locator.byTask(value);return task===undefined?undefined:stageConversationId(task.task,task.board.workflow,columnId);},
+   createConversation:async(value,columnId)=>({sessionId:await this.serial(()=>this.ensureStageConversation(value,columnId,{allowUndecided:false}))}),
   },{taskId,columnId,expectedEnteredAt,...(request.expectedInstruction===undefined?{}:{expectedInstruction:request.expectedInstruction})});
   if(!request.send)return {...prepared,sent:false};
   await this.serial(()=>admitStageInstruction(this.stageInstructionDeps(),{taskId,columnId,instruction,expectedEnteredAt,sessionId:prepared.sessionId}));
@@ -1892,7 +2108,8 @@ export class KanbanApp {
   return {
    locate:taskId=>{const located=this.locatedTask(taskId);return {hubId:located.hubId,task:located.task,board:located.board};},
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
-   resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
+   resolveSession:async(task,columnId)=>this.ensureStageConversation(task.id,columnId),
+   releaseHeld:async(taskId,columnId)=>{await this.releaseHeldMessages(taskId,columnId);},
    assertExecutionContext:sessionId=>this.assertExecutionContext(sessionId),
    deliver:async(sessionId,delivery)=>{
     // A conversation the plugin cannot observe cannot receive a stage instruction:
@@ -1931,10 +2148,8 @@ export class KanbanApp {
     const note = normalizeDecisionNote(command.note);
     const reason = composeDecisionReason(option, note);
     const instruction = entryInstruction(destination);
-    // A destination that authors an instruction needs its target conversation, as an
-    // automatic advance does; the choice itself never creates one for a silent stage.
-    const sessionId = instruction === undefined ? undefined
-      : firstOpenSessionId(initial.task) ?? (await this.createConversationNow(initial.task.id, { allowUndecided: true })).sessionId;
+    // The destination conversation is resolved when the instruction is delivered, after
+    // the placement, so an unavailable agent preset holds the destination entry.
     const latest = this.locatedTask(command.taskId);
     const latestStage = latest.board.workflow.columns.find(column => column.id === latest.task.columnId);
     invariant(latest.task.stageEntry?.id === expectedEntryId && latest.task.stageEntry.columnId === latest.task.columnId,
@@ -1950,7 +2165,7 @@ export class KanbanApp {
       // a decision stage classifies every manual move as restricted, so the drain needs it.
       transitionOverride: true,
       decision: { optionId: command.optionId, ...(note === undefined ? {} : { note }), destinationIdentity }, reason,
-      ...(instruction === undefined ? {} : { text: instruction, sessionId: sessionId! }),
+      ...(instruction === undefined ? {} : { text: instruction }),
     };
     await this.hubs.hub(latest.hubId).transact(draft => {
       const task = draft.tasks.find(value => value.id === command.taskId);
@@ -2039,7 +2254,6 @@ export class KanbanApp {
      try{
       await admitExceptionalTurnAdvance({
        locate:id=>this.locatedTask(id),transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
-       resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
        pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
        ready:async task=>{const withoutPrepared={...task};delete withoutPrepared.pendingTransition;const facts=new Map(await Promise.all(task.sessionIds.map(async id=>[id,await this.factsSource.read(id)] as const)));return resolveAdvanceDecision(withoutPrepared,facts).kind==='advance';},
        reconcileFinalization:(hubId,id,pendingId,exceptionId)=>this.hubs.reconcileExceptionalFinalization(hubId,id,pendingId,exceptionId),
@@ -2052,21 +2266,20 @@ export class KanbanApp {
    }
   }catch(error){this.options.report?.(error);if(!(error instanceof KanbanError&&error.code==='EXCEPTION_CLEANUP_FAILED'))await this.expireExceptionalTurn(taskId,identity.id);}
  }
- private admitTurnAdvance(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean):Promise<void>{
+ private admitTurnAdvance(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean,ownerSessions:readonly string[]):Promise<void>{
   // The drain shares the command lane, so a pause or resume queued ahead of this
   // admission must still win: the settle's own generation decides.
-  return this.serial(()=>isCurrent()?this.admitTurnAdvanceNow(taskId,plan,origin,isCurrent):Promise.resolve());
+  return this.serial(()=>isCurrent()?this.admitTurnAdvanceNow(taskId,plan,origin,isCurrent,ownerSessions):Promise.resolve());
  }
  /** The serialized adapter around the one turn-end advance admission path. */
- private admitTurnAdvanceNow(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean):Promise<void>{
+ private admitTurnAdvanceNow(taskId:string,plan:AutoAdvancePlan,origin:AdvanceOrigin,isCurrent:()=>boolean,ownerSessions:readonly string[]):Promise<void>{
   return admitTurnAdvance({
    locate:taskId=>this.locatedTask(taskId),
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
-   resolveSession:async task=>firstOpenSessionId(task)??(await this.createConversationNow(task.id,{allowUndecided:true})).sessionId,
    pending:task=>readPendingUserWork(this.factsSource,task.sessionIds),
    dispatch:()=>this.dispatchPending(),
    report:error=>this.options.report?.(error),
-  },taskId,plan,origin,isCurrent);
+  },taskId,plan,origin,isCurrent,ownerSessions);
  }
  private async dismissFailedAdvance(taskId:string):Promise<void>{
   const located=this.locatedTask(taskId);const pending=located.task.pendingTransition;
@@ -2098,11 +2311,20 @@ export class KanbanApp {
    try{
     await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id)!;invariant(t.pendingTransition?.id===pending.id&&!t.operation,'REVISION_CONFLICT','Task context changed during transition.');invariant(t.columnId===pending.fromColumnId||t.columnId===pending.columnId,'REVISION_CONFLICT','Task column changed during transition.');const board=d.boards.find(b=>b.id===t.boardId)!;if(decision!==undefined&&t.columnId!==pending.columnId){const source=board.workflow.columns.find(column=>column.id===pending.fromColumnId);const option=source?.decision?.options.find(option=>option.id===decision.optionId);invariant(option!==undefined&&option.to===pending.columnId&&stageIdentityOf(board,pending.columnId)===decision.destinationIdentity,'STALE_DECISION','The option or its destination changed before the choice was applied.');}if(t.columnId!==pending.columnId)invariant(pending.transitionOverride===true||canTransition(board.workflow,t.columnId,pending.columnId),'TRANSITION_NOT_ALLOWED','The workflow no longer permits this transition.');if(pending.parameters!==undefined||(pending.origin==='agent'&&pending.transitionOverride===true)){const destination=board.workflow.columns.find(column=>column.id===pending.columnId);const names=declaredParameterNames(destination?.scripted?.params);if(names.length>0||pending.parameters!==undefined){const checked=validateParameterValues(names,pending.parameters);invariant(checked.ok,'INVALID_PARAMETERS',checked.ok?'':checked.message);}}
       operations.placeTask(d,t.id,pending.columnId,placementFromAnchor(pending.beforeTaskId),nextEnteredAt(),{retainAgentPause:pending.origin!==undefined,origin,at:this.hubs.operationDeps().now(),...(pending.parameters===undefined?{}:{parameters:pending.parameters}),...(decision===undefined?{}:{decision})});if(pending.mode==='run')t.pendingTransition.status='sending';else delete t.pendingTransition;});if(pending.origin===undefined)this.turnAdvance.forget(task.id);
-    if(pending.mode==='run'){
-     invariant(pending.sessionId&&pending.text,'INVALID_TARGET','Confirmed execution is missing its target or instruction.');
-     await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,sessionId:pending.sessionId,requestId:pending.id,...(pending.reason===undefined?{}:{transition:{fromColumnId:pending.fromColumnId,reason:pending.reason}})});
-     await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.id===pending.id)delete t.pendingTransition;});
-    }
+    try{
+     if(pending.mode==='run'){
+      // The target is resolved when the instruction is delivered, after the placement:
+      // a missing agent preset then holds the destination entry instead of failing the
+      // advance while the card still sits in the source stage.
+      invariant(pending.text!==undefined,'INVALID_TARGET','Confirmed execution is missing its instruction.');
+      await admitStageInstruction(this.stageInstructionDeps(),{taskId:task.id,columnId:pending.columnId,instruction:pending.text,...(pending.sessionId===undefined?{}:{sessionId:pending.sessionId}),requestId:pending.id,...(pending.reason===undefined?{}:{transition:{fromColumnId:pending.fromColumnId,reason:pending.reason}})});
+      await store.transact(d=>{const t=d.tasks.find(t=>t.id===task.id);if(t?.pendingTransition?.id===pending.id)delete t.pendingTransition;});
+     }
+    }catch(error){await this.failPending(located.hubId,task.id,pending.id,error);this.options.report?.(error);}
+    // The entry's messages follow the stage's own path: an instructed stage releases
+    // them with its instruction, and an uninstructed one releases them now. A
+    // same-stage reorder is not an entry and never releases anything.
+    if(pending.fromColumnId!==pending.columnId)await this.onStagePlaced(task.id,pending.columnId);
    }catch(error){await this.failPending(located.hubId,task.id,pending.id,error);this.options.report?.(error);}
   }}while(this.driveAgain&&!this.disposed);}finally{this.driving=false;}
  }

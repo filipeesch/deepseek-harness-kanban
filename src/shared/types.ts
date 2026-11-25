@@ -90,6 +90,11 @@ export interface DecisionDefinition {
 export interface Column {
   id: string; name: string; description?: string; onEnterPrompt?: string; allowedTransitions?: TransitionRule[]; scripted?: ScriptedDefinition; decision?: DecisionDefinition;
   /**
+   * The agent this stage's entry instruction runs with; absent keeps the board's main
+   * conversation. An identifier the document does not declare is an invalid workflow.
+   */
+  agent?: string;
+  /**
    * Stable stage identity, allocated when the stage first enters a published workflow and
    * preserved across identifier renames. Absent on a board that was never published.
    */
@@ -112,6 +117,8 @@ export interface StagePatch {
   decision?: DecisionDefinition | null;
   /** New display name; absent leaves the name as authored. */
   name?: string;
+  /** The agent the stage runs with; `null` returns it to the main conversation. */
+  agent?: string | null;
   /** New stage description; `null` clears it, absent leaves it as authored. */
   description?: string | null;
   /** New entry instruction; `null` clears it, absent leaves it as authored. */
@@ -138,7 +145,15 @@ export interface ConnectionAnchor { side: StageSide; at: number }
 export interface ConnectionSegmentOffset { axis: ConnectionAxis; offset: number }
 /** One authored connection layout, identified by its source and target stage. */
 export interface ConnectionLayout { from: string; to: string; source?: ConnectionAnchor; target?: ConnectionAnchor; segments?: ConnectionSegmentOffset[] }
-export interface Workflow { name: string; description?: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The model every new conversation of the board starts on; absent keeps the deployment default. */ model?: ModelSelection; /** An authored preset for new conversations; absence defers to board default provenance. */ agentPreset?: string; /** The MCP servers and tools every conversation of the board may use; absent keeps every server visible and an empty list keeps none. */ mcp?: string[]; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
+/** The agent identifier every document can resolve, declared or implied by the legacy fields. */
+export const MAIN_AGENT_ID = 'main';
+/**
+ * One agent a board's workflow declares. `main` is always resolvable: when the document
+ * authors no `agents.main`, the legacy root fields and the board metadata describe it.
+ * An absent preset means the host default; an absent model keeps the board's model.
+ */
+export interface WorkflowAgent { id: string; name: string; preset?: string; model?: ModelSelection }
+export interface Workflow { name: string; description?: string; initialColumnId: string; columns: Column[]; groups: ColumnGroup[]; /** Absent means the board opens the column board. */ defaultView?: WorkflowView; /** The legacy model of the main agent, authored `model`; agents.main.model takes precedence. */ model?: ModelSelection; /** The legacy preset of the main agent, authored `agent_preset`; agents.main.preset takes precedence. */ agentPreset?: string; /** The agents this board declares; `main` is always resolvable and every stage agent is declared here. */ agents?: WorkflowAgent[]; /** The MCP servers and tools every conversation of the board may use; absent keeps every server visible and an empty list keeps none. */ mcp?: string[]; /** Authored connection layouts; an absent entry keeps the automatic route. */ connections?: ConnectionLayout[] }
 export interface Worktree { path: string; branch: string; owned: boolean; status: 'preparing' | 'ready' | 'error'; error?: Problem }
 export interface CreateWorktree { mode: 'new' | 'existing'; path: string; branchName: string; sourceBranch?: string }
 /**
@@ -210,17 +225,56 @@ export interface AutoModeHold { reason: string; at: string }
 export interface AutoModeState { enabled: boolean; pause?: AutoModePause; hold?: AutoModeHold }
 /** One transition recorded for a task's current stage, the stage it was recorded for, and the reason the agent gave. */
 export interface RecordedTransition { fromColumnId: string; columnId: string; at: string; exception?: { id: string; sessionId: string; turn: number; entryId: string }; /** Absent only on a recording stored before reasons existed; such a recording never arms an advance by itself. */ reason?: string; /** Values for the destination stage's declared parameters, applied when the entry is established. */ parameters?: Record<string, string> }
+/** Why one conversation of a task exists beyond the main one: it was created for an agent. */
+export interface ConversationRole {
+  agent: string;
+  /** The route the conversation was asked for and the one it runs on, when they differ. */
+  modelFallback?: AgentModelFallback;
+}
+/**
+ * One message a task holds for a later stage. It is local state: it is never published,
+ * never shared, and it never counts as pending user work.
+ */
+export interface HeldMessage {
+  /** Delivery identity: the sending conversation and the tool call it came from. */
+  id: string;
+  fromSessionId: string;
+  /** The agent conversation the message is for; absent means the main conversation. */
+  agent?: string;
+  /** The stage whose first entry releases the message. */
+  columnId: string;
+  body: string;
+  at: string;
+}
+/** Why a stage entry is being held instead of delivered, stated as a fact about its agent. */
+export interface InstructionHold {
+  code: 'agent-preset-unavailable';
+  agent: string;
+  /** The preset the workflow declared; absent when the agent authored none. */
+  preset?: string;
+}
+/** The model route a conversation could not use, and the route it runs on instead. */
+export interface AgentModelFallback {
+  requested: ModelSelection;
+  inUse?: ModelSelection;
+}
 export interface Task {
   stageEntry?: TaskStageEntry;
   scripted?: ScriptedControl;
   scriptedHandoff?: ScriptedHandoff;
   id: string; projectId: string; title: string; description: string; columnId: string; position: number;
   sessionIds: string[]; closedSessionIds: string[]; effectiveCwd: string;
+  /** The agent each conversation of this task was created for; absent means the main conversation. */
+  sessionRoles?: Record<string, ConversationRole>;
+  /** Messages held for a later stage, in arrival order; absent means none. */
+  heldMessages?: HeldMessage[];
+  /** Identities of held messages already delivered, so a replayed call never requeues one. */
+  releasedMessages?: string[];
   worktree: Worktree | null; operation: ContextOperation | null; pendingTransition?: PendingTransition;
   /** The task has recorded a choice to continue in its base project instead of creating a worktree. */
   worktreeDismissed?: boolean;
   /** The current instructed-stage entry whose card action has not been satisfied by a prompt. */
-  instructionPending?: { columnId: string; enteredAt: number };
+  instructionPending?: { columnId: string; enteredAt: number; hold?: InstructionHold };
   /** Opt-in host automatic advance; absent means disabled. */
   autoMode?: AutoModeState;
   /** The transition the model recorded for the current stage; discarded when the stage changes. */
