@@ -20,7 +20,7 @@ describe('workflow review', () => {
     const review = reviewWorkflowText({
       text: next,
       previousText: FLOW,
-      cards: [{ id: 'task-1', columnId: 'done', recordedTransition: { columnId: 'done' } }],
+      cards: [{ id: 'task-1', columnId: 'done', recordedTransition: { fromColumnId: 'done', columnId: 'done' } }],
     });
     expect(review.valid).toBe(true);
     expect(review.difference?.stages).toContainEqual({ stage: 'done', change: 'removed' });
@@ -51,16 +51,23 @@ describe('affected cards', () => {
 
   it('names a card whose recorded destination stage was removed', () => {
     const withoutDone = BEFORE.replace('  - id: done\n    label: Done\n', '').replace('allowed_transitions: [review, done]', 'allowed_transitions: [review]');
-    expect(affectedCards(parseWorkflow(BEFORE), parseWorkflow(withoutDone), [{ id: 'task-3', columnId: 'todo', recordedTransition: { columnId: 'done' } }])).toEqual([
+    expect(affectedCards(parseWorkflow(BEFORE), parseWorkflow(withoutDone), [{ id: 'task-3', columnId: 'todo', recordedTransition: { fromColumnId: 'todo', columnId: 'done' } }])).toEqual([
       { taskId: 'task-3', stage: 'todo', reason: 'route-removed' },
+    ]);
+  });
+
+  it('names a card whose pending destination stage was removed as a removed route', () => {
+    const withoutDone = BEFORE.replace('  - id: done\n    label: Done\n', '').replace('allowed_transitions: [review, done]', 'allowed_transitions: [review]');
+    expect(affectedCards(parseWorkflow(BEFORE), parseWorkflow(withoutDone), [{ id: 'task-4', columnId: 'todo', pendingTransition: { fromColumnId: 'todo', columnId: 'done' } }])).toEqual([
+      { taskId: 'task-4', stage: 'todo', reason: 'route-removed' },
     ]);
   });
 
   it('names a card whose recorded destination is no longer permitted', () => {
     const withoutDone = BEFORE.replace('  - id: done\n    label: Done\n', '').replace('allowed_transitions: [review, done]', 'allowed_transitions: [review]');
     const narrowed = AFTER.replace('  - id: review\n    label: Review\n', '  - id: review\n    label: Review\n  - id: done\n    label: Done\n');
-    expect(affectedCards(parseWorkflow(withoutDone), parseWorkflow(BEFORE), [{ id: 'task-2', columnId: 'todo', recordedTransition: { columnId: 'done' } }])).toEqual([]);
-    expect(affectedCards(parseWorkflow(BEFORE), parseWorkflow(narrowed), [{ id: 'task-2', columnId: 'todo', recordedTransition: { columnId: 'done' } }])).toEqual([
+    expect(affectedCards(parseWorkflow(withoutDone), parseWorkflow(BEFORE), [{ id: 'task-2', columnId: 'todo', recordedTransition: { fromColumnId: 'todo', columnId: 'done' } }])).toEqual([]);
+    expect(affectedCards(parseWorkflow(BEFORE), parseWorkflow(narrowed), [{ id: 'task-2', columnId: 'todo', recordedTransition: { fromColumnId: 'todo', columnId: 'done' } }])).toEqual([
       { taskId: 'task-2', stage: 'todo', reason: 'route-removed' },
     ]);
   });

@@ -13,6 +13,7 @@ import { diffWorkflow } from '../domain/workflow-difference.js';
 import { parseWorkflow } from '../domain/workflow.js';
 import { effectiveBoardPreset } from '../domain/board-preset.js';
 import { authoredMainAgent } from '../domain/agents.js';
+import { workflowCardReferences } from '../domain/workflow-card-references.js';
 import type { AgentAvailability } from '../domain/workflow-warnings.js';
 
 /** The preset the authored main agent names, whichever authored field carries it. */
@@ -20,7 +21,7 @@ function mainAuthoredPreset(workflow: Workflow): string | undefined {
   const main = authoredMainAgent(workflow);
   return main === undefined ? workflow.agentPreset : main.preset;
 }
-import type { ScriptedImpactPort } from './scripted-impact.js';
+import type { ScriptedImpactInput, ScriptedImpactPort } from './scripted-impact.js';
 import { describeStageActivity, hasInFlightWork } from '../shared/stage-activity.js';
 import { renameTaskStage } from '../domain/stage-update.js';
 import { reconcileLocalStageIdentities } from '../domain/stage-identity.js';
@@ -83,6 +84,12 @@ export interface BoardView {
 
 export interface BoardWriteResult extends BoardView {
   readonly sharing: BoardPublishingOutcome;
+  /**
+   * The revision this write's own transaction reached. It is fixed from the enforced
+   * revision, so a post-commit hook that advances the Hub cannot change it; only a
+   * workflow save reports it, because only that receipt needs its own commit identity.
+   */
+  readonly committedRevision?: number;
 }
 
 /**
@@ -194,6 +201,15 @@ export interface WorkflowWriteResult extends BoardWriteResult {
   readonly saved: true;
   readonly sha256: string;
   readonly report: WorkflowWriteReport | WorkflowReportSummary;
+  /** The revision the workflow transaction committed, not a later read of the Hub. */
+  readonly committedRevision: number;
+}
+
+/** The reviewed script authorization for one composed document. */
+export interface ScriptAuthorization {
+  /** Whether the running host could project authorization at all; false is never "no impact". */
+  readonly inspected: boolean;
+  readonly impacts: readonly ScriptImpact[];
 }
 
 /** One reviewed workflow write that persisted nothing. */
@@ -268,20 +284,9 @@ export class BoardAdministration {
     return { hubId: located.hubId, board: located.board, hubRevision: located.hub.revision };
   }
 
-  /** The task references a report needs; identities only, never card text. */
+  /** The task references a report needs; identities and routing facts only, never card text. */
   private cardsOf(hub: HubState, boardId: string): WorkflowCardReference[] {
-    return hub.tasks.filter(task => task.boardId === boardId).map(task => ({
-      id: task.id,
-      columnId: task.columnId,
-      ...(task.recordedTransition === undefined ? {} : { recordedTransition: { columnId: task.recordedTransition.columnId } }),
-      ...(task.pendingTransition === undefined ? {} : { pendingTransition: { fromColumnId: task.pendingTransition.fromColumnId, columnId: task.pendingTransition.columnId } }),
-      // Parameter names only: a report never carries an entry's values.
-      parameters: [...new Set([
-        ...Object.keys(task.scripted?.parameters ?? {}),
-        ...Object.keys(task.recordedTransition?.parameters ?? {}),
-        ...Object.keys(task.pendingTransition?.parameters ?? {}),
-      ])],
-    }));
+    return workflowCardReferences(hub, boardId);
   }
 
   /** Review one composed document against the board it will replace. */
@@ -315,6 +320,26 @@ export class BoardAdministration {
   /** The board read the tools use for both the summary and the exact authored YAML. */
   read(boardId: string, hubId?: string): BoardView {
     return this.locate(boardId, hubId);
+  }
+
+  /** What the running host reports about agent presets and models, for an authoring review. */
+  async agentAvailability(): Promise<AgentAvailability | undefined> {
+    try { return await this.options.agentAvailability?.(); }
+    catch (error) { this.options.report?.(error); return undefined; }
+  }
+
+  /**
+   * The reviewed script authorization for one composed document, against the same Hub
+   * snapshot a review read. A host without the projection, or one that fails, reports
+   * `inspected: false` rather than an empty list that would read as "no impact".
+   */
+  async describeScriptImpact(input: ScriptedImpactInput): Promise<ScriptAuthorization> {
+    if (this.options.impact === undefined) return { inspected: false, impacts: [] };
+    // An installed port without a runtime answers `available: false`, so the caller
+    // reports that the authorization could not be inspected rather than an empty pass.
+    const inspected = this.options.impact.available === undefined ? true : this.options.impact.available();
+    try { return { inspected, impacts: await this.options.impact.describe(input) }; }
+    catch (error) { this.options.report?.(error); return { inspected: false, impacts: [] }; }
   }
 
   /** The card references one board's write report names, without any card text. */
@@ -375,12 +400,19 @@ export class BoardAdministration {
       if (authoredMainAgent(board.workflow) !== undefined) delete board.defaultPresetMode;
       return board;
     }, input.expectedRevision);
+    // The revision this write committed. A transaction refuses a revision mismatch and
+    // increments by exactly one, so the enforced revision names the commit even if a
+    // post-commit hook later advances the Hub.
+    const committedRevision = input.expectedRevision === undefined
+      ? this.options.hubs.requireHub(located.hubId).revision
+      : input.expectedRevision + 1;
     this.noteLocalChange(located.hubId);
     if ((input.workflowYaml !== undefined || input.restorePresetMode !== undefined || input.presetChoice !== undefined) && input.revision !== false) await this.noteRevision(located.hubId, board.id, previous, board.workflowYaml, previousPresetMode, board.defaultPresetMode, input.revision);
     // The workflow-written reconciliation (held messages, detached bindings) completes
     // before the save reports success, so a reported save has nothing left pending.
     if (input.workflowYaml !== undefined) await this.workflowWritten(located.hubId, board.id);
-    return this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
+    const outcome = this.result(located.hubId, board, await this.publishOutcome(located.hubId, board.id, policy));
+    return { ...outcome, committedRevision };
   }
 
   async saveWorkflow(input: SaveBoardWorkflowInput, policy: BoardPublishingPolicy = 'never'): Promise<BoardWriteResult> {
@@ -588,8 +620,8 @@ export class BoardAdministration {
         // the tool's revision must describe the text the tool actually saved.
         const attribution: RevisionAttribution = { actor: input.actor ?? { kind: 'operator' }, origin: input.origin ?? 'editor' };
         try {
-          const written = await this.saveBoardWorkflowNow({ boardId: input.boardId, ...(input.hubId === undefined ? {} : { hubId: input.hubId }), ...(input.name === undefined ? {} : { name: input.name }), workflowYaml: nextText, expectedRevision, revision: attribution, ...(input.presetChoice === undefined ? {} : { presetChoice: input.presetChoice }), ...(input.restorePresetMode === undefined ? {} : { restorePresetMode: input.restorePresetMode }) }, policy);
-          return { ...written, saved: true, sha256, report: shaped };
+          const saved = await this.saveBoardWorkflowNow({ boardId: input.boardId, ...(input.hubId === undefined ? {} : { hubId: input.hubId }), ...(input.name === undefined ? {} : { name: input.name }), workflowYaml: nextText, expectedRevision, revision: attribution, ...(input.presetChoice === undefined ? {} : { presetChoice: input.presetChoice }), ...(input.restorePresetMode === undefined ? {} : { restorePresetMode: input.restorePresetMode }) }, policy);
+          return { ...saved, saved: true, sha256, report: shaped, committedRevision: saved.committedRevision ?? saved.hubRevision };
         } catch (error) {
           if (!(error instanceof KanbanError) || error.code !== 'REVISION_CONFLICT') throw attachReport(error, report);
           if (rebased || input.replace === true || writesPresetMetadata) throw await this.conflict(input, this.locate(input.boardId, input.hubId), report, { rebased, initialText });
@@ -622,15 +654,15 @@ export class BoardAdministration {
     }
     try {
       const created = await this.create({ ...input, workflowYaml, revision: { actor: input.actor ?? { kind: 'operator' }, origin: input.origin ?? 'editor' } }, policy);
-      if (this.options.impact === undefined) return { ...created, saved: true, sha256, report: this.shaped(report, this.workflowOf(workflowYaml), detail) };
+      if (this.options.impact === undefined) return { ...created, saved: true, sha256, report: this.shaped(report, this.workflowOf(workflowYaml), detail), committedRevision: created.committedRevision ?? created.hubRevision };
       // A creation has no evaluated approvals yet, which is exactly the answer an
       // author needs: every scripted stage of the new board is unreviewed.
       try {
         const scripts = await this.options.impact.describe({ hub: this.options.hubs.requireHub(hubId), board: created.board, before: null, after: created.board.workflow });
-        return { ...created, saved: true, sha256, report: this.shaped(withScripts(report, scripts), this.workflowOf(workflowYaml), detail) };
+        return { ...created, saved: true, sha256, report: this.shaped(withScripts(report, scripts), this.workflowOf(workflowYaml), detail), committedRevision: created.committedRevision ?? created.hubRevision };
       } catch (error) {
         this.options.report?.(error);
-        return { ...created, saved: true, sha256, report: this.shaped(report, this.workflowOf(workflowYaml), detail) };
+        return { ...created, saved: true, sha256, report: this.shaped(report, this.workflowOf(workflowYaml), detail), committedRevision: created.committedRevision ?? created.hubRevision };
       }
     } catch (error) {
       throw attachReport(error, report);

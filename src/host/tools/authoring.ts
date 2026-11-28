@@ -1,10 +1,11 @@
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KanbanApp } from '../app.js';
 import type { BoardAdministration, BoardPublishingPolicy, BoardView, BoardWriteResult, ComposeBoardWorkflowInput, WorkflowWriteDetail, WorkflowWriteOutcome } from '../board-administration.js';
-import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset, DecisionDefinition, StagePatch, StagePosition, StageSize, TransitionRule, Workflow } from '../../shared/types.js';
+import type { DecisionDefinition, Workflow } from '../../shared/types.js';
 import type { ScriptedDefinition } from '../../shared/scripted.js';
 import type { WorkflowCardReference, WorkflowWriteReport } from '../../domain/workflow-report.js';
 import { composeWorkflowReport, summarizeWorkflowReport } from '../../domain/workflow-report.js';
@@ -12,14 +13,13 @@ import { invariant } from '../../shared/errors.js';
 import { parseWorkflow } from '../../domain/workflow.js';
 import { parseDecisionDefinition } from '../../domain/decision-definition.js';
 import { effectiveBoardPreset } from '../../domain/board-preset.js';
+import type { AgentAvailability } from '../../domain/workflow-warnings.js';
+import type { ScriptedImpactInput } from '../scripted-impact.js';
+import type { ScriptAuthorization } from '../board-administration.js';
 import { updateStage } from '../../domain/stage-update.js';
 import { addStage, removeStage } from '../../domain/workflow-stage-edit.js';
 import { readStage } from '../../domain/workflow-stage-read.js';
-import { readStagePositions, setStagePositions, type StagePositions } from '../../domain/workflow-positions.js';
-import { readStageSizes, setStageSizes, type StageSizes } from '../../domain/workflow-sizes.js';
-import { readConnections, setConnections } from '../../domain/workflow-connections.js';
-import { connectionKey } from '../../domain/connection-anchor.js';
-import { isDomainId } from '../../domain/validation.js';
+import { setStageInstruction, setStageLayout, setStageRoutes, stageRoutesPatch } from '../../domain/workflow-operations.js';
 import { actorOf, digestRefusal, flag, normal, refusal, text, written } from './support.js';
 import { assertBoardWriteAllowed, resolveBoard, type ToolArgs } from './scope.js';
 
@@ -40,6 +40,10 @@ export interface WorkflowAuthoringPort {
   read(boardId: string, hubId?: string): BoardView;
   cards(boardId: string, hubId?: string): WorkflowCardReference[];
   saveWorkflowReviewed(input: ComposeBoardWorkflowInput, policy?: BoardPublishingPolicy): Promise<WorkflowWriteOutcome>;
+  /** What the running host reports about presets and models; absent skips availability warnings. */
+  agentAvailability?(): Promise<AgentAvailability | undefined>;
+  /** The reviewed script authorization for a composed document, against one snapshot. */
+  describeScriptImpact?(input: ScriptedImpactInput): Promise<ScriptAuthorization>;
 }
 
 export interface WriteArgs extends ToolArgs {
@@ -59,52 +63,6 @@ export const workflowWriteControls = {
   dry_run: flag('Review exactly as a write does and persist nothing; no document, revision, or publishing change.'),
   detail: { type: 'string', enum: ['summary', 'full'], description: 'Report shape. The summary is the default and names the changed stages and fields without their text.' },
 } as const;
-
-function record(value: unknown, label: string): Record<string, unknown> {
-  invariant(typeof value === 'object' && value !== null && !Array.isArray(value), 'INVALID_INPUT', label + ' must be a mapping.');
-  return value as Record<string, unknown>;
-}
-
-function stageId(value: unknown, label: string): string {
-  invariant(typeof value === 'string' && isDomainId(value), 'INVALID_INPUT', label + ' must be a safe identifier.');
-  return value;
-}
-
-function point(value: unknown, label: string): { x: number; y: number } {
-  const map = record(value, label);
-  invariant(typeof map.x === 'number' && Number.isFinite(map.x) && typeof map.y === 'number' && Number.isFinite(map.y), 'INVALID_INPUT', label + ' requires finite x and y coordinates.');
-  return { x: map.x, y: map.y };
-}
-
-function dimension(value: unknown, label: string): StageSize {
-  const map = record(value, label);
-  invariant(typeof map.width === 'number' && typeof map.height === 'number', 'INVALID_INPUT', label + ' requires width and height numbers.');
-  return { width: map.width, height: map.height };
-}
-
-function anchorOf(value: unknown, label: string): ConnectionAnchor {
-  const map = record(value, label);
-  invariant(map.side === 'top' || map.side === 'right' || map.side === 'bottom' || map.side === 'left', 'INVALID_INPUT', label + ' requires a side of top, right, bottom, or left.');
-  invariant(typeof map.at === 'number' && Number.isInteger(map.at) && map.at >= 0 && map.at <= 4, 'INVALID_INPUT', label + ' requires an at index from 0 to 4.');
-  return { side: map.side, at: map.at };
-}
-
-function segmentsOf(value: unknown, label: string): ConnectionSegmentOffset[] {
-  invariant(Array.isArray(value), 'INVALID_INPUT', label + ' must be an array of displacements.');
-  return value.map((entry, index) => {
-    const map = record(entry, label + ' ' + index);
-    invariant(map.axis === 'x' || map.axis === 'y', 'INVALID_INPUT', label + ' ' + index + ' requires axis x or y.');
-    invariant(typeof map.offset === 'number' && Number.isFinite(map.offset), 'INVALID_INPUT', label + ' ' + index + ' requires a finite offset.');
-    return { axis: map.axis, offset: map.offset };
-  });
-}
-
-function ruleOf(value: unknown, label: string): TransitionRule {
-  if (typeof value === 'string') return { to: stageId(value, label) };
-  const map = record(value, label);
-  const to = stageId(map.to, label + ' destination');
-  return map.when === undefined ? { to } : { to, when: typeof map.when === 'string' ? map.when : String(map.when) };
-}
 
 /** The parts of one stage's scripted configuration a patch may name. */
 interface ScriptPatch {
@@ -206,48 +164,12 @@ export async function write(port: WorkflowAuthoringPort, args: WriteArgs, exec: 
 async function exactDocument(boardId: string, yaml: string): Promise<string> {
   const directory = join(tmpdir(), 'dsh-kanban-workflow');
   await mkdir(directory, { recursive: true });
-  const path = join(directory, boardId + '.yaml');
+  // A fixture's board ids repeat across test files, and workers share one temporary
+  // directory: the name carries the document's digest so two different boards cannot
+  // overwrite each other's file, while an unchanged board keeps one stable path.
+  const path = join(directory, boardId + '-' + createHash('sha256').update(yaml, 'utf8').digest('hex').slice(0, 16) + '.yaml');
   await writeFile(path, yaml, { encoding: 'utf8', mode: 0o600 });
   return path;
-}
-
-function mergePositions(workflow: Workflow, value: unknown): StagePositions {
-  const positions: Record<string, StagePosition | undefined> = Object.create(null) as Record<string, StagePosition | undefined>;
-  for (const [id, position] of Object.entries(readStagePositions(workflow))) positions[id] = position;
-  for (const [id, position] of Object.entries(record(value, 'positions'))) {
-    invariant(workflow.columns.some(column => column.id === id), 'INVALID_INPUT', 'The workflow has no stage ' + id + '.');
-    positions[id] = position === null ? undefined : point(position, 'Stage ' + id + ' position');
-  }
-  return positions;
-}
-
-function mergeSizes(workflow: Workflow, value: unknown): StageSizes {
-  const sizes: Record<string, StageSize | undefined> = Object.create(null) as Record<string, StageSize | undefined>;
-  for (const [id, size] of Object.entries(readStageSizes(workflow))) sizes[id] = size;
-  for (const [id, size] of Object.entries(record(value, 'sizes'))) {
-    invariant(workflow.columns.some(column => column.id === id), 'INVALID_INPUT', 'The workflow has no stage ' + id + '.');
-    sizes[id] = size === null ? undefined : dimension(size, 'Stage ' + id + ' size');
-  }
-  return sizes;
-}
-
-function mergeConnections(workflow: Workflow, value: unknown): Record<string, ConnectionLayout | undefined> {
-  invariant(Array.isArray(value), 'INVALID_INPUT', 'connections must be an array of connection layouts.');
-  const layouts: Record<string, ConnectionLayout | undefined> = Object.create(null) as Record<string, ConnectionLayout | undefined>;
-  for (const [key, layout] of Object.entries(readConnections(workflow))) layouts[key] = layout;
-  for (const [index, entry] of value.entries()) {
-    const map = record(entry, 'Connection ' + index);
-    const from = stageId(map.from, 'Connection ' + index + ' source');
-    const to = stageId(map.to, 'Connection ' + index + ' target');
-    const key = connectionKey(from, to);
-    if (map.remove === true) { layouts[key] = undefined; continue; }
-    const layout: ConnectionLayout = { from, to };
-    if (map.source !== undefined) layout.source = anchorOf(map.source, 'Connection ' + index + ' source anchor');
-    if (map.target !== undefined) layout.target = anchorOf(map.target, 'Connection ' + index + ' target anchor');
-    if (map.segments !== undefined) layout.segments = segmentsOf(map.segments, 'Connection ' + index + ' segments');
-    layouts[key] = layout;
-  }
-  return layouts;
 }
 
 export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app.boards as BoardAdministration): ToolDefinition[] {
@@ -292,7 +214,7 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       const prompt = args.prompt ?? null;
-      return write(port, args as WriteArgs, exec, current => updateStage({ text: current, stageId: args.stage_id, patch: { onEnterPrompt: prompt } }).text);
+      return write(port, args as WriteArgs, exec, current => setStageInstruction(current, args.stage_id, prompt));
     }),
 
     normal('set_stage_routes', intent + 'Replace the routes one stage authors. A stage without a script takes transitions, an authored list of destinations with an optional condition, or permit_any to author no restriction. A scripted stage takes exits, a mapping from each named exit to its destination. An empty transition list means the stage permits no destination.' + preserveNote + reportNote, {
@@ -306,26 +228,15 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
       ...workflowWriteControls,
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
-      const { workflow } = authored(port, args as WriteArgs);
-      const stage = workflow.columns.find(column => column.id === args.stage_id);
-      invariant(stage !== undefined, 'STAGE_NOT_FOUND', 'The workflow has no stage ' + args.stage_id + '.');
-      const provided = [args.transitions !== undefined, args.permit_any === true, args.exits !== undefined].filter(Boolean).length;
-      invariant(provided === 1, 'INVALID_INPUT', 'Provide exactly one of transitions, permit_any, or exits.');
-      let patch: StagePatch;
-      if (stage.scripted !== undefined) {
-        invariant(args.exits !== undefined, 'INVALID_ROUTES', 'Stage ' + stage.id + ' runs a script; set its named exits instead of transitions.');
-        const exits = Object.fromEntries(Object.entries(record(args.exits, 'exits')).map(([name, destination]) => [name, stageId(destination, 'Exit ' + name + ' destination')]));
-        invariant(Object.keys(exits).length > 0, 'INVALID_ROUTES', 'A scripted stage requires at least one named exit.');
-        patch = { scripted: { ...stage.scripted, exits } };
-      } else {
-        invariant(args.exits === undefined, 'INVALID_ROUTES', 'Stage ' + stage.id + ' authors no script; set transitions or permit_any instead.');
-        if (args.permit_any === true) patch = { allowedTransitions: null };
-        else {
-          invariant(Array.isArray(args.transitions), 'INVALID_INPUT', 'transitions must be an array of destinations.');
-          patch = { allowedTransitions: args.transitions.map((value, index) => ruleOf(value, 'Transition ' + index)) };
-        }
-      }
-      return write(port, args as WriteArgs, exec, current => updateStage({ text: current, stageId: args.stage_id, patch }).text);
+      const route = {
+        ...(args.transitions === undefined ? {} : { transitions: args.transitions }),
+        ...(args.permit_any === true ? { permitAny: true } : {}),
+        ...(args.exits === undefined ? {} : { exits: args.exits }),
+      };
+      // A wrong-kind edit is an input refusal before any write is composed, exactly
+      // as it was before the operation was shared with the batch tool.
+      stageRoutesPatch(authored(port, args as WriteArgs).workflow, args.stage_id, route);
+      return write(port, args as WriteArgs, exec, current => setStageRoutes(current, args.stage_id, route));
     }),
 
     normal('set_stage_script', intent + 'Write one stage scripted configuration in parts. Only the parts the call names are rewritten; every other authored character of the stage, including comments beside the script, stays as written. A stage that authors no script needs the language, one source, and its named exits; a stage that already runs a script accepts any subset.' + preserveNote + reportNote, {
@@ -392,14 +303,11 @@ export function authoringTools(app: KanbanApp, port: WorkflowAuthoringPort = app
     }, async (args, exec) => {
       await assertBoardWriteAllowed(app, exec);
       invariant(args.positions !== undefined || args.sizes !== undefined || args.connections !== undefined, 'INVALID_INPUT', 'Provide positions, sizes, or connections.');
-      return write(port, args as WriteArgs, exec, current => {
-        const workflow = parseWorkflow(current);
-        let next = current;
-        if (args.positions !== undefined) next = setStagePositions(next, mergePositions(workflow, args.positions));
-        if (args.sizes !== undefined) next = setStageSizes(next, mergeSizes(workflow, args.sizes));
-        if (args.connections !== undefined) next = setConnections(next, mergeConnections(workflow, args.connections));
-        return next;
-      });
+      return write(port, args as WriteArgs, exec, current => setStageLayout(current, {
+        ...(args.positions === undefined ? {} : { positions: args.positions }),
+        ...(args.sizes === undefined ? {} : { sizes: args.sizes }),
+        ...(args.connections === undefined ? {} : { connections: args.connections }),
+      }));
     }),
 
     normal('add_stage', intent + 'Insert one stage into the workflow after a named stage, or at the end of the stage sequence. The stage is given as YAML mapping lines; its id, label, instruction, transitions, decision or script configuration are authored like any other stage.' + preserveNote + reportNote, {

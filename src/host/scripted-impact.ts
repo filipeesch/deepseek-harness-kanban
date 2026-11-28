@@ -21,6 +21,12 @@ export interface ScriptedImpactInput {
  */
 export interface ScriptedImpactPort {
   describe(input: ScriptedImpactInput): Promise<ScriptImpact[]>;
+  /**
+   * Whether this host can resolve authorization at all. A port that is installed but
+   * has no runtime answers `false`, so a caller never reads an empty or unverifiable
+   * report as a checked one. Absent leaves the answer unknown.
+   */
+  available?(): boolean;
 }
 
 function sameList(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
@@ -52,9 +58,19 @@ function unchanged(before: Board['workflow']['columns'][number] | undefined, aft
  */
 export function createScriptedImpact(runtime: () => ScriptedRuntime | undefined): ScriptedImpactPort {
   return {
+    available: () => runtime() !== undefined,
     async describe(input) {
       const native = runtime();
-      if (native === undefined) return [];
+      // No runtime is a fact about this host, not a statement that every approval
+      // holds: each scripted stage is reported as unverifiable instead of omitted.
+      if (native === undefined) {
+        return input.after.columns.flatMap(column => column.scripted === undefined ? [] : [{
+          stage: column.id,
+          verdict: 'unverifiable' as const,
+          reasons: ['unresolvable' as const],
+          detail: 'The scripted runtime is not available on this host, so this stage authorization cannot be inspected.',
+        }]);
+      }
       const identities = boardStageIdentities(input.board, input.after);
       const result: ScriptImpact[] = [];
       for (const column of input.after.columns) {

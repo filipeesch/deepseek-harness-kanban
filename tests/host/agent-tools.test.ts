@@ -88,6 +88,28 @@ describe('agent authoring tools', () => {
     expect(unknown.error.message).toMatch(/does not declare/);
   });
 
+  it('edits one flow-style agent without rewriting the other entry', async () => {
+    const flow = `name: Flow agents
+initial_column: backlog
+columns:
+  - id: backlog
+    label: Backlog
+  - id: done
+    label: Done
+agents: [{id: researcher, name: 'Researcher', preset: planner}, {id: writer, name: Writer}]
+`;
+    const f = await setup();
+    const boardId = await boardWith(f, flow);
+    const replaced = await run(f, 'set_agent', { board_id: boardId, agent_id: 'writer', name: 'Writer Two' });
+    expect(replaced.saved).toBe(true);
+    expect(await document(f, boardId)).toBe(flow.replace('{id: writer, name: Writer}', '{id: writer, name: Writer Two}'));
+    const added = await run(f, 'set_agent', { board_id: boardId, agent_id: 'triage', name: 'Triage' });
+    expect(added.saved).toBe(true);
+    const removed = await run(f, 'remove_agent', { board_id: boardId, agent_id: 'triage' });
+    expect(removed.saved).toBe(true);
+    expect(await document(f, boardId)).toBe(flow.replace('{id: writer, name: Writer}', '{id: writer, name: Writer Two}'));
+  });
+
   it('authors the main agent and keeps a legacy document readable', async () => {
     const f = await setup();
     const boardId = await boardWith(f, FLOW);

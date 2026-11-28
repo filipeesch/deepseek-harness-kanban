@@ -9,6 +9,7 @@ import { assertSchedulable } from './cron.js';
 import { isPublishedProject, requireProjectPath } from '../shared/project.js';
 import { createBoard } from './hub-schema.js';
 import { parseWorkflow } from './workflow.js';
+import { orphanedStageReferences } from './workflow-orphans.js';
 import { applyWorkflowEdits, type WorkflowTextEdit } from './workflow-edit.js';
 import { entryInstruction, nextEnteredAt } from './stage-entry.js';
 import { applyHold, clearAutoModeState, normalizePauseReason } from './auto-mode-hold.js';
@@ -215,10 +216,7 @@ export function deleteBoard(hub: HubState, boardId: string, deps: OperationDeps,
 export function saveBoardWorkflow(hub: HubState, boardId: string, yaml: string, deps: OperationDeps): Workflow {
   const board = requireBoard(hub, boardId);
   const workflow = parseWorkflow(yaml);
-  const ids = new Set(workflow.columns.map(column => column.id));
-  const referenced = hub.tasks.filter(task => task.boardId === board.id).flatMap(task =>
-    task.pendingTransition ? [task.columnId, task.pendingTransition.fromColumnId, task.pendingTransition.columnId] : [task.columnId]);
-  const orphaned = [...new Set(referenced.filter(columnId => !ids.has(columnId)))];
+  const orphaned = orphanedStageReferences(workflow, hub.tasks.filter(task => task.boardId === board.id));
   invariant(orphaned.length === 0, 'WORKFLOW_ORPHAN_COLUMNS', 'Workflow update would orphan existing task columns: ' + orphaned.join(', ') + '.');
   reconcileLocalStageIdentities(board, workflow);
   board.workflowYaml = yaml;
