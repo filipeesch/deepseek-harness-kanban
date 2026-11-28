@@ -50,6 +50,7 @@ function verify() {
   if (!existsSync(join(root, 'tests/e2e-dsh/create-start.replay.override.json'))) fail('missing create-start replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/native-drawer.replay.override.json'))) fail('missing native-drawer replay override');
   if (!existsSync(join(root, 'tests/e2e-dsh/decision.replay.override.json'))) fail('missing decision replay override');
+  if (!existsSync(join(root, 'tests/e2e-dsh/messages-stage-entry.replay.override.json'))) fail('missing messages stage-entry replay override');
   const pinned = pluginDshVersion();
   if (pinned !== undefined && version !== 'unknown' && !semver.satisfies(version, pinned, { includePrerelease: true })) {
     console.warn('e2e-dsh: the plugin expects DSH ' + pinned + ' but the checkout reports ' + version + '; continuing with the checkout as requested.');
@@ -179,7 +180,8 @@ try {
       KANBAN_ORDINARY_CHAT_FIXTURE: join(root, 'tests/e2e-dsh/ordinary-chat.jsonl'),
       KANBAN_AUTORUN_OVERRIDE: join(root, 'tests/e2e-dsh/auto-run.replay.override.json'), KANBAN_AUTOMODE_OVERRIDE: join(root, 'tests/e2e-dsh/auto-mode.replay.override.json'),
       KANBAN_DECLARED_OVERRIDE: join(root, 'tests/e2e-dsh/declared-transition.replay.override.json'), KANBAN_CREATESTART_OVERRIDE: join(root, 'tests/e2e-dsh/create-start.replay.override.json'),
-      KANBAN_NATIVE_OVERRIDE: join(root, 'tests/e2e-dsh/native-drawer.replay.override.json'), KANBAN_DECISION_OVERRIDE: join(root, 'tests/e2e-dsh/decision.replay.override.json') },
+      KANBAN_NATIVE_OVERRIDE: join(root, 'tests/e2e-dsh/native-drawer.replay.override.json'), KANBAN_DECISION_OVERRIDE: join(root, 'tests/e2e-dsh/decision.replay.override.json'),
+      KANBAN_MESSAGES_OVERRIDE: join(root, 'tests/e2e-dsh/messages-stage-entry.replay.override.json') },
   });
 } finally {
   // stage is the verified, test-owned mkdtemp result, never a computed checkout path.

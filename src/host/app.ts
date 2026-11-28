@@ -26,7 +26,6 @@ import type { AdvanceOrigin, AutoModePauseReason, Board, BoardSettings, Command,
 import type { TaskMessagePreparation } from '../shared/task-message.js';
 import type { StageEntryOrigin } from '../shared/task-history.js';
 import type { GitPort, ProjectProbe, SessionPort, TaskMessageDeliveryPort, WorkspacePort } from '../shared/ports.js';
-import { buildSameTaskMessageText, buildTaskMessageSummary, buildTaskMessageText } from '../shared/task-message.js';
 import type { QuestionDraftStore, QuestionStore } from './question-storage.js';
 import { QuestionDraftContentSchema } from '../remote.js';
 import { KanbanError, invariant, problem } from '../shared/errors.js';
@@ -52,13 +51,14 @@ import { prepareFirstExecution } from './first-execution.js';
 import { worktreeDecision } from '../domain/first-execution.js';
 import { firstOpenSessionId } from '../shared/conversations.js';
 import { admitStageInstruction, type StageInstructionDeps } from './stage-instruction.js';
+import { TASK_MESSAGE_SOURCE_KIND } from './task-message.js';
 import { createsDefaultWorktree, requiresWorktreeDecision, unresolvedWorktreeBinding } from '../shared/worktree-decision.js';
 import { worktreePolicy } from '../shared/worktree-policy.js';
 import { HubRepository, HubStore } from './hub-repository.js';
 import { BoardAdministration, type BoardRevisionPort, type BoardSharingPort } from './board-administration.js';
 import { effectiveBoardModel, effectiveBoardPreset } from '../domain/board-preset.js';
 import { agentFor, authoredMainAgent, stageAgent } from '../domain/agents.js';
-import { agentConversationId, conversationAgent, mainConversationId, ownerConversationId, ownsStage, stageConversationId } from '../domain/conversation-role.js';
+import { addressedConversationId, agentConversationId, conversationAgent, mainConversationId, ownerConversationId, ownsStage, stageConversationId } from '../domain/conversation-role.js';
 import { addHeldMessage, dropHeldMessages, heldMessagesFor, recordReleased, takeHeldMessage, wasReleased } from '../domain/held-message.js';
 import type { LocatedTask, TaskSummary } from './hub-repository.js';
 import { RepositoryWorktreeStore, TaskLocator } from './task-locator.js';
@@ -81,6 +81,7 @@ import { ScriptedSupervisor } from './scripted-supervisor.js';
 import { createNativeSupervisorPorts } from './scripted-control.js';
 import { ScriptedApprovalService } from './scripted-approval.js';
 import { createScriptedRouter } from './scripted-routing.js';
+import { composeHeldMessageDelivery } from './held-message-delivery.js';
 import { ScriptedSurface } from './scripted-surface.js';
 import { createScriptedImpact } from './scripted-impact.js';
 import { scriptedEqual } from '../domain/scripted-definition.js';
@@ -127,6 +128,21 @@ function userPromptTime(event:unknown):number|undefined{
  const time=(event as {time?:unknown}).time;
  return typeof time==='number'&&Number.isFinite(time)?time:Date.now();
 }
+/** Whether one canonical event durably records a held-message identity. */
+function recordedHeldMessage(events:readonly unknown[],id:string):boolean{
+ return events.some(event=>isEvent(event)&&event.type==='user/message'
+  &&(event.data as {source?:{kind?:unknown;requestId?:unknown}}|null)?.source?.kind===TASK_MESSAGE_SOURCE_KIND
+  &&(event.data as {source?:{requestId?:unknown}}).source?.requestId===id);
+}
+/**
+ * The stage entry whose instruction a canonical event durably records, when it is one.
+ * It is the acceptance a batch entry waits for: the same record the model reads.
+ */
+function instructionAcceptance(event:unknown):string|undefined{
+ if(!isEvent(event)||event.type!=='user/message')return undefined;
+ const source=(event.data as {source?:{kind?:unknown;entryId?:unknown}}|null)?.source;
+ return source?.kind==='stage-instruction'&&typeof source.entryId==='string'?source.entryId:undefined;
+}
 /** Draft records kept by recency; draft retention never depends on age. */
 export const QUESTION_DRAFT_RETENTION=100;
 /** Coalescing window for pruning drafts whose round just ended. */
@@ -165,7 +181,7 @@ export interface HostCommandPolicy {
 }
 /** One created conversation and, when its board named defaults, how the model and preset fared. */
 export interface CreatedConversation { sessionId: string; model?: ConversationModelOutcome; preset?: ConversationPresetOutcome }
-export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; /** Delivers one message held for a later stage; absent discards held messages instead. */ taskMessageDelivery?:TaskMessageDeliveryPort; /** What the running host reports about agent presets and models; absent skips availability warnings. */ agentAvailability?:()=>Promise<import('../domain/workflow-warnings.js').AgentAvailability|undefined>; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
+export interface AppOptions { turnBoundary?:TurnBoundaryPort; history?: (sessionId:string)=>Promise<readonly unknown[]>; signal?:AbortSignal; report?:(error:unknown)=>void; /** Records each accepted workflow write; absent keeps no local history. */ revisions?:BoardRevisionPort; questionStore?:QuestionStore; questionDraftStore?:QuestionDraftStore; probe?:ProjectProbe; /** Applies a board's default model to one conversation; absent means no board model is applied. */ models?:SessionModelPort; /** Applies a board's default agent preset to one conversation; absent means no board preset is applied. */ presets?:SessionPresetPort; /** The MCP servers this host reports for the board allowlist control; absent reports none. */ mcpServers?:()=>readonly string[]; /** Applies a board's MCP tool policy to one conversation agent; absent means no board policy is applied. */ tools?:{apply:(sessionId:string)=>Promise<void>}; /** Delivers one message held for a later stage; absent discards held messages instead. */ taskMessageDelivery?:TaskMessageDeliveryPort; /** The stage-entry batch admission this host composes; absent keeps the separate release path only. */ stageBatch?:{prepare:(taskId:string,columnId:string,sessionId:string,instructionId:string)=>Promise<'deliver'|'accepted'>;abandon:(taskId:string,columnId:string,sessionId:string)=>void}; /** What the running host reports about agent presets and models; absent skips availability warnings. */ agentAvailability?:()=>Promise<import('../domain/workflow-warnings.js').AgentAvailability|undefined>; sharing?:HubSharingService; sharingAuth?:GoogleDriveAuthCoordinator; localDrive?:GoogleDriveLocalDiscovery; scheduler?:SharingPollScheduler; teamFiles?:TeamFiles; /** Whether a retained checkout directory still exists; defaults to a filesystem check. */ retainedCheckoutExists?:(path:string)=>Promise<boolean>; /** How long to wait between retained-checkout existence checks. */ retainedCheckoutPruneIntervalMs?:number; /** The plugin-owned task attachment store; absent disables the task file surface. */ taskAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The answer-file store, in its own directory so a conversation identity cannot address task files. */ answerAttachments?:import('./task-attachments/store.js').TaskAttachmentStore; /** The filesystem-only lease reader every agent deletion must consult; absent only where no scripted execution storage exists. */ scriptedLease?:ScriptedLeasePort }
 /** Coordinates Hub-scoped commands while the host continues to own sessions and execution. */
 export class KanbanApp {
  readonly questions=new QuestionIndex();
@@ -965,6 +981,7 @@ export class KanbanApp {
  observe(sessionId:string,event:unknown):void{
   if(this.disposed||this.forgottenSessions.has(sessionId))return;
   const promptTime=userPromptTime(event);if(promptTime!==undefined)this.clearInstructionPending(sessionId,promptTime);
+  const acceptedEntry=instructionAcceptance(event);if(acceptedEntry!==undefined)this.resolveAcceptedInstruction(sessionId,acceptedEntry);
   const questionChanged=isEvent(event)&&this.questions.apply(sessionId,event);
   if(questionChanged){this.schedulePersist(sessionId);this.scheduleDraftPrune(sessionId);}
   const taskRelevant=this.locator.hasSession(sessionId);
@@ -976,21 +993,61 @@ export class KanbanApp {
   if(taskRelevant)this.attention.touch(sessionId);
   if(taskRelevant&&!questionChanged)this.markChanged();
  }
+ /**
+  * The messages the task's current entry holds for one conversation. While any remain, the
+  * entry is a batch entry: its instruction and those handoffs retire together, so a prompt
+  * or an unproven append never strands them.
+  */
+ private batchHandoffsFor(task:Task,sessionId:string):HeldMessage[]{
+  if(task.stageEntry===undefined||task.stageEntry.columnId!==task.columnId)return [];
+  return heldMessagesFor(task,task.columnId).filter(message=>addressedConversationId(task,message.agent)===sessionId);
+ }
  private clearInstructionPending(sessionId:string,time:number):void{
   const located=this.locator.bySession(sessionId);const task=located?.task;const marker=task?.instructionPending;
   if(!located||!task||!marker||marker.columnId!==task.columnId||marker.enteredAt>time)return;
+  // A batch entry waits for its instruction and handoffs together, not for any prompt.
+  if(this.batchHandoffsFor(task,sessionId).length>0)return;
   void this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);const pending=current?.instructionPending;if(!current||!pending||pending.columnId!==current.columnId||pending.enteredAt>time)return;delete current.instructionPending;}).catch(error=>this.options.report?.(error));
  }
+ /** Resolve an entry whose instruction its conversation durably recorded, retiring its retry action. */
+ private resolveAcceptedInstruction(sessionId:string,entryId:string):void{
+  const located=this.locator.bySession(sessionId);const task=located?.task;const marker=task?.instructionPending;
+  if(!located||!task||!marker||marker.columnId!==task.columnId||task.stageEntry?.id!==entryId)return;
+  // The batch admission retires a batch entry once every handoff is durable; this observer
+  // only answers for entries that carry nothing into their first step.
+  if(this.batchHandoffsFor(task,sessionId).length>0)return;
+  void this.hubStore(located.hubId).transact(draft=>{
+   const current=draft.tasks.find(value=>value.id===task.id);const pending=current?.instructionPending;
+   if(!current||!pending||current.instructionPending?.columnId!==current.columnId||current.stageEntry?.id!==entryId)return;
+   delete current.instructionPending;
+  }).catch(error=>this.options.report?.(error));
+ }
+ /**
+  * Resolve an entry from durable state after a restart or a slow observation. A batch entry
+  * retires only when the log records its instruction and every handoff for the conversation;
+  * recorded handoffs are finalized here, and an unrecorded remainder keeps the entry
+  * actionable so the existing stage action can finish it without duplicating anything.
+  */
  private async reconcileTaskInstructionPending(taskId:string):Promise<void>{
   if(!this.options.history)return;
   const located=this.locator.byTask(taskId);if(!located)return;
   const task=located.task;const marker=task.instructionPending;if(!marker||marker.columnId!==task.columnId)return;
-  let prompted=false;
+  const entryId=task.stageEntry?.id;
+  let resolved=false;
   for(const sessionId of task.sessionIds){
-   try{const events=await this.options.history(sessionId);if(events.some(event=>{const time=userPromptTime(event);return time!==undefined&&time>=marker.enteredAt;})){prompted=true;break;}}
-   catch(error){this.options.report?.(error);}
+   let events:readonly unknown[];
+   try{events=await this.options.history(sessionId);}
+   catch(error){this.options.report?.(error);continue;}
+   const prompted=events.some(event=>{const time=userPromptTime(event);return time!==undefined&&time>=marker.enteredAt;});
+   const instructionRecorded=entryId!==undefined&&events.some(event=>instructionAcceptance(event)===entryId);
+   const addressed=this.batchHandoffsFor(task,sessionId);
+   if(addressed.length===0){if(prompted||instructionRecorded){resolved=true;break;}continue;}
+   if(!instructionRecorded)continue;
+   const recorded=addressed.filter(message=>recordedHeldMessage(events,message.id));
+   if(recorded.length>0)await this.finalizeHeldMessages(task.id,recorded.map(message=>message.id));
+   if(recorded.length===addressed.length){resolved=true;break;}
   }
-  if(prompted)await this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
+  if(resolved)await this.hubStore(located.hubId).transact(draft=>{const current=draft.tasks.find(value=>value.id===task.id);if(current?.instructionPending?.enteredAt===marker.enteredAt)delete current.instructionPending;});
  }
  activityChanged():void{if(this.disposed)return;this.attention.touch();this.markChanged();}
  /** The question-aware conversation facts shared by attention and scheduled archiving. */
@@ -1572,14 +1629,16 @@ export class KanbanApp {
   }
  }
  /**
-  * Deliver the messages held for one stage, now that the task enters it. The
-  * destination's instruction is delivered first by its own path, so this runs after it;
-  * each message is released once and removed from the task only after its delivery.
+  * Deliver the messages held for one stage, now that the task enters it. A message whose
+  * target is the conversation its instruction just reached is left to the batch
+  * admission, which joins it to that instruction's first step and confirms it from the
+  * native log. Every other message is released once here, after the instruction, and
+  * removed from the task only after its own delivery.
   */
- private async releaseHeldMessages(taskId:string,columnId:string):Promise<void>{
+ private async releaseHeldMessages(taskId:string,columnId:string,deliveredSessionId?:string):Promise<void>{
   for(;;){
    const located=this.locatedTask(taskId);
-   const message=heldMessagesFor(located.task,columnId)[0];
+   const message=heldMessagesFor(located.task,columnId).find(value=>deliveredSessionId===undefined||addressedConversationId(located.task,value.agent)!==deliveredSessionId);
    if(message===undefined)return;
    try{
     const sessionId=message.agent===undefined?await this.ensureMainConversation(taskId):await this.ensureAgentConversation(taskId,message.agent);
@@ -1593,13 +1652,35 @@ export class KanbanApp {
   const delivery=this.options.taskMessageDelivery;
   invariant(delivery!==undefined,'MESSAGE_DELIVERY_UNAVAILABLE','This host cannot deliver a held message.');
   const located=this.locatedTask(taskId);
-  const sender=conversationAgent(located.task,message.fromSessionId);
-  const text=buildSameTaskMessageText({
-   ...(sender===undefined?{}:{agent:sender,agentName:agentFor(located.board.workflow,sender)?.name}),
-   ...(located.board.workflow.columns.find(column=>column.id===message.columnId)?.name===undefined?{}:{stageName:located.board.workflow.columns.find(column=>column.id===message.columnId)?.name!}),
-  },message.body);
-  await delivery.deliver(sessionId,{requestId:message.id,senderSessionId:message.fromSessionId,senderTaskId:taskId,text,summary:buildTaskMessageSummary(located.task.title)});
+  await delivery.deliver(sessionId,composeHeldMessageDelivery(located.task,located.board.workflow,message));
  }
+ /**
+  * Remove the held messages a conversation's native log durably recorded and record each
+  * released identity in the same write, so a replay neither queues nor delivers it again.
+  * A message another path already removed is left to that path's own record.
+  */
+ /** Deliver the messages a stage entry still holds for destinations other than one conversation. */
+ releaseSeparately(taskId:string,columnId:string,deliveredSessionId:string):Promise<void>{return this.releaseHeldMessages(taskId,columnId,deliveredSessionId);}
+ /** Retire a batch entry only once its instruction and every handoff it carried are durable. */
+ retireInstructionEntry(taskId:string,entryId:string):Promise<void>{return this.serial(async()=>{
+  const located=this.locator.byTask(taskId);
+  if(located===undefined)return;
+  await this.hubs.hub(located.hubId).transact(draft=>{
+   const current=draft.tasks.find(value=>value.id===taskId);const marker=current?.instructionPending;
+   if(!current||!marker||current.stageEntry?.id!==entryId||marker.columnId!==current.columnId)return;
+   delete current.instructionPending;
+  });
+ });}
+ finalizeHeldMessages(taskId:string,ids:readonly string[]):Promise<void>{return this.serial(async()=>{
+  if(ids.length===0)return;
+  const located=this.locator.byTask(taskId);
+  if(located===undefined)return;
+  await this.hubs.hub(located.hubId).transact(draft=>{
+   const task=draft.tasks.find(value=>value.id===taskId);
+   if(task===undefined)return;
+   for(const id of ids)if(takeHeldMessage(task,id)!==undefined)recordReleased(task,id);
+  });
+ });}
  /**
   * Drop the messages a workflow edit made undeliverable and record each discard, so a
   * message never waits for a stage the board no longer defines.
@@ -1636,28 +1717,35 @@ export class KanbanApp {
    }
   });
  }
- /** Drop every held message once the task reaches a stage no route leaves. */
  /** Run the stage-entry consequences of one placement: release or discard held messages. */
  private async onStagePlaced(taskId:string,columnId:string):Promise<void>{
   const located=this.locatedTask(taskId);
   if(located.task.columnId!==columnId)return;
   const stage=located.board.workflow.columns.find(column=>column.id===columnId);
-  if(!hasOnwardRoute(located.board.workflow,columnId)){await this.discardHeldMessagesAtTerminal(taskId);return;}
+  // A message for another stage can never arrive once the flow leaves no onward route,
+  // so a terminal entry strands it. The messages this entry owns still arrive: with its
+  // instruction when it authors one, and right here when it does not.
+  if(!hasOnwardRoute(located.board.workflow,columnId))await this.discardHeldMessagesAtTerminal(taskId,columnId);
   // An instructed stage releases its messages when that instruction is delivered, so
   // a manual or timed entry never hands them over before the stage's own instruction.
   if(entryInstruction(stage)!==undefined)return;
   await this.releaseHeldMessages(taskId,columnId);
  }
- /** Drop every held message once the task reaches a stage no route of any kind leaves. */
- private async discardHeldMessagesAtTerminal(taskId:string):Promise<void>{
+ /**
+  * Drop the held messages a terminal entry stranded, keeping the ones addressed to the
+  * stage it entered. A stage without an automatic default route is not terminal when it
+  * routes by a script's exits, a decision gate's options, or explicit transitions, and
+  * the entry is re-read before anything is discarded.
+  */
+ private async discardHeldMessagesAtTerminal(taskId:string,enteredColumnId?:string):Promise<void>{
   const located=this.locatedTask(taskId);
   if(located.task.heldMessages===undefined)return;
-  // A stage without an automatic default route is not terminal when it routes by a
-  // script's exits, a decision gate's options, or explicit transitions.
   if(hasOnwardRoute(located.board.workflow,located.task.columnId))return;
+  const stranded=(message:HeldMessage):boolean=>enteredColumnId===undefined||message.columnId!==enteredColumnId;
+  if(!located.task.heldMessages.some(stranded))return;
   await this.hubs.hub(located.hubId).transact(draft=>{
    const task=draft.tasks.find(value=>value.id===taskId);if(!task||task.heldMessages===undefined)return;
-   for(const message of dropHeldMessages(task,()=>true))recordHeldMessageDiscard(task,{at:new Date().toISOString(),action:'discarded',columnId:message.columnId,reason:'task-terminal',...(message.agent===undefined?{}:{agent:message.agent})});
+   for(const message of dropHeldMessages(task,stranded))recordHeldMessageDiscard(task,{at:new Date().toISOString(),action:'discarded',columnId:message.columnId,reason:'task-terminal',...(message.agent===undefined?{}:{agent:message.agent})});
   });
  }
  createTask(input:NewTask){return this.serial(()=>this.createTaskNow(input));}
@@ -2109,7 +2197,15 @@ export class KanbanApp {
    locate:taskId=>{const located=this.locatedTask(taskId);return {hubId:located.hubId,task:located.task,board:located.board};},
    transact:(hubId,change)=>this.hubs.hub(hubId).transact(change),
    resolveSession:async(task,columnId)=>this.ensureStageConversation(task.id,columnId),
-   releaseHeld:async(taskId,columnId)=>{await this.releaseHeldMessages(taskId,columnId);},
+   releaseHeld:async(taskId,columnId,sessionId)=>{await this.releaseHeldMessages(taskId,columnId,sessionId);},
+   ...(this.options.stageBatch===undefined?{}:{prepareHeld:this.options.stageBatch.prepare,abandonHeld:this.options.stageBatch.abandon}),
+   // The same recipient rule the batch admission uses decides whether the instruction's
+   // own first step owns this entry's acceptance.
+   retainsEntry:(task,columnId,sessionId)=>{
+    const located=this.locator.byTask(task.id);
+    if(located===undefined||located.task.columnId!==columnId)return false;
+    return heldMessagesFor(located.task,columnId).some(message=>addressedConversationId(located.task,message.agent)===sessionId);
+   },
    assertExecutionContext:sessionId=>this.assertExecutionContext(sessionId),
    deliver:async(sessionId,delivery)=>{
     // A conversation the plugin cannot observe cannot receive a stage instruction:

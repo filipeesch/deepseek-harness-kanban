@@ -24,5 +24,7 @@ export interface StageDeliveryDeps<T extends StageDeliveryTarget> {
  * task-message path and this path cannot drift.
  */
 export function createStageDelivery<T extends StageDeliveryTarget>(deps: StageDeliveryDeps<T>): (sessionId: string, delivery: StageInstructionDelivery) => Promise<void> {
-  return createPluginMessageDelivery<T, StageInstructionDelivery>({ sourceKind: STAGE_INSTRUCTION_SOURCE_KIND, ...deps });
+  // A consumed insertion the host never appended is not acceptance: the destination entry
+  // keeps its retry action, and re-admitting the same identity must reach the conversation.
+  return createPluginMessageDelivery<T, StageInstructionDelivery>({ sourceKind: STAGE_INSTRUCTION_SOURCE_KIND, admission: 'appended', ...deps });
 }

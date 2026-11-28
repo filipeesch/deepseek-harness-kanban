@@ -161,3 +161,58 @@ describe('move placement', () => {
     ]);
   });
 });
+
+describe('held messages at a terminal entry', () => {
+  const held = (id: string, columnId: string, fromSessionId: string) => ({ id, fromSessionId, columnId, body: 'Body of ' + id, at: new Date().toISOString() });
+
+  it('keeps a message held for the terminal stage whose instruction it awaits', async () => {
+    const f = await setup();
+    await f.store.setWorkflow([
+      'name: Terminal flow',
+      'initial_column: backlog',
+      'columns:',
+      '  - id: backlog',
+      '    label: Backlog',
+      '  - id: final',
+      '    label: Final',
+      '    allowed_transitions: []',
+      '    on_enter_prompt: Deliver the result.',
+      '',
+    ].join('\n'));
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Terminal entry', description: '' });
+    const main = f.store.requireTask(task.id).sessionIds[0]!;
+    await f.app.holdMessage(task.id, held('held:main:final', 'final', main));
+
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'final' });
+    await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('final');
+    const current = f.store.requireTask(task.id);
+    expect(current.instructionPending?.columnId).toBe('final');
+    expect(current.heldMessages?.map(message => message.id)).toEqual(['held:main:final']);
+    expect((current.history ?? []).some(entry => entry.kind === 'held-message')).toBe(false);
+  });
+
+  it('discards the message a terminal entry stranded on a stage it never reaches', async () => {
+    const f = await setup();
+    await f.store.setWorkflow([
+      'name: Terminal flow',
+      'initial_column: backlog',
+      'columns:',
+      '  - id: backlog',
+      '    label: Backlog',
+      '  - id: final',
+      '    label: Final',
+      '    allowed_transitions: []',
+      '  - id: later',
+      '    label: Later',
+      '',
+    ].join('\n'));
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Stranded', description: '' });
+    const main = f.store.requireTask(task.id).sessionIds[0]!;
+    await f.app.holdMessage(task.id, held('held:main:later', 'later', main));
+
+    await f.app.command({ type: 'task.move', taskId: task.id, columnId: 'final' });
+    await expect.poll(() => f.store.requireTask(task.id).heldMessages).toBeUndefined();
+    const history = f.store.requireTask(task.id).history ?? [];
+    expect(history.some(entry => entry.kind === 'held-message' && entry.columnId === 'later')).toBe(true);
+  });
+});
