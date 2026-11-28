@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Board, Column, HubState, HubTask, Workflow } from '../../src/shared/types.js';
 import type { StageInstructionDelivery } from '../../src/shared/ports.js';
 import { admitStageInstruction, type StageInstructionDeps } from '../../src/host/stage-instruction.js';
@@ -133,6 +133,79 @@ describe('stage instruction composition', () => {
       transition: { fromColumnId: 'review', reason: 'Changes are needed.' },
     });
     expect(f.delivered[0]!.delivery.text).toContain('Transition reason (from CODE REVIEW):');
+  });
+
+  it('keeps the entry unresolved while its held handoffs await the first step', async () => {
+    const value = task();
+    const f = fixture(value, twoTargets());
+    const retainsEntry = vi.fn(() => true);
+    f.deps.retainsEntry = retainsEntry;
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(retainsEntry).toHaveBeenCalledWith(expect.objectContaining({ id: 'task' }), 'review', 's1');
+    expect(value.instructionPending).toEqual({ columnId: 'review', enteredAt: 1 });
+  });
+
+  it('resolves the entry when it holds no handoff for the instruction conversation', async () => {
+    const value = task();
+    const f = fixture(value, twoTargets());
+    f.deps.retainsEntry = () => false;
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(value.instructionPending).toBeUndefined();
+  });
+
+  it('derives the request identity from the entry so a retry deduplicates', async () => {
+    const value = task({ stageEntry: { id: 'entry-1', columnId: 'review', stageIdentity: 'review', enteredAt: now } });
+    const f = fixture(value, twoTargets());
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(f.delivered.map(entry => entry.delivery.requestId)).toEqual(['stage-instruction:task:entry-1', 'stage-instruction:task:entry-1']);
+  });
+
+  it('fails the admission before the wake when preparation fails', async () => {
+    const value = task();
+    const f = fixture(value, twoTargets());
+    const prepareHeld = vi.fn(async () => { throw new Error('Session history is unreadable.'); });
+    f.deps.prepareHeld = prepareHeld;
+    await expect(admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' }))
+      .rejects.toThrow('Session history is unreadable.');
+    expect(prepareHeld).toHaveBeenCalledWith('task', 'review', 's1', expect.any(String));
+    expect(f.delivered).toEqual([]);
+    expect(value.instructionPending).toEqual({ columnId: 'review', enteredAt: 1 });
+  });
+
+  it('forgets the preparation when the native delivery fails', async () => {
+    const f = fixture(task(), twoTargets());
+    const abandonHeld = vi.fn();
+    const deliver = vi.fn(async () => { throw new Error('Native admission failed'); });
+    f.deps.prepareHeld = async () => 'deliver';
+    f.deps.abandonHeld = abandonHeld;
+    f.deps.deliver = deliver;
+    await expect(admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' }))
+      .rejects.toThrow('Native admission failed');
+    expect(abandonHeld).toHaveBeenCalledWith('task', 'review', 's1');
+  });
+
+  it('skips the send when the conversation already records the instruction', async () => {
+    const value = task();
+    const f = fixture(value, twoTargets());
+    const prepareHeld = vi.fn(async () => 'accepted' as const);
+    const releaseHeld = vi.fn(async () => {});
+    f.deps.prepareHeld = prepareHeld;
+    f.deps.releaseHeld = releaseHeld;
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(f.delivered).toEqual([]);
+    // No new first step exists, so everything left is released separately.
+    expect(releaseHeld).toHaveBeenCalledWith('task', 'review');
+    expect(value.instructionPending).toBeUndefined();
+  });
+
+  it('keeps a recovery entry actionable while a handoff is still held', async () => {
+    const value = task({ heldMessages: [{ id: 'held:main:1', fromSessionId: 's0', columnId: 'review', body: 'Result.', at: now }] });
+    const f = fixture(value, twoTargets());
+    f.deps.prepareHeld = async () => 'accepted';
+    f.deps.releaseHeld = async () => {};
+    await admitStageInstruction(f.deps, { taskId: 'task', columnId: 'review', instruction: 'Review it.', reviewedInstruction: 'Review it.' });
+    expect(value.instructionPending).toEqual({ columnId: 'review', enteredAt: 1 });
   });
 
   it('keeps the captured instruction as the pending delivery text', async () => {

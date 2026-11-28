@@ -3,6 +3,8 @@ import type { Board, HubState, HubTask } from '../shared/types.js';
 import type { StageInstructionDelivery } from '../shared/ports.js';
 import { invariant } from '../shared/errors.js';
 import { entryInstruction } from '../domain/stage-entry.js';
+import { addressedConversationId } from '../domain/conversation-role.js';
+import { heldMessagesFor } from '../domain/held-message.js';
 import { buildTransitionBriefing } from './stage-briefing.js';
 import { buildStageInstructionDelivery, modelFallbackNotice } from './stage-message.js';
 import { recordScriptedHandoff } from '../domain/task-history/record.js';
@@ -15,8 +17,30 @@ export interface StageInstructionDeps {
   transact(hubId: string, change: (draft: HubState) => void): Promise<unknown>;
   /** The conversation the destination stage owns, creating it when the task has none. */
   resolveSession(task: HubTask, columnId: string): Promise<string>;
-  /** Release the messages this stage entry held, after its own instruction is delivered. */
-  releaseHeld?(taskId: string, columnId: string): Promise<void>;
+  /**
+   * Release the messages this stage entry held after its own instruction is delivered. A
+   * message addressed to the conversation that instruction reached is excluded, because its
+   * first step carries it, unless no exclusion is given: a recovery retry has no new first
+   * step, so everything still held is delivered separately. Every other destination is
+   * always delivered separately.
+   */
+  releaseHeld?(taskId: string, columnId: string, deliveredSessionId?: string): Promise<void>;
+  /**
+   * Prepare the conversation for the instruction that is about to wake it. A throw fails
+   * this admission before the wake, so a failed preparation consumes no input and never
+   * runs the stage without its handoffs. `accepted` means the durable log already records
+   * this entry's instruction, so it must not be sent again.
+   */
+  prepareHeld?(taskId: string, columnId: string, sessionId: string, instructionId: string): Promise<'deliver' | 'accepted'>;
+  /** Forget a preparation whose native delivery failed, so the same entry can be retried. */
+  abandonHeld?(taskId: string, columnId: string, sessionId: string): void;
+  /**
+   * Whether this entry still holds messages for the conversation its instruction reached.
+   * Those travel with the instruction's first step, so the entry stays unresolved until
+   * that step durably records the instruction; a rejected or canceled step leaves the
+   * retry action available instead of stranding the queue.
+   */
+  retainsEntry?(task: HubTask, columnId: string, sessionId: string): boolean;
   assertExecutionContext(sessionId: string): Promise<void>;
   /** Deliver the composed instruction as the plugin-sourced message that starts the turn. */
   deliver(sessionId: string, delivery: StageInstructionDelivery): Promise<void>;
@@ -36,7 +60,7 @@ export interface StageInstructionRequest {
   expectedEntryId?: string;
   /** Host lifecycle/entry reservation still permits this particular admission. */
   isCurrent?: () => boolean;
-  /** Native prompt identity; omitted keeps a fresh identity per send. */
+  /** Native prompt identity; omitted derives one from the entry, so a retry deduplicates. */
   requestId?: string;
   /** An already resolved target; omitted resolves the first open conversation. */
   sessionId?: string;
@@ -90,7 +114,9 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
   // a task that left it must not receive that stage's instruction.
   const live = deps.locate(request.taskId);
   assertCurrent();
-  const requestIdentity = randomUUID();
+  // A manual retry of the same entry reuses this identity, so an instruction already queued
+  // or recorded is never admitted twice; a task without an entry keeps a fresh one.
+  const requestIdentity = entryId === undefined ? randomUUID() : 'stage-instruction:' + request.taskId + ':' + entryId;
   // The message is composed from the workflow and the task as they are at the moment it is
   // composed. The delivery composes it again after its own final authority check, so an edit
   // that kept this entry but changed the stage's responsibility or routes still reaches it.
@@ -119,26 +145,63 @@ export async function admitStageInstruction(deps: StageInstructionDeps, request:
       requestId: request.requestId ?? handoff?.id ?? requestIdentity,
     });
   };
-  const delivery = compose(live);
-  await deps.deliver(sessionId, { ...delivery, assertCurrent, refresh: () => compose(deps.locate(request.taskId)) });
-  await deps.transact(target.hubId, draft => {
-    const current = draft.tasks.find(value => value.id === task.id);
-    const marker = current?.instructionPending;
-    if (!current || (entryId !== undefined && current.stageEntry?.id !== entryId)) return;
-    if (handoff && current.scriptedHandoff?.id === handoff.id) {
-      const accepted = current.scriptedHandoff; accepted.acceptedAt = new Date().toISOString(); delete accepted.error;
-      recordScriptedHandoff(current,{at:accepted.acceptedAt,deliveryId:accepted.id,executionId:accepted.executionId,fromColumnId:accepted.fromColumnId,columnId:current.columnId,outcome:'accepted',exit:accepted.exit,message:accepted.message,...(accepted.params===undefined?{}:{parameters:accepted.params})});
-    }
-    if (!marker || marker.columnId !== request.columnId) return;
-    if (request.expectedEnteredAt !== undefined && marker.enteredAt !== request.expectedEnteredAt) return;
-    delete current.instructionPending;
-    // A successful manual instruction for this stage also resolves a failed host
-    // advance — automatic or declared — so the task is not left blocked by it.
-    const failed = current.pendingTransition;
-    if (failed !== undefined && failed.origin !== undefined && failed.status === 'failed' && failed.columnId === request.columnId) delete current.pendingTransition;
-  });
+  // Fallible batch preparation runs before the wake, not after it: an unreadable log, a
+  // failed durability checkpoint, or an uncomposable handoff fails this admission while
+  // nothing has been claimed, instead of blocking a step that already took user input.
+  const prepared = deps.prepareHeld === undefined ? 'deliver' : await deps.prepareHeld(request.taskId, request.columnId, sessionId, requestIdentity);
+  assertCurrent();
+  if (prepared === 'accepted') {
+    // The conversation already records this entry's instruction: never send it twice. The
+    // remaining handoffs have no new first step to ride, so they use the separate path, and
+    // the entry retires only when nothing is left to deliver.
+    try { await deps.releaseHeld?.(request.taskId, request.columnId); } catch { /* reported by the port */ }
+    await settleEntry(false);
+    return sessionId;
+  }
+  const delivery = compose(deps.locate(request.taskId));
+  try {
+    await deps.deliver(sessionId, { ...delivery, assertCurrent, refresh: () => compose(deps.locate(request.taskId)) });
+  } catch (error) {
+    // A failed native delivery never enqueued the instruction, so its armed preparation must
+    // not block the same entry's retry.
+    deps.abandonHeld?.(request.taskId, request.columnId, sessionId);
+    throw error;
+  }
+  // Reading the entry again after the send decides acceptance ownership from live state.
+  const retains = deps.retainsEntry?.(deps.locate(request.taskId).task, request.columnId, sessionId) === true;
+  await settleEntry(retains);
   // The stage's messages wait for its instruction, so they are released only after it
-  // was delivered. A release failure is reported by the host and never undoes the entry.
-  try { await deps.releaseHeld?.(request.taskId, request.columnId); } catch { /* reported by the port */ }
+  // was delivered; the ones that conversation itself receives travel with its first step.
+  // A release failure is reported by the host and never undoes the entry.
+  try { await deps.releaseHeld?.(request.taskId, request.columnId, sessionId); } catch { /* reported by the port */ }
   return sessionId;
+
+  /**
+   * Record the entry consequence of this admission. A batch entry keeps its marker until the
+   * conversation durably records the instruction and every handoff the first step carried;
+   * a recovery retry retires it only once nothing is left to deliver.
+   */
+  async function settleEntry(retains: boolean): Promise<void> {
+    await deps.transact(target.hubId, draft => {
+      const current = draft.tasks.find(value => value.id === task.id);
+      if (!current || (entryId !== undefined && current.stageEntry?.id !== entryId)) return;
+      if (handoff && current.scriptedHandoff?.id === handoff.id) {
+        const accepted = current.scriptedHandoff; accepted.acceptedAt = new Date().toISOString(); delete accepted.error;
+        recordScriptedHandoff(current,{at:accepted.acceptedAt,deliveryId:accepted.id,executionId:accepted.executionId,fromColumnId:accepted.fromColumnId,columnId:current.columnId,outcome:'accepted',exit:accepted.exit,message:accepted.message,...(accepted.params===undefined?{}:{parameters:accepted.params})});
+      }
+      const marker = current.instructionPending;
+      if (!marker || marker.columnId !== request.columnId) return;
+      if (request.expectedEnteredAt !== undefined && marker.enteredAt !== request.expectedEnteredAt) return;
+      if (retains) return;
+      // A recovery retry has no new first step, so it retires the entry only when nothing is
+      // left to deliver; otherwise the failed release keeps the retry action available.
+      const remaining = prepared === 'accepted' && heldMessagesFor(current, request.columnId)
+        .some(message => addressedConversationId(current, message.agent) === sessionId);
+      if (!remaining) delete current.instructionPending;
+      // A successful manual instruction for this stage also resolves a failed host
+      // advance — automatic or declared — so the task is not left blocked by it.
+      const failed = current.pendingTransition;
+      if (failed !== undefined && failed.origin !== undefined && failed.status === 'failed' && failed.columnId === request.columnId) delete current.pendingTransition;
+    });
+  }
 }

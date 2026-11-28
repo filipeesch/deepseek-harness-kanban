@@ -172,7 +172,7 @@ describe('agent conversations', () => {
     await expect.poll(() => f.store.requireTask(task.id).columnId).toBe('done');
   });
 
-  it('releases a message held for the stage its agent conversation receives', async () => {
+  it('keeps a message held when the instruction reaches its conversation', async () => {
     const delivery = deliveryPort();
     const f = await setup({ presets: presetPort(new Set(['ux'])), models: modelPort(new Set()), taskMessageDelivery: delivery });
     await f.store.setWorkflow(AGENT_FLOW);
@@ -182,14 +182,60 @@ describe('agent conversations', () => {
     expect(f.store.requireTask(task.id).heldMessages).toHaveLength(1);
 
     await moveAndRun(f, task.id, 'design');
-    await expect.poll(() => delivery.deliver.mock.calls.length).toBe(1);
+    // The message belongs to the first step that carries the instruction, so the separate
+    // release path leaves it in the queue for that step to confirm, and the entry stays
+    // unresolved until the conversation records the instruction.
     const current = f.store.requireTask(task.id);
-    const agentSession = current.sessionIds[1]!;
+    expect(current.sessionIds).toHaveLength(2);
+    expect(current.instructionPending?.columnId).toBe('design');
+    expect(delivery.deliver).not.toHaveBeenCalled();
+    expect(current.heldMessages?.map(message => message.id)).toEqual(['held:main:call-1']);
+
+    // The instruction alone does not retire a batch entry: its handoff must be recorded too.
+    const agentSession = current.sessionIds.find(sessionId => current.sessionRoles?.[sessionId]?.agent === 'designer')!;
+    f.app.observe(agentSession, {
+      type: 'user/message', seq: 1, time: Date.now(),
+      data: { id: 'message-1', role: 'user', content: [{ type: 'text', text: 'Design it.' }], source: { kind: 'stage-instruction', form: 'notice', summary: 'Stage: DESIGN', requestId: 'request-1', entryId: current.stageEntry!.id, columnId: 'design' } },
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.store.requireTask(task.id).instructionPending?.columnId).toBe('design');
+    // The batch admission is the one that retires it once the attempt is complete.
+    await f.app.retireInstructionEntry(task.id, current.stageEntry!.id);
+    await expect.poll(() => f.store.requireTask(task.id).instructionPending).toBeUndefined();
+  });
+
+  it('releases a message held for another conversation after the instruction is admitted', async () => {
+    const delivery = deliveryPort();
+    const f = await setup({ presets: presetPort(new Set(['ux'])), models: modelPort(new Set()), taskMessageDelivery: delivery });
+    await f.store.setWorkflow(AGENT_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Held elsewhere', description: '' });
+    const mainSession = f.store.requireTask(task.id).sessionIds[0]!;
+    // The message targets the main conversation while the stage runs in the designer's.
+    await f.app.holdMessage(task.id, { id: 'held:main:call-3', fromSessionId: mainSession, columnId: 'design', body: 'Main result.', at: new Date().toISOString() });
+
+    await moveAndRun(f, task.id, 'design');
+    await expect.poll(() => delivery.deliver.mock.calls.length).toBe(1);
     const [sessionId, raw] = delivery.deliver.mock.calls[0]!;
-    expect(sessionId).toBe(agentSession);
-    expect((raw as { requestId: string; text: string }).requestId).toBe('held:main:call-1');
-    expect((raw as { text: string }).text).toContain('Design result.');
-    expect(current.heldMessages).toBeUndefined();
+    expect(sessionId).toBe(mainSession);
+    expect((raw as { requestId: string; text: string }).requestId).toBe('held:main:call-3');
+    expect((raw as { text: string }).text).toContain('Main result.');
+    await expect.poll(() => f.store.requireTask(task.id).heldMessages).toBeUndefined();
+  });
+
+  it('finalizes a message its conversation recorded and refuses to requeue the identity', async () => {
+    const f = await setup();
+    await f.store.setWorkflow(AGENT_FLOW);
+    const task = await taskWithConversation(f.app, { projectId: f.project.id, title: 'Finalized', description: '' });
+    const mainSession = f.store.requireTask(task.id).sessionIds[0]!;
+    const held = { id: 'held:main:call-4', fromSessionId: mainSession, columnId: 'design', body: 'Recorded result.', at: new Date().toISOString() };
+    await f.app.holdMessage(task.id, held);
+
+    await f.app.finalizeHeldMessages(task.id, [held.id]);
+    expect(f.store.requireTask(task.id).heldMessages).toBeUndefined();
+    expect(f.store.requireTask(task.id).releasedMessages).toContain(held.id);
+    // A replayed tool call with the same identity neither queues nor delivers it again.
+    await f.app.holdMessage(task.id, held);
+    expect(f.store.requireTask(task.id).heldMessages).toBeUndefined();
   });
 
   it('discards a held message whose stage a workflow edit removed and records it', async () => {

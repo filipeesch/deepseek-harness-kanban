@@ -21,6 +21,15 @@ export function agentConversationId(scope: ConversationScope, agent: string): st
 }
 
 /**
+ * The open conversation a message addressed to one agent, or to the main conversation
+ * when no agent is named, lands in. It resolves only through open conversations, so a
+ * reader that must not create one can still answer which conversation a target owns.
+ */
+export function addressedConversationId(scope: ConversationScope, agent: string | undefined): string | undefined {
+  return agent === undefined ? mainConversationId(scope) : agentConversationId(scope, agent);
+}
+
+/**
  * The open conversation that owns one stage: the declared agent's conversation when the
  * stage names an agent, and the main conversation otherwise. Closing a conversation
  * removes it from the answer without removing its binding, so a reopen returns it.

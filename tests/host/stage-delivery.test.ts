@@ -7,6 +7,16 @@ function recorded(requestId: string): unknown {
   return { type: 'user/message', data: { id: 'message-1', source: { kind: 'stage-instruction', form: 'notice', summary: 'Stage: REVIEW', requestId } } };
 }
 
+function insertion(requestId: string, outcome: 'canceled' | undefined = undefined): unknown {
+  return {
+    type: 'agent/inbox/spliced',
+    data: {
+      target: 'next-turn', start: 0, inserted: [{ id: 'message-1', role: 'user', content: [{ type: 'text', text: 'Review it.' }], source: { kind: 'stage-instruction', form: 'notice', summary: 'Stage: REVIEW', requestId } }],
+      ...(outcome === undefined ? {} : { outcome }),
+    },
+  };
+}
+
 function target(pending: (deliveryId: string) => boolean) {
   return { pending };
 }
@@ -32,6 +42,37 @@ describe('stage instruction delivery', () => {
   it('skips an identity the log already records', async () => {
     const deliver = vi.fn(async () => {});
     const send = createStageDelivery(deps({ deliver, events: async () => [recorded('request-1')] }));
+    await send('s1', delivery);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('re-admits an identity the host consumed without appending it', async () => {
+    const deliver = vi.fn(async () => {});
+    // The previous turn claimed the queued instruction and ended before recording it.
+    const send = createStageDelivery(deps({ deliver, events: async () => [insertion('request-1')] }));
+    await send('s1', delivery);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps skipping an identity that is still pending in the inbox', async () => {
+    const deliver = vi.fn(async () => {});
+    const send = createStageDelivery(deps({ deliver, resolve: async () => target(id => id === 'request-1') }));
+    await send('s1', delivery);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('re-admits on the same instance after a consumed, never appended instruction', async () => {
+    const deliver = vi.fn(async () => {});
+    const send = createStageDelivery(deps({ deliver, events: async () => [insertion('request-1')] }));
+    await send('s1', delivery);
+    await send('s1', delivery);
+    expect(deliver).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps deduplicating a pending identity on the same instance', async () => {
+    const deliver = vi.fn(async () => {});
+    const send = createStageDelivery(deps({ deliver, resolve: async () => target(id => id === 'request-1') }));
+    await send('s1', delivery);
     await send('s1', delivery);
     expect(deliver).not.toHaveBeenCalled();
   });

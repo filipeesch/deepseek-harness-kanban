@@ -50,6 +50,7 @@ import { registerTaskContextInjection } from './host/task-context.js';
 import { registerStageNotice } from './host/stage-notice.js';
 import { registerQuestionNotice } from './host/question-notice.js';
 import { registerScriptedHandoffInjection } from './host/scripted-handoff.js';
+import { registerHeldMessageBatch } from './host/held-message-batch.js';
 import { createSessionHistory } from './host/session-history.js';
 import { createHostSessionRepair } from './host/session-repair-host.js';
 import { openScheduleRunStorage } from './host/schedule-run-storage.js';
@@ -260,7 +261,10 @@ export async function apply(ctx:Context):Promise<void>{
  const profile=ctx.get('profileContext') as {readonly dir:string}|undefined;
  const scriptedLease=profile&&isAbsolute(profile.dir)?createScriptedLease(join(profile.dir,'kanban-private','scripted')):undefined;
  const taskMessageDelivery=createNativeTaskMessageDelivery(ctx,history);
- const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,...(scriptedLease===undefined?{}:{scriptedLease}),...(profile&&isAbsolute(profile.dir)?{taskAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","attachments")),answerAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","answer-files"))}:{}),models:sessionModels,presets:sessionPresets,taskMessageDelivery,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,agentAvailability,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
+ // The batch admission needs the app's locator and the app's admission needs the batch's
+ // preparation. One holder closes the cycle: preparation is only requested after startup.
+ let heldBatch:import('./host/held-message-batch.js').HeldMessageBatch|undefined;
+ const app=new KanbanApp(hubs,native.sessions,new GitAdapter(native.executor),{signal:lifetime.signal,stageBatch:{prepare:async(taskId,columnId,sessionId,instructionId)=>heldBatch===undefined?'deliver':heldBatch.prepare(taskId,columnId,sessionId,instructionId),abandon:(taskId,columnId,sessionId)=>{heldBatch?.abandon(taskId,columnId,sessionId);}},...(scriptedLease===undefined?{}:{scriptedLease}),...(profile&&isAbsolute(profile.dir)?{taskAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","attachments")),answerAttachments:new TaskAttachmentStore(join(profile.dir,"kanban-private","answer-files"))}:{}),models:sessionModels,presets:sessionPresets,taskMessageDelivery,turnBoundary:{boundary:id=>{const agent=ctx.agents.get(SessionId(id));return agent?ctx.agents.turnBoundaryOf(agent.session):undefined;}},tools:{apply:sessionId=>applyBoardToolPolicy(sessionId)},mcpServers:()=>{const manager=ctx.get('mcpManager') as {list?:()=>ReadonlyArray<{name:string}>}|undefined;try{return manager?.list?.().map(server=>server.name)??[];}catch{return [];}},report,revisions,agentAvailability,history:async id=>(await history.read(id,{signal:lifetime.signal})).events,questionStore:questions.storage,questionDraftStore:questions.drafts,probe:native.probe,sharing:sharing.service,sharingAuth:sharing.auth,localDrive:sharing.discovery,scheduler:sharing.scheduler,teamFiles},native.workspaces);
  // The repair is composed here so the app keeps no file-system or format dependency:
  // it delegates to a pipeline whose safety rules are its own.
  app.attachSessionRepair(createHostSessionRepair({
@@ -333,9 +337,9 @@ export async function apply(ctx:Context):Promise<void>{
   runtime:()=>scheduleRuns.runtimeByHub(),
   modelCatalog:refresh=>sessionModels.catalog(refresh),
  });
- let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offDownload:(()=>Promise<void>)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offStageNotice:(()=>void)|undefined;let offQuestionNotice:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
+ let offTools:(()=>void)|undefined;let offWire:(()=>void)|undefined;let offDownload:(()=>Promise<void>)|undefined;let offGuards:(()=>void)|undefined;let offContext:(()=>void)|undefined;let offStageNotice:(()=>void)|undefined;let offQuestionNotice:(()=>void)|undefined;let offHandoff:(()=>void)|undefined;let offHeldBatch:(()=>void)|undefined;let offSignals:(()=>void)|undefined;let offAdoption:(()=>void)|undefined;let offScheduleStatus:(()=>void)|undefined;let offBoardPolicy:(()=>void)|undefined;
  ctx.effect(()=>async()=>{
-  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();void offDownload?.();offGuards?.();offContext?.();offStageNotice?.();offQuestionNotice?.();offHandoff?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
+  lifetime.abort();offBoardPolicy?.();boardToolPolicy.dispose();offTools?.();offWire?.();void offDownload?.();offGuards?.();offContext?.();offStageNotice?.();offQuestionNotice?.();offHandoff?.();offHeldBatch?.();offSignals?.();offAdoption?.();offScheduleStatus?.();offSchedules();
   scheduleCoordinator.dispose();
   try{await scheduleCoordinator.settle();}finally{
    scheduleWatcher.dispose();
@@ -392,6 +396,10 @@ offTools=registerProductTools(ctx,app,taskMessages,{revisions,images:createWorkf
  // them nor treats a steering message as their answer.
  offQuestionNotice=registerQuestionNotice(ctx,{rounds:id=>app.questions.getRounds(id)});
  offHandoff=registerScriptedHandoffInjection(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id)).events,reserve:(taskId,entryId,id)=>app.reserveScriptedHandoff(taskId,entryId,id),accept:(taskId,entryId,id)=>app.acceptScriptedHandoff(taskId,entryId,id),report});
+ // Registered last: it joins the held messages of a stage entry to the step that carries
+ // its instruction, so it sees the fully composed batch and places them right after it.
+ heldBatch=registerHeldMessageBatch(ctx,{locateBySession:id=>app.locator.bySession(id),events:async id=>(await history.read(id,{signal:lifetime.signal})).events,pending:agent=>[...agent.inbox.nextTurn,...agent.inbox.nextStep],release:(taskId,ids)=>app.finalizeHeldMessages(taskId,ids),releaseOthers:(taskId,columnId,sessionId)=>app.releaseSeparately(taskId,columnId,sessionId),retireEntry:(taskId,entryId)=>app.retireInstructionEntry(taskId,entryId),checkpoint:async id=>{const session=ctx.sessions.get(SessionId(id));if(session===undefined)throw new Error('The conversation is not live, so its record cannot be checkpointed.');return await ctx.sessions.flush(session);},report});
+ offHeldBatch=()=>{heldBatch?.dispose();heldBatch=undefined;};
  const adopter=new ForkAdopter({
   locate:sessionId=>{const located=app.locator.bySession(sessionId);return located===undefined?undefined:{hubId:located.hubId,taskId:located.task.id,effectiveCwd:located.task.effectiveCwd};},
   directory:sessionId=>native.sessions.directory(sessionId),

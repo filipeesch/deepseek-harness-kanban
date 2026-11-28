@@ -65,10 +65,16 @@ describe('combined scripted instruction final admission guard', () => {
     await f.started.promise; f.task.scriptedHandoff = { ...f.task.scriptedHandoff!, id: 'replacement-delivery' }; f.gate.resolve();
     await expect(observed).resolves.toMatchObject({ code: 'STALE_HANDOFF' }); expect(f.enqueue).not.toHaveBeenCalled();
   });
-  it.each(['user/message', 'agent/inbox/spliced'])('reconciles durable %s admission with the original identity rather than enqueueing again', async type => {
+  it('reconciles a durable recorded instruction with the original identity rather than enqueueing again', async () => {
     const f = fixture(); const message = { source: { kind: 'stage-instruction', requestId: 'delivery' } };
-    f.setLogs([{ type, data: type === 'user/message' ? message : { inserted: [message] } }]);
+    f.setLogs([{ type: 'user/message', data: message }]);
     await f.run(); expect(f.enqueue).not.toHaveBeenCalled(); expect(f.task.scriptedHandoff?.acceptedAt).toBeDefined(); expect(f.task.instructionPending).toBeUndefined();
+  });
+  it('re-admits an instruction the host consumed without appending it, keeping the identity', async () => {
+    const f = fixture(); const message = { source: { kind: 'stage-instruction', requestId: 'delivery' } };
+    // The previous turn claimed the queued instruction and closed before recording it.
+    f.setLogs([{ type: 'agent/inbox/spliced', data: { inserted: [message] } }]);
+    await f.run(); expect(f.enqueue).toHaveBeenCalledTimes(1); expect(f.admitted[0]!.requestId).toBe('delivery');
   });
   it('retains a recorded delivery failure until an explicit retry, retaining the delivery identity', async () => {
     const f = fixture(); f.enqueue.mockImplementationOnce(() => { throw new Error('Native admission failed'); });

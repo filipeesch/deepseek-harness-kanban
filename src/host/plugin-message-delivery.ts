@@ -16,9 +16,19 @@ export interface RefreshableEntry<D> extends PluginMessageEntry {
   readonly refresh?: () => D;
 }
 
+/**
+ * Which durable record counts as admission of one delivery identity. `insertion` also
+ * accepts a spliced inbox insertion, so a canceled steering admission is never repeated;
+ * `appended` requires the recorded user message, so an instruction the host consumed
+ * without appending it stays eligible for the retry its destination entry owns.
+ */
+export type PluginMessageAdmission = 'insertion' | 'appended';
+
 export interface PluginMessageDeliveryDeps<T extends PluginMessageTarget, D extends PluginMessageEntry> {
   /** Durable source kind this delivery writes and deduplicates. */
   readonly sourceKind: string;
+  /** Which durable record counts as admission; omitted keeps `insertion`. */
+  readonly admission?: PluginMessageAdmission;
   /**
    * Resolve the conversation before any dedupe read. A cold session is resumed
    * here, so the target reflects the inbox the host restored rather than the
@@ -75,9 +85,10 @@ export function appendedMessages(events: readonly unknown[]): unknown[] {
   return events.flatMap(event => record(event) && event.type === 'user/message' ? [event.data] : []);
 }
 
-/** Whether the conversation's durable log already records this delivery identity, across a restart. */
-function alreadyRecorded(events: readonly unknown[], sourceKind: string, requestId: string): boolean {
-  return recordedMessages(events).some(message => messageMatches(message, sourceKind, requestId));
+/** Whether the conversation's durable log already admits this delivery identity, across a restart. */
+function alreadyRecorded(events: readonly unknown[], sourceKind: string, requestId: string, admission: PluginMessageAdmission): boolean {
+  const messages = admission === 'appended' ? appendedMessages(events) : recordedMessages(events);
+  return messages.some(message => messageMatches(message, sourceKind, requestId));
 }
 
 /**
@@ -94,11 +105,15 @@ export function createPluginMessageDelivery<T extends PluginMessageTarget, D ext
   const inFlight = new Map<string, Promise<void>>();
   // A successful delivery is remembered in-process until the durable log is
   // observable, so a same-process retry cannot steer the target twice. The log
-  // check covers a restart, where this set is empty.
+  // check covers a restart, where this set is empty. A delivery whose admission is
+  // the recorded user message cannot use this memory: the host may consume the
+  // queued instruction without appending it, and the same identity must then be
+  // admissible again. Its retry authority is the entry, not this set.
   const delivered = new Set<string>();
+  const remembered = deps.admission !== 'appended';
   return (sessionId, delivery) => {
     const key = JSON.stringify([sessionId, delivery.requestId]);
-    if (delivered.has(key)) return Promise.resolve();
+    if (remembered && delivered.has(key)) return Promise.resolve();
     const active = inFlight.get(key);
     if (active !== undefined) return active;
     const done = (async () => {
@@ -106,13 +121,14 @@ export function createPluginMessageDelivery<T extends PluginMessageTarget, D ext
       // input a restart left queued.
       const target = await deps.resolve(sessionId);
       if (target.pending(delivery.requestId)) return;
-      if (alreadyRecorded(await deps.events(sessionId), deps.sourceKind, delivery.requestId)) return;
+      if (alreadyRecorded(await deps.events(sessionId), deps.sourceKind, delivery.requestId, deps.admission ?? 'insertion')) return;
       // The awaited read may let a concurrent admission land; the target is
       // authoritative immediately before the synchronous delivery.
       if (target.pending(delivery.requestId)) return;
       delivery.assertCurrent?.();
       // The content is composed again here, synchronously, so no await separates it from the enqueue.
       await deps.deliver(target, delivery.refresh?.() ?? delivery);
+      if (!remembered) return;
       delivered.add(key);
       if (delivered.size > 1024) {
         const oldest = delivered.values().next().value;
