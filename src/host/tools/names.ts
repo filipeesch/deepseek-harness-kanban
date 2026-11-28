@@ -5,6 +5,7 @@
  */
 export const PRODUCT_TOOL_NAMES: readonly string[] = [
   'add_stage',
+  'apply_workflow_batch',
   'create_board',
   'create_card',
   'create_note',
@@ -37,6 +38,7 @@ export const PRODUCT_TOOL_NAMES: readonly string[] = [
   'list_projects',
   'patch_plan',
   'pause_task',
+  'preview_workflow_batch',
   'read_team_file',
   'remove_stage',
   'render_workflow_diagram',

@@ -3,7 +3,7 @@ import { parseWorkflow } from './workflow.js';
 import { workflowProblems, type WorkflowProblem } from './workflow-diagnostics.js';
 import { diffWorkflow, type WorkflowDifference } from './workflow-difference.js';
 import { workflowWarnings, type AgentAvailability, type WorkflowWarning } from './workflow-warnings.js';
-import { transitionAccess } from './transitions.js';
+import { routeImpact } from './workflow-route-impact.js';
 import { stageSize, type StageSizeFact } from './workflow-size.js';
 
 /** How many warnings and cards one report itemizes before it counts the rest. */
@@ -30,8 +30,22 @@ export interface ScriptImpact {
 export interface WorkflowCardReference {
   readonly id: string;
   readonly columnId: string;
-  readonly recordedTransition?: { readonly columnId: string; readonly parameters?: Readonly<Record<string, string>> };
-  readonly pendingTransition?: { readonly fromColumnId: string; readonly columnId: string; readonly parameters?: Readonly<Record<string, string>> };
+  readonly recordedTransition?: {
+    readonly fromColumnId: string;
+    readonly columnId: string;
+    /** The recording is an exceptional declaration, which is never a durable route. */
+    readonly exception?: true;
+    readonly parameters?: Readonly<Record<string, string>>;
+  };
+  readonly pendingTransition?: {
+    readonly fromColumnId: string;
+    readonly columnId: string;
+    /** The stored override that bypasses the route permission at placement. */
+    readonly transitionOverride?: true;
+    readonly parameters?: Readonly<Record<string, string>>;
+  };
+  /** The card holds a scripted entry, which owns its routing instead of a declaration. */
+  readonly scriptedEntry?: true;
   /** The parameter names this card holds a value for; never a value. */
   readonly parameters?: readonly string[];
 }
@@ -87,8 +101,13 @@ function parseOrNull(text: string | null): Workflow | null {
 
 /**
  * The tasks a composed document leaves behind: those in a stage the document
- * removes, and those whose recorded or pending route it no longer permits.
+ * removes, and those whose route the candidate itself makes stale or blocked.
  * Identities only — a report never carries card text.
+ *
+ * The route basis is the engine's own before/after analysis ({@link routeImpact}),
+ * so this field and a batch preview's impact report cannot answer differently about
+ * the same card. Intent that was already stale, an exceptional recording, a scripted
+ * entry, an override, and a card already placed at its destination are not reported.
  */
 export function affectedCards(before: Workflow | null, after: Workflow, cards: readonly WorkflowCardReference[]): AffectedCard[] {
   if (before === null) return [];
@@ -97,24 +116,8 @@ export function affectedCards(before: Workflow | null, after: Workflow, cards: r
   if (removed.size === 0 && cards.length === 0) return [];
   const result: AffectedCard[] = [];
   for (const card of cards) {
-    const stage = removed.has(card.columnId) ? card.columnId : undefined;
-    if (stage !== undefined) { result.push({ taskId: card.id, stage, reason: 'stage-removed' }); continue; }
-    const pending = card.pendingTransition;
-    if (pending !== undefined && removed.has(pending.columnId)) { result.push({ taskId: card.id, stage: pending.columnId, reason: 'stage-removed' }); continue; }
-    // A destination the composed document no longer defines is a removed route
-    // too: the card's declared move would be stale the moment it saved.
-    const removedRoute = (destination: string): boolean => {
-      const access = transitionAccess(after, card.columnId, destination);
-      return access === 'restricted' || access === null;
-    };
-    const recorded = card.recordedTransition;
-    if (recorded !== undefined && removedRoute(recorded.columnId)) {
-      result.push({ taskId: card.id, stage: card.columnId, reason: 'route-removed' });
-      continue;
-    }
-    if (pending !== undefined && !removed.has(pending.columnId) && removedRoute(pending.columnId)) {
-      result.push({ taskId: card.id, stage: card.columnId, reason: 'route-removed' });
-    }
+    if (removed.has(card.columnId)) { result.push({ taskId: card.id, stage: card.columnId, reason: 'stage-removed' }); continue; }
+    if (routeImpact(before, after, card) !== undefined) result.push({ taskId: card.id, stage: card.columnId, reason: 'route-removed' });
   }
   return result;
 }
