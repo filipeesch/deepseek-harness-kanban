@@ -87,6 +87,12 @@ columns:
 
 A stage can run code instead of an agent instruction; see [Scripted steps](scripted-steps.md) for the fields that replace a stage's instruction and transitions.
 
+## Coordinated changes through the workflow architect
+
+The workflow architect can change a board from chat with the same exact-document and focused tools the editor uses. For a change that couples an agent, the stage that binds it, its instruction, and its routes, it reviews one candidate first: the exact YAML, a textual diff, the candidate's SHA-256, the validation findings, the reviewed authorization of each scripted stage, and the cards and routes the change would affect — cards in changed stages, cards whose agent definition or binding changes, a declaration the change makes stale, an admitted advance whose destination was already captured, and an advance whose placement the change would block. It shows that review before asking for approval, and states what it inspected, validated, or exercised; a validation pass or a layout measurement is not a claim that a stage will run.
+
+Applying saves exactly the reviewed document in one local change. When the Hub moved after the review, or the candidate does not match the reviewed digest, nothing is saved and the review is repeated; a change is never rebased onto a board the architect did not review. A review is kept for a bounded time and belongs to the conversation that made it. Publishing stays manual, as for every other workflow write.
+
 ## Agents and stage conversations
 
 A board declares the agents its stages run with: an `agents` list at the document root, and an optional `agent` on each stage. The `main` agent is always available and cannot be removed; a document that declares none keeps the board default preset and model described in [Presets](presets.md).

@@ -26,6 +26,21 @@ columns:
       exits: {passed: review}
 `;
 
+const FLOW_CONNECTIONS = `name: Linked flow
+initial_column: todo
+columns:
+  - id: todo
+    label: Todo
+    allowed_transitions: [review, done]
+  - id: review
+    label: Review
+  - id: done
+    label: Done
+    size: {width: 380, height: 240}
+connections: [{from: todo, to: review}, # keep this note
+  {from: 'todo', to: done, source: {side: right, at: 4}}]
+`;
+
 const LINKED = `name: Linked
 initial_column: todo
 columns:
@@ -237,7 +252,11 @@ describe('stage routes', () => {
     const boardId = await boardWith(f, COMMENTED);
     const value = await run(f, 'set_stage_routes', { board_id: boardId, stage_id: 'wait', exits: { passed: 'todo' } });
     expect(value.report.valid).toBe(true);
-    expect(value.report.scripts).toEqual([]);
+    // This isolated host has no scripted runtime, so the authorization is reported as
+    // unverifiable instead of an empty list that would read as a passed check.
+    expect(value.report.scripts).toEqual([
+      { stage: 'wait', verdict: 'unverifiable', reasons: ['unresolvable'], detail: expect.stringContaining('not available') },
+    ]);
     const text = await authoredDocument(f, boardId);
     expect(text).toContain('exits: {passed: todo}');
     expect(text).toContain('echo waiting');
@@ -260,6 +279,71 @@ describe('stage routes', () => {
 });
 
 describe('layout', () => {
+  it('removes the only flow connection without the comment before columns', async () => {
+    const f = await setup();
+    const yaml = `{name: Legacy flow, initial_column: todo, connections: [{from: todo, to: review}], # the columns below
+ columns: [{id: todo, label: Todo}, {id: review, label: Review}, {id: done, label: Done}]}`;
+    const boardId = await boardWith(f, yaml);
+    const value = await run(f, 'set_layout', { board_id: boardId, connections: [{ from: 'todo', to: 'review', remove: true }] });
+    expect(value.saved).toBe(true);
+    expect(await authoredDocument(f, boardId)).toBe(yaml.replace('connections: [{from: todo, to: review}],', ''));
+    expect(parseWorkflow(await authoredDocument(f, boardId)).connections).toBeUndefined();
+  });
+
+  it('replaces every flow connection and adds one in a single focused call', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, FLOW_CONNECTIONS);
+    const value = await run(f, 'set_layout', { board_id: boardId, connections: [
+      { from: 'todo', to: 'review', remove: true },
+      { from: 'todo', to: 'done', remove: true },
+      { from: 'review', to: 'done' },
+    ] });
+    expect(value.saved).toBe(true);
+    const stored = await authoredDocument(f, boardId);
+    const expected = FLOW_CONNECTIONS.replace('{from: todo, to: review},', '').replace("{from: 'todo', to: done, source: {side: right, at: 4}}", '{from: review, to: done}');
+    expect(stored).toBe(expected);
+    expect(parseWorkflow(stored).connections).toEqual([{ from: 'review', to: 'done' }]);
+    expect(stored).toContain('# keep this note');
+    expect(stored).toContain('size: {width: 380, height: 240}');
+  });
+
+  it('appends after a legal trailing comma without a second comma', async () => {
+    const f = await setup();
+    const yaml = `name: Trailing flow
+initial_column: todo
+columns:
+  - id: todo
+    label: Todo
+    allowed_transitions: [review]
+  - id: review
+    label: Review
+connections: [{from: todo, to: review}, # keep this note
+  ]
+`;
+    const boardId = await boardWith(f, yaml);
+    const value = await run(f, 'set_layout', { board_id: boardId, connections: [{ from: 'review', to: 'todo' }] });
+    expect(value.saved).toBe(true);
+    const stored = await authoredDocument(f, boardId);
+    expect(stored).toBe(yaml.replace('\n  ]', '\n  {from: review, to: todo}]'));
+    expect(parseWorkflow(stored).connections).toEqual([
+      { from: 'todo', to: 'review' },
+      { from: 'review', to: 'todo' },
+    ]);
+  });
+
+  it('removes one connection from a flow list without rewriting the others', async () => {
+    const f = await setup();
+    const boardId = await boardWith(f, FLOW_CONNECTIONS);
+    const value = await run(f, 'set_layout', { board_id: boardId, connections: [{ from: 'todo', to: 'review', remove: true }] });
+    expect(value.saved).toBe(true);
+    expect(await authoredDocument(f, boardId)).toBe(FLOW_CONNECTIONS.replace('{from: todo, to: review},', ''));
+    const text = await authoredDocument(f, boardId);
+    expect(text).toContain('# keep this note');
+    expect(text).toContain("{from: 'todo', to: done, source: {side: right, at: 4}}");
+    expect(text).toContain('size: {width: 380, height: 240}');
+  });
+
+
   it('writes and clears placements and sizes without touching the rest', async () => {
     const f = await setup();
     const boardId = await boardWith(f, COMMENTED);

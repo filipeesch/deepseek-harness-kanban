@@ -17,6 +17,7 @@ import { teamFileTools } from './team-files.js';
 import { messageTools } from './messages.js';
 import { authoringTools } from './authoring.js';
 import { agentTools } from './agents.js';
+import { batchTools } from './batch.js';
 import { scriptedTools } from './scripted.js';
 import { validationTools } from './validation.js';
 import { sharingTools } from './sharing.js';
@@ -53,6 +54,7 @@ export function productToolDefinitions(app:KanbanApp,boards:BoardAdministration=
   ...boardTools(app,boards),
   ...authoringTools(app,boards),
   ...agentTools(app,boards),
+  ...batchTools(app,boards),
   ...scriptedTools(app),
   ...validationTools(),
   ...sharingTools(app),
@@ -75,7 +77,7 @@ export const PROJECT_PLANNER_PRESET='kanban-project-planner';
 
 /** The tools only the workflow architect sees; every other agent never receives them. */
 export const WORKFLOW_DESIGN_TOOLS:readonly string[]=[
- 'get_board_yaml','get_stage','set_stage_prompt','set_stage_routes','set_stage_script','set_stage_decision','set_layout','add_stage','remove_stage','set_agent','remove_agent','set_stage_agent','get_script_execution','test_script','validate_workflow','diff_published_board',
+ 'get_board_yaml','get_stage','set_stage_prompt','set_stage_routes','set_stage_script','set_stage_decision','set_layout','add_stage','remove_stage','set_agent','remove_agent','set_stage_agent','preview_workflow_batch','apply_workflow_batch','get_script_execution','test_script','validate_workflow','diff_published_board',
  'get_route_stats','render_workflow_diagram','layout_metrics','list_board_revisions','diff_board_revisions','revert_board',
 ];
 

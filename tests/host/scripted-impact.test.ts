@@ -145,10 +145,14 @@ describe('scripted script impact', () => {
     expect(result[0]).toMatchObject({ verdict: 'unverifiable', reasons: ['unresolvable'] });
   });
 
-  it('reports nothing when the host has no scripted runtime', async () => {
+  it('reports each scripted stage as unverifiable when the host has no scripted runtime', async () => {
     const after = parseWorkflow(DEFINITION);
     const board = boardOf(DEFINITION, { wait: 'wait-key', review: 'review-key' });
-    const result = await createScriptedImpact(() => undefined).describe({ hub: hubOf([projectOf('p1', '/project/one')]), board, before: after, after });
-    expect(result).toEqual([]);
+    const impact = createScriptedImpact(() => undefined);
+    expect(impact.available?.()).toBe(false);
+    const result = await impact.describe({ hub: hubOf([projectOf('p1', '/project/one')]), board, before: after, after });
+    expect(result).toEqual([
+      { stage: 'wait', verdict: 'unverifiable', reasons: ['unresolvable'], detail: expect.stringContaining('not available') },
+    ]);
   });
 });

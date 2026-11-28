@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseDocument } from 'yaml';
 import { parseWorkflow } from '../../src/domain/workflow.js';
 import { PRODUCT_TOOL_NAMES } from '../../src/host/tools/names.js';
+import { WORKFLOW_DESIGN_TOOLS } from '../../src/host/tools.js';
 import { DESCRIPTION_CEILING } from '../../src/domain/workflow-warnings.js';
 import { AGENT_TRANSITION_REASON_LIMIT } from '../../src/domain/transition-reason.js';
 
@@ -188,6 +189,39 @@ describe('shipped agent presets', () => {
       expect(reference).toContain(phrase);
     }
     expect(reference).not.toMatch(/\b(deploy|merge|pull request|openspec|migration)s?\b/i);
+  });
+
+  it('teaches the architect to review a coupled change and to report configuration apart from execution', async () => {
+    const { presets } = await composition();
+    const persona = plugin(presets[0]!, 'persona')!.config!.prefix as string;
+    for (const phrase of [
+      'an interview answer is not approval to write',
+      'review the exact candidate and its identifiable impacts',
+      'what you inspected, what you validated, and what you exercised',
+      'engine-enforced rules, card configuration, and agent instructions',
+      'not proof that a stage runs',
+    ]) expect(persona, phrase).toContain(phrase);
+
+    const skill = await readFile(path.join(skillRoot, 'kanban-workflow-design/SKILL.md'), 'utf8');
+    for (const phrase of [
+      'preview_workflow_batch', 'apply_workflow_batch', '(references/batch-authoring.md)',
+      'discovery, never approval to write', 'what you inspected, validated, or exercised',
+      'A validation pass or a measurement never proves',
+    ]) expect(skill, phrase).toContain(phrase);
+
+    const reference = await readFile(path.join(skillRoot, 'kanban-workflow-design/references/batch-authoring.md'), 'utf8');
+    expect(reference.length).toBeLessThan(7000);
+    for (const phrase of [
+      'route-stale', 'admitted-advance', 'Engine-enforced', 'Card configuration', 'Agent instructions',
+      'A preview handle is not approval', 'verified: true', 'Publishing stays a separate manual action',
+      'stale preview', 'Do not widen a preset',
+    ]) expect(reference, phrase).toContain(phrase);
+
+    // The batch tools stay behind the architect gate; a role mask never grows to hold them.
+    for (const name of ['preview_workflow_batch', 'apply_workflow_batch']) {
+      expect(WORKFLOW_DESIGN_TOOLS).toContain(name);
+      for (const preset of [presets[1]!, presets[2]!]) expect(allowed(preset), name).not.toContain(name);
+    }
   });
 
   it('keeps the architect able to inspect and validate a workflow', async () => {

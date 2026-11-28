@@ -2,6 +2,7 @@ import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import type { ConnectionAnchor, ConnectionLayout, ConnectionSegmentOffset } from '../shared/types.js';
 import { KanbanError } from '../shared/errors.js';
 import { connectionKey, sameConnectionLayout } from './connection-anchor.js';
+import { parseWorkflow } from './workflow.js';
 
 /** The authored connection layouts keyed by source and target; a missing key means the automatic route. */
 export type ConnectionLayouts = Readonly<Record<string, ConnectionLayout | undefined>>;
@@ -172,7 +173,8 @@ function documentKey(text: string, document: unknown): { start: number; end: num
   return { start: lineStart(text, pair.key[0]), end: keyEnd(text, pair.value[1]) };
 }
 
-interface FlowEntry { readonly key: string; readonly layout: ConnectionLayout; readonly start: number; readonly end: number }
+/** One authored connection entry. */
+interface FlowEntry { readonly key: string; readonly layout: ConnectionLayout }
 
 function flowEntriesOf(sequence: unknown): FlowEntry[] {
   if (!isSeq(sequence)) return [];
@@ -180,66 +182,180 @@ function flowEntriesOf(sequence: unknown): FlowEntry[] {
   for (const item of sequence.items) {
     if (!isMap(item)) continue;
     const layout = connectionOf(item);
-    const range = (item as { range?: NodeRange }).range;
-    if (layout === null || range === undefined) continue;
-    entries.push({ key: connectionKey(layout.from, layout.to), layout, start: range[0], end: range[1] });
+    if (layout === null) continue;
+    entries.push({ key: connectionKey(layout.from, layout.to), layout });
   }
   return entries;
 }
 
-/** Remove the authored connections pair, taking one adjacent separator with it. */
+/** One parser source token: its kind, offset, and exact text. */
+interface SourceToken { readonly type: string; readonly offset: number; readonly source: string }
+/** One parser collection item: the tokens before it, and its key/value tokens. */
+interface SourceItem { readonly start: readonly SourceToken[]; readonly key?: SourceToken | null; readonly sep?: readonly SourceToken[]; readonly value?: SourceToken | SourceFlow }
+/** A parser flow collection: where it opens, its items, and the tokens up to its close. */
+interface SourceFlow {
+  readonly type: 'flow-collection';
+  readonly offset: number;
+  readonly start: SourceToken;
+  readonly items: readonly SourceItem[];
+  readonly end: readonly SourceToken[];
+}
+interface TextSpan { readonly start: number; readonly end: number }
+
+function isSourceToken(value: unknown): value is SourceToken {
+  return typeof value === 'object' && value !== null && typeof (value as SourceToken).offset === 'number' && typeof (value as SourceToken).source === 'string';
+}
+
+/** A flow collection token carries no text of its own: its start and end tokens do. */
+function isSourceFlow(value: unknown): value is SourceFlow {
+  if (typeof value !== 'object' || value === null) return false;
+  const flow = value as { type?: unknown; offset?: unknown; start?: { offset?: unknown }; items?: unknown };
+  return flow.type === 'flow-collection' && typeof flow.offset === 'number' && typeof flow.start?.offset === 'number' && Array.isArray(flow.items);
+}
+
+function isFlowClose(token: SourceToken): boolean {
+  return token.type === 'flow-seq-end' || token.type === 'flow-map-end';
+}
+
+/** The offset just past a value token, never including tokens that follow it. */
+function sourceEnd(token: SourceToken | SourceFlow): number {
+  if (!isSourceFlow(token)) return token.offset + token.source.length;
+  const close = token.end.find(isFlowClose);
+  return close === undefined ? token.offset : close.offset + close.source.length;
+}
+
+/** Every top-level comma token of one collection, in source order. */
+function commaSpans(tokens: readonly SourceToken[] | undefined): TextSpan[] {
+  return (tokens ?? []).filter(token => token.type === 'comma').map(token => ({ start: token.offset, end: token.offset + token.source.length }));
+}
+
+/** One entry of a flow list, located by the parser's tokens. */
+interface FlowListEntry {
+  readonly start: number;
+  readonly end: number;
+  /** The separator token before this entry, when the parser attributed one to it. */
+  readonly precedingComma?: TextSpan;
+  /** The separator token after this entry, when one follows it. */
+  readonly followingComma?: TextSpan;
+}
+
+interface FlowList {
+  /** The offset of the closing bracket, where a new entry is inserted. */
+  readonly close: number;
+  readonly entries: readonly FlowListEntry[];
+  /** Every separator token the list authors, surviving or not. */
+  readonly commas: readonly TextSpan[];
+}
+
+/**
+ * The parser's own view of one flow list: entry value ranges, separator tokens,
+ * and the closing bracket. Commas are tokens of their own, a legal final comma is
+ * an item without a value, and comments and quoted or nested commas never appear
+ * as separators here.
+ */
+function flowListOf(flow: unknown): FlowList | null {
+  if (!isSourceFlow(flow) || flow.start.source !== '[') return null;
+  const close = flow.end.find(isFlowClose);
+  if (close === undefined) return null;
+  const commas: TextSpan[] = [];
+  const entries: FlowListEntry[] = [];
+  flow.items.forEach((item, index) => {
+    commas.push(...commaSpans(item.start));
+    if (item.value === undefined) return;
+    const value = item.value;
+    const following = flow.items[index + 1];
+    const followingComma = following === undefined ? undefined : commaSpans(following.start)[0];
+    const entry: FlowListEntry = {
+      start: value.offset,
+      end: sourceEnd(value),
+      ...(commaSpans(item.start)[0] === undefined ? {} : { precedingComma: commaSpans(item.start)[0] }),
+      ...(followingComma === undefined ? {} : { followingComma }),
+    };
+    entries.push(entry);
+  });
+  commas.push(...commaSpans(flow.end));
+  return { close: close.offset, entries, commas };
+}
+
+/**
+ * Remove the authored connections pair, taking exactly one separator token with it.
+ *
+ * In a flow mapping the comma and the comment that introduces the next key are
+ * separate tokens: only the pair and one comma go, so the comment stays. In a block
+ * mapping the key owns its own lines and no comment sits between the pair and the
+ * next key.
+ */
 function removeConnectionsKey(text: string, document: unknown): string {
   const pair = connectionsPair(document);
   if (pair === null) return text;
   const contents = rootNode(document);
   if (contents?.flow === true) {
-    const items = contents.items ?? [];
-    const index = items.findIndex(item => (item as { key?: { range?: NodeRange } }).key?.range?.[0] === pair.key[0]);
-    const following = index >= 0 ? items[index + 1] as { key?: { range?: NodeRange } } | undefined : undefined;
-    const preceding = index > 0 ? items[index - 1] as { value?: { range?: NodeRange } } | undefined : undefined;
-    if (following?.key?.range !== undefined) return text.slice(0, pair.key[0]) + text.slice(following.key.range[0]);
-    if (preceding?.value?.range !== undefined) return text.slice(0, preceding.value.range[1]) + text.slice(pair.value[1]);
-    return text.slice(0, pair.key[0]) + text.slice(pair.value[1]);
+    const root = (contents as { srcToken?: unknown }).srcToken;
+    if (isSourceFlow(root)) {
+      const index = root.items.findIndex(item => isSourceToken(item.key) && item.key.offset === pair.key[0]);
+      if (index >= 0) {
+        const item = root.items[index]!;
+        const following = root.items[index + 1];
+        const comma = (following === undefined ? undefined : commaSpans(following.start)[0]) ?? commaSpans(item.start)[0];
+        const edits: TextEdit[] = [{ start: pair.key[0], end: pair.value[1], text: '' }];
+        if (comma !== undefined) edits.push({ start: comma.start, end: comma.end, text: '' });
+        return applyEdits(text, edits);
+      }
+    }
   }
   const lines = documentKey(text, document);
   return lines === null ? text : text.slice(0, lines.start) + text.slice(lines.end);
 }
 
 /**
- * Rewrite a flow-style connections list. Only the entries that changed are
- * replaced, so an untouched neighbour keeps its quoting, spacing, and the
- * comments around it. A removal rebuilds the list, because dropping an item also
- * has to drop one of its separators; when the last one goes, the key goes too.
+ * Rewrite a flow-style connections list from the parser's tokens.
+ *
+ * Only the entries that changed are replaced, and a removed entry loses only its
+ * own value token and one separator token; every other byte, including the comments
+ * and spaces between adjacent removed entries, is untouched. Insertions are planned
+ * against what survives: no leading comma when every old entry goes, a surviving
+ * trailing comma reused as the separator, and exactly one comma otherwise.
  */
 function writeFlowSequence(text: string, document: unknown, sequence: unknown, wanted: ReadonlyMap<string, ConnectionLayout>): string {
-  const entries = flowEntriesOf(sequence);
-  const edits: TextEdit[] = [];
-  const present = new Set<string>();
-  const removed: FlowEntry[] = [];
-  for (const entry of entries) {
-    const next = wanted.get(entry.key);
-    if (next === undefined) { removed.push(entry); continue; }
-    present.add(entry.key);
-    if (sameConnectionLayout(entry.layout, next)) continue;
-    edits.push({ start: entry.start, end: entry.end, text: renderFlowEntry(next) });
-  }
-  const missing = [...wanted.values()].filter(layout => !present.has(connectionKey(layout.from, layout.to)));
-  if (removed.length === 0) {
-    if (edits.length === 0 && missing.length === 0) return text;
-    if (missing.length > 0) {
-      const range = (sequence as { range?: NodeRange }).range;
-      if (range !== undefined) {
-        const close = range[1] - 1;
-        const inner = text.slice(range[0] + 1, close).trim();
-        edits.push({ start: close, end: close, text: (inner.length === 0 ? '' : ', ') + missing.map(renderFlowEntry).join(', ') });
-      }
-    }
-    return applyEdits(text, edits);
-  }
   if (wanted.size === 0) return removeConnectionsKey(text, document);
-  const pair = connectionsPair(document);
-  if (pair === null) return text;
-  return applyEdits(text, [{ start: pair.value[0], end: pair.value[1], text: renderFlow([...wanted.values()]) }]);
+  const entries = flowEntriesOf(sequence);
+  const list = flowListOf((sequence as { srcToken?: unknown }).srcToken);
+  // Both sides are the same document in source order: the parsed entries the
+  // workflow exposes and the parser's own value items. A mismatch means the list
+  // holds something this editor does not understand, so it fails closed rather
+  // than rewriting bytes it cannot account for.
+  if (list === null || entries.length !== list.entries.length) {
+    invalid('The authored connections list could not be matched to its source tokens.');
+  }
+  const edits: TextEdit[] = [];
+  const used = new Set<number>();
+  const kept: number[] = [];
+  entries.forEach((entry, index) => {
+    const item = list.entries[index]!;
+    const next = wanted.get(entry.key);
+    if (next !== undefined) {
+      kept.push(index);
+      if (!sameConnectionLayout(entry.layout, next)) edits.push({ start: item.start, end: item.end, text: renderFlowEntry(next) });
+      return;
+    }
+    // The value and one separator are separate, non-overlapping ranges, so the text
+    // between them — a space, a comment, or another removed entry's gap — survives.
+    const comma = [item.followingComma, item.precedingComma].find(candidate => candidate !== undefined && !used.has(candidate.start));
+    if (comma !== undefined) {
+      used.add(comma.start);
+      edits.push({ start: comma.start, end: comma.end, text: '' });
+    }
+    edits.push({ start: item.start, end: item.end, text: '' });
+  });
+  const missing = [...wanted.values()].filter(layout => !kept.some(index => entries[index]!.key === connectionKey(layout.from, layout.to)));
+  if (missing.length > 0) {
+    const lastKeptEnd = kept.length === 0 ? -1 : list.entries[kept[kept.length - 1]!]!.end;
+    // A surviving comma after the last entry is a separator the inserted entry can use.
+    const reusable = kept.length > 0 && list.commas.some(comma => !used.has(comma.start) && comma.start >= lastKeptEnd);
+    const leadingComma = kept.length > 0 && !reusable;
+    edits.push({ start: list.close, end: list.close, text: (leadingComma ? ', ' : '') + missing.map(renderFlowEntry).join(', ') });
+  }
+  return applyEdits(text, edits);
 }
 
 /** Add or rewrite the connections key inside a flow mapping that spans the document. */
@@ -291,14 +407,16 @@ function applyEdits(text: string, edits: readonly TextEdit[]): string {
  * preserving every character outside them: comments, quoting, block scalars, key
  * order, and the style of every other collection. An entry the document does not
  * define is appended; an entry the caller dropped is removed, and the key goes
- * with the last one. A flow-style list is edited item by item, so an untouched
- * entry keeps its text; removing an entry from one rebuilds that list, which is
- * the only case where a comment between its items is lost.
+ * with the last one. A flow-style list is edited from the parser's own tokens: only
+ * the chosen entry values and separator commas change, so untouched entries, their
+ * quoting, and the comments around them keep their bytes.
  */
 export function writeConnections(text: string, layouts: ConnectionLayouts): string {
   let document;
   try {
-    document = parseDocument(text, { uniqueKeys: true, prettyErrors: false, version: '1.2' });
+    // Source tokens give the exact spans of entries, separators, and the brackets;
+    // the editor never infers a delimiter from adjacent characters.
+    document = parseDocument(text, { keepSourceTokens: true, uniqueKeys: true, prettyErrors: false, version: '1.2' });
   } catch (error) {
     invalid('Invalid workflow YAML: ' + (error instanceof Error ? error.message : String(error)));
   }
@@ -306,6 +424,15 @@ export function writeConnections(text: string, layouts: ConnectionLayouts): stri
 
   const wanted = new Map<string, ConnectionLayout>();
   for (const layout of Object.values(layouts)) if (layout !== undefined) wanted.set(connectionKey(layout.from, layout.to), layout);
+  const next = writeConnectionText(text, document, wanted);
+  // The existing validation is the authority on the composed document; the editor
+  // never falls back to emitting the whole list or document to make it parse.
+  parseWorkflow(next);
+  return next;
+}
+
+/** Compose the new document text without validating it yet. */
+function writeConnectionText(text: string, document: ReturnType<typeof parseDocument>, wanted: ReadonlyMap<string, ConnectionLayout>): string {
   const sequence = document.getIn([KEY]);
 
   // A flow mapping cannot take a block entry, so it is edited inside its braces.
@@ -318,8 +445,8 @@ export function writeConnections(text: string, layouts: ConnectionLayouts): stri
   }
 
   if (sequence.flow === true) {
-    // A flow list cannot hold a block entry, so it stays flow and is edited item
-    // by item. An empty list authors nothing.
+    // A flow list cannot hold a block entry, so it stays flow and is edited entry
+    // by entry. An empty list authors nothing.
     if (wanted.size === 0 && sequence.items.length === 0) return text;
     return writeFlowSequence(text, document, sequence, wanted);
   }

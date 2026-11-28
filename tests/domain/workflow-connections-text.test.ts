@@ -120,8 +120,10 @@ describe('flow collection documents', () => {
   });
 
   it('removes the key from a flow document when it is written first', () => {
+    // Only the pair and one comma token go; the space the comma sat in front of is
+    // authored text, so it stays and the next key keeps its position.
     const next = setConnections('{connections: [{from: one, to: two}], columns: [{id: one, label: One}]}', {});
-    expect(next).toBe('{columns: [{id: one, label: One}]}');
+    expect(next).toBe('{ columns: [{id: one, label: One}]}');
     expect(parseWorkflow(next).columns).toHaveLength(1);
   });
 
@@ -131,9 +133,10 @@ describe('flow collection documents', () => {
     expect(parseWorkflow(next).connections).toEqual([layout]);
   });
 
-  it('adds the key to an empty flow root', () => {
-    const next = setConnections('{}', { 'one->two': layout });
-    expect(next.startsWith('{connections: [')).toBe(true);
+  it('adds the key to a flow root that has none', () => {
+    const next = setConnections('{initial_column: one, columns: [{id: one, label: One}, {id: two, label: Two}]}', { 'one->two': layout });
+    expect(next).toContain('connections: [');
+    expect(parseWorkflow(next).connections).toEqual([layout]);
   });
 
   it('keeps a block document with a flow connections list byte for byte outside the value', () => {
